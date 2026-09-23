@@ -1,0 +1,27 @@
+name = "ishhanli"
+pages_build_output_dir = "public"
+compatibility_date = "2025-06-01"
+
+[vars]
+FIREBASE_PROJECT_ID = "YOUR_FIREBASE_PROJECT_ID"   # Firebase للدخول والإشعارات فقط
+# سر اختياري لإشعارات Push (مش هنا!):  npx wrangler pages secret put FIREBASE_SERVICE_ACCOUNT --project-name=ishhanli
+
+# ---- قاعدة البيانات الرئيسية (Cloudflare D1) ----
+# أنشئها بـ:  npx wrangler d1 create ishhanli-db   ثم الصق database_id هنا
+[[d1_databases]]
+binding = "DB"
+database_name = "ishhanli-db"
+database_id = "PASTE_ISHHANLI_DB_ID"
+
+# ---- قاعدة الصور المنفصلة (مُوصى بيها: حد D1 المجاني 500MB لكل قاعدة) ----
+# أنشئها بـ:  npx wrangler d1 create ishhanli-files
+[[d1_databases]]
+binding = "FILES"
+database_name = "ishhanli-files"
+database_id = "PASTE_ISHHANLI_FILES_ID"
+
+# ---- اختياري: R2 بدل قاعدة الصور (يحتاج وسيلة دفع مربوطة بحساب Cloudflare) ----
+# لو فعّلته الكود بيستخدمه تلقائياً بدون أي تعديل تاني.
+# [[r2_buckets]]
+# binding = "BUCKET"
+# bucket_name = "ishhanli-files"
