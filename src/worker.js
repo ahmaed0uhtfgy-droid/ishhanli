@@ -22,7 +22,12 @@ import { AggregateField } from './_lib/firestore.js';
 // كل طلب بيوصل Cloudflare Worker جديد أو دافئ (isolate) — initDb بتتأكد إن حساب الخدمة اتحمّل مرة واحدة بس
 // لكل isolate (مش هيعيد التوثيق مع كل طلب لو الـ isolate لسه دافئ).
 function boot(env) {
-  const sa = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT_JSON);
+  // بنقبل الاسمين (FIREBASE_SERVICE_ACCOUNT_JSON أو FIREBASE_SERVICE_ACCOUNT) ونطلّع رسالة واضحة لو فيه مشكلة
+  const raw = env.FIREBASE_SERVICE_ACCOUNT_JSON ?? env.FIREBASE_SERVICE_ACCOUNT;
+  if (!raw) throw new Error('config_error: secret FIREBASE_SERVICE_ACCOUNT_JSON is MISSING at runtime (add it under Settings > Runtime > Variables and secrets, not Build)');
+  let sa;
+  try { sa = typeof raw === 'string' ? JSON.parse(raw.trim()) : raw; } catch (e) { throw new Error('config_error: FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON (paste the whole file from { to }): ' + e.message); }
+  if (!sa.client_email || !sa.private_key || !sa.project_id) throw new Error('config_error: service account JSON is missing client_email / private_key / project_id');
   initDb(sa);
   return sa.project_id;
 }
@@ -143,36 +148,42 @@ const ROUTES = {
     const role = body.role;
     if (!['customer', 'driver'].includes(role)) throw new HttpError(400, 'bad_role');
     const phone = phoneOf(body.phone);
-    const nid = String(body.nationalId ?? '').replace(/\D/g, '');
-    if (!/^[23]\d{13}$/.test(nid)) throw new HttpError(400, 'bad_national_id');
+    const driver = role === 'driver';
+    // الرقم القومي وصورة البطاقة مطلوبين للسواق فقط — العميل مش محتاجهم
+    let nid = null;
+    if (driver) {
+      nid = String(body.nationalId ?? '').replace(/\D/g, '');
+      if (!/^[23]\d{13}$/.test(nid)) throw new HttpError(400, 'bad_national_id');
+    }
     const name = str(body.name, 2, 80), area = str(body.area ?? '', 0, 60), lang = body.lang === 'en' ? 'en' : 'ar';
-    const refs = { id: fileRef(body.idRef) }, driver = role === 'driver';
+    const refs = {};
     let vehicleType = null;
     if (driver) {
+      refs.id = fileRef(body.idRef);
       vehicleType = str(body.vehicleType, 2, 40);
       refs.license = fileRef(body.licenseRef); refs.vehicleReg = fileRef(body.vehicleRegRef); refs.vehiclePhoto = fileRef(body.vehiclePhotoRef);
     }
     await ownFiles(uid, Object.values(refs));
-    const phoneKey = `phone_${phone}`, nidKey = `nid_${nid}`;
+    const phoneKey = `phone_${phone}`, nidKey = nid ? `nid_${nid}` : null;
     const s = await loadSettings();
     const userRef = usersCol().doc(uid);
     const status = await runTx(async (tx) => {
       const [userSnap, phoneIdx, nidIdx, phoneBl, nidBl] = await Promise.all([
-        tx.get(userRef), tx.get(uniqueIndexCol().doc(phoneKey)), tx.get(uniqueIndexCol().doc(nidKey)),
-        tx.get(blacklistCol().doc(phoneKey)), tx.get(blacklistCol().doc(nidKey)),
+        tx.get(userRef), tx.get(uniqueIndexCol().doc(phoneKey)), nidKey ? tx.get(uniqueIndexCol().doc(nidKey)) : null,
+        tx.get(blacklistCol().doc(phoneKey)), nidKey ? tx.get(blacklistCol().doc(nidKey)) : null,
       ]);
       if (userSnap.exists) throw new HttpError(409, 'already_registered');
-      if (phoneIdx.exists || nidIdx.exists) throw new HttpError(409, 'already_registered');
-      if (phoneBl.exists || nidBl.exists) throw new HttpError(403, 'blacklisted');
+      if (phoneIdx.exists || (nidIdx && nidIdx.exists)) throw new HttpError(409, 'already_registered');
+      if (phoneBl.exists || (nidBl && nidBl.exists)) throw new HttpError(403, 'blacklisted');
       const status = role === 'customer' && s.autoApproveCustomers ? 'active' : 'pending';
       const t = now();
       tx.set(userRef, {
         uid, role, status, name, phone, email: token.email || null, nationalId: nid, area, lang,
-        idRef: refs.id, licenseRef: refs.license ?? null, vehicleRegRef: refs.vehicleReg ?? null, vehiclePhotoRef: refs.vehiclePhoto ?? null,
+        idRef: refs.id ?? null, licenseRef: refs.license ?? null, vehicleRegRef: refs.vehicleReg ?? null, vehiclePhotoRef: refs.vehiclePhoto ?? null,
         vehicleType, phoneVerified: !!token.phone_number, ratingSum: 0, ratingCount: 0, completedOrders: 0, cancelCount: 0, createdAt: t,
       });
       tx.set(uniqueIndexCol().doc(phoneKey), { uid, at: t });
-      tx.set(uniqueIndexCol().doc(nidKey), { uid, at: t });
+      if (nidKey) tx.set(uniqueIndexCol().doc(nidKey), { uid, at: t });
       if (driver) tx.set(walletsCol().doc(uid), { uid, balance: 0, totalEarned: 0, updatedAt: t });
       return status;
     });
