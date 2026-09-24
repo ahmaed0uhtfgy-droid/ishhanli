@@ -1067,7 +1067,8 @@ const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, 
 const errorResponse = (e) => {
   if (e instanceof HttpError) return json({ error: e.code }, e.status);
   console.error(e);
-  return json({ error: 'server_error' }, 500);
+  // detail: سبب الخطأ الحقيقي (للتشخيص وقت الإعداد) — مفيهوش أي أسرار. لو حبيت تشيله بعد ما كل حاجة تشتغل، احذف السطر ده.
+  return json({ error: 'server_error', detail: String(e?.message || e).slice(0, 400) }, 500);
 };
 const bearerFrom = (request) => (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
 

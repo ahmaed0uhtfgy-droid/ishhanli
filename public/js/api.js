@@ -14,7 +14,7 @@ export async function api(route, body = {}) {
   } catch { const e = new Error('network'); e.code = 'network'; throw e; }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
-    const e = new Error(j.error || 'server_error'); e.code = j.error || 'server_error'; e.status = r.status;
+    const e = new Error(j.error || 'server_error'); e.code = j.error || 'server_error'; e.status = r.status; e.detail = j.detail || null;
     if (e.code === 'account_not_active') window.dispatchEvent(new Event('app:profile-stale')); // حالة الحساب اتغيّرت (تجميد/حظر)
     throw e;
   }

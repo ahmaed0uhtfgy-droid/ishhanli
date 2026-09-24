@@ -62,7 +62,7 @@ window.addEventListener('app:settings', loadSettings);
 // الملف الشخصي من السيرفر (Polling). بيتحدّث عند الدخول وبعد التسجيل وعند تغيّر حالة الحساب.
 async function loadProfile() {
   try { state.profile = (await api('me')).profile; state.profileError = false; }
-  catch (e) { console.error(e); state.profile = null; state.profileError = true; }
+  catch (e) { console.error(e); state.profile = null; state.profileError = true; state.profileErrorDetail = e.detail || e.code || ''; }
   state.ready = true; route();
 }
 window.addEventListener('app:profile-stale', loadProfile);
@@ -84,7 +84,7 @@ function route() {
     return go('/login');
   }
   if (state.profileError) { // السيرفر مش متاح: ما نعتبرش إن الحساب ناقص
-    show(); render(view, html`<div class="auth card stack"><p>${t('err.network')}</p><button class="btn primary" id="retry">${t('common.retry')}</button></div>`);
+    show(); render(view, html`<div class="auth card stack"><p>${t('err.network')}</p>${state.profileErrorDetail ? html`<p class="hint" dir="ltr" style="word-break:break-word">${state.profileErrorDetail}</p>` : ''}<button class="btn primary" id="retry">${t('common.retry')}</button></div>`);
     $('#retry', view).addEventListener('click', () => { state.ready = false; loadProfile(); }); return;
   }
   if (!p) { // حساب Auth موجود لكن التسجيل ما اكتملش
