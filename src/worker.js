@@ -1065,10 +1065,12 @@ const ROUTES = {
 // (النموذج الحديث "Workers with Static Assets" بدل Pages القديم).
 const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
 const errorResponse = (e) => {
-  if (e instanceof HttpError) return json({ error: e.code }, e.status);
-  console.error(e);
-  // detail: سبب الخطأ الحقيقي (للتشخيص وقت الإعداد) — مفيهوش أي أسرار. لو حبيت تشيله بعد ما كل حاجة تشتغل، احذف السطر ده.
-  return json({ error: 'server_error', detail: String(e?.message || e).slice(0, 400) }, 500);
+  if (!(e instanceof HttpError)) console.error(e);
+  // detail: سبب الخطأ الحقيقي (للتشخيص وقت الإعداد) — مفيهوش أي أسرار. لو حبيت تشيله بعد ما كل حاجة تشتغل، احذف السطر ده وارجع للسطر البسيط اللي كان: if (e instanceof HttpError) return json({ error: e.code }, e.status);
+  const status = e instanceof HttpError ? e.status : 500;
+  const code = e instanceof HttpError ? e.code : 'server_error';
+  const detail = e?.detail || e?.message || String(e);
+  return json({ error: code, detail: String(detail).slice(0, 400) }, status);
 };
 const bearerFrom = (request) => (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
 
