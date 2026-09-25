@@ -89,7 +89,7 @@ function userModal(u, reload) {
   const docsRefs = [['auth.idPhoto', u.idRef], ['auth.license', u.licenseRef], ['auth.vehicleReg', u.vehicleRegRef], ['auth.vehiclePhoto', u.vehiclePhotoRef]].filter(([, r]) => r);
   const { el, close } = openModal(html`<div class="row"><h3 class="grow">${u.name}</h3>${stamp(u.status)}</div>
     <dl class="kv"><dt>${t('admin.role')}</dt><dd>${t(roleKey(u))}</dd><dt>${t('auth.phone')}</dt><dd dir="ltr">${u.phone} ${u.phoneVerified ? '✓' : ''}</dd>
-      <dt>${t('auth.nationalId')}</dt><dd dir="ltr">${u.nationalId || '—'}</dd><dt>${t('auth.email')}</dt><dd dir="ltr">${u.email}</dd><dt>${t('auth.area')}</dt><dd>${u.area || '—'}</dd>
+      <dt>${t('auth.nationalId')}</dt><dd dir="ltr">${u.nationalId}</dd><dt>${t('auth.email')}</dt><dd dir="ltr">${u.email}</dd><dt>${t('auth.area')}</dt><dd>${u.area || '—'}</dd>
       ${u.vehicleType ? html`<dt>${t('auth.vehicleType')}</dt><dd>${t('vehicle.' + u.vehicleType)}</dd>` : ''}
       ${u.trust ? html`<dt>${t('trust.title')}</dt><dd>${trustBadge(u.trust)}</dd>` : ''}<dt>${t('admin.trips')}</dt><dd>${u.completedOrders || 0}</dd><dt>${t('admin.cancels')}</dt><dd>${u.cancelCount || 0}</dd><dt>${t('admin.rating')}</dt><dd>${ratingText(u)}</dd>
       ${u.statusReason ? html`<dt>${t('status.reason')}</dt><dd>${u.statusReason}</dd>` : ''}</dl>

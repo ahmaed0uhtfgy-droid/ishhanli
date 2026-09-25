@@ -1,12 +1,12 @@
 {
   "name": "ishhanli",
-  "version": "0.4.0-pages",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "engines": { "node": ">=20" },
   "scripts": {
-    "dev": "wrangler pages dev public",
-    "deploy": "wrangler pages deploy public --project-name=ishhanli-app"
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

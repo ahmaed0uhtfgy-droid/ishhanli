@@ -67,14 +67,14 @@ export function renderRegister(el, query) {
       <label class="f">${t('auth.name')}<input name="name" autocomplete="name" required minlength="2"></label>
       <div class="grid-2">
         <label class="f">${t('auth.phone')}<input name="phone" inputmode="tel" autocomplete="tel" placeholder="01xxxxxxxxx" required></label>
-        <label class="f" id="nidWrap" hidden>${t('auth.nationalId')}<input name="nationalId" inputmode="numeric" maxlength="14" placeholder="14 ${t('auth.digits')}"></label>
+        <label class="f">${t('auth.nationalId')}<input name="nationalId" inputmode="numeric" maxlength="14" placeholder="14 ${t('auth.digits')}" required></label>
       </div>
       <label class="f">${t('auth.area')}<input name="area" placeholder="${t('auth.areaHint')}"></label>
       ${needsAccount ? html`<div class="grid-2">
         <label class="f">${t('auth.email')}<input type="email" name="email" autocomplete="email" required></label>
         <label class="f">${t('auth.password')}<input type="password" name="password" autocomplete="new-password" minlength="6" required></label></div>` : ''}
+      ${file('idFile', 'auth.idPhoto')}
       <div id="driverOnly" class="stack" hidden>
-        ${file('idFile', 'auth.idPhoto', false)}
         <label class="f">${t('auth.vehicleType')}<select name="vehicleType">${VEHICLES.map((v) => html`<option value="${v}">${t('vehicle.' + v)}</option>`)}</select></label>
         ${file('licenseFile', 'auth.license', false)}${file('vehicleRegFile', 'auth.vehicleReg', false)}${file('vehiclePhotoFile', 'auth.vehiclePhoto', false)}
         <p class="hint">${t('auth.driverReview')}</p>
@@ -88,7 +88,7 @@ export function renderRegister(el, query) {
   </div>`);
 
   const f = $('#f', el), err = $('#err', el);
-  const paint = () => { el.querySelectorAll('[data-role]').forEach((b) => b.classList.toggle('on', b.dataset.role === role)); $('#driverOnly', el).hidden = role !== 'driver'; $('#nidWrap', el).hidden = role !== 'driver'; };
+  const paint = () => { el.querySelectorAll('[data-role]').forEach((b) => b.classList.toggle('on', b.dataset.role === role)); $('#driverOnly', el).hidden = role !== 'driver'; };
   el.addEventListener('click', (e) => { const b = e.target.closest('[data-role]'); if (b) { role = b.dataset.role; paint(); } });
   paint();
 
@@ -96,17 +96,16 @@ export function renderRegister(el, query) {
     e.preventDefault(); err.textContent = '';
     if (!f.terms.checked) { err.textContent = t('err.terms'); return; }
     if (role === 'driver' && !(f.licenseFile.files[0] && f.vehicleRegFile.files[0] && f.vehiclePhotoFile.files[0])) { err.textContent = t('err.driverDocs'); return; }
-    if (role === 'driver' && !f.idFile.files[0]) { err.textContent = t('err.bad_file'); return; }
+    if (!f.idFile.files[0]) { err.textContent = t('err.bad_file'); return; }
     busy($('#submit', el), async () => {
       const say = (k) => { $('#progress', el).textContent = t(k); };
       state.registering = true; let created = false;
       try {
         if (!auth.currentUser) { await createUserWithEmailAndPassword(auth, f.email.value.trim(), f.password.value); created = true; }
         say('auth.uploading');
-        const body = { role, name: f.name.value, phone: f.phone.value, area: f.area.value, lang: getLang() };
+        const body = { role, name: f.name.value, phone: f.phone.value, nationalId: f.nationalId.value, area: f.area.value, lang: getLang() };
+        body.idRef = await uploadImage(f.idFile.files[0], 'id');
         if (role === 'driver') {
-          body.nationalId = f.nationalId.value;
-          body.idRef = await uploadImage(f.idFile.files[0], 'id');
           body.vehicleType = f.vehicleType.value;
           body.licenseRef = await uploadImage(f.licenseFile.files[0], 'license');
           body.vehicleRegRef = await uploadImage(f.vehicleRegFile.files[0], 'vehicle');
