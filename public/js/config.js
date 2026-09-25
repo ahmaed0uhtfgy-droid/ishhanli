@@ -2,8 +2,8 @@
 // (Firebase بيُستخدم لتسجيل الدخول فقط — البيانات كلها على Cloudflare D1)
 export const firebaseConfig = {
   apiKey: 'AIzaSyA3apC9FdfBzHgHafchojQwQT1i1tSXHHw',
-  authDomain: 'ishhanli.firebaseapp.com',
-  projectId: 'ishhanli',
+  authDomain: 'ishhanli-509519.firebaseapp.com',
+  projectId: 'ishhanli-509519',
   appId: '1:288713296891:web:39a65a07e32547e48d195e',
   messagingSenderId: '288713296891',   // للإشعارات (Project settings → Cloud Messaging)
 };
