@@ -1,0 +1,17 @@
+{
+  "name": "ishhanli",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "wrangler pages dev public",
+    "deploy": "wrangler pages deploy public --project-name=ishhanli",
+    "test": "node --no-warnings test/server.test.mjs && node --no-warnings test/client.test.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
