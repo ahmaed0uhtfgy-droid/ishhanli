@@ -1,4 +1,5 @@
 import { api, poll } from '../api.js';
+import { gpoll } from '../sync.js';
 import { state } from '../state.js';
 import { t } from '../i18n.js';
 import { $, $$, html, render, toast, errMsg, busy, spinner, waybill, orderNo, fmtMoney, fmtNum, label } from '../ui.js';
@@ -8,7 +9,7 @@ import { uploadImage } from '../storage.js';
 export function renderCustomerHome(el) {
   render(el, html`<div class="page-head"><h1>${t('nav.myOrders')}</h1><a class="btn primary" href="#/customer/new">${t('nav.newOrder')}</a></div><div id="list" class="stack">${spinner()}</div>`);
   const list = $('#list', el), prev = new Map(); let first = true;
-  return poll(() => api('orders/list'), 15000, ({ orders }) => {
+  return gpoll(['orders'], () => api('orders/list'), 15000, ({ orders }) => {
     for (const o of orders) { const p = prev.get(o.id); if (!first && p && p !== o.status) toast(`${orderNo(o.id)} — ${t('status.' + o.status)}`); prev.set(o.id, o.status); }
     first = false;
     render(list, orders.length ? html`${orders.map((o) => waybill(o))}` : html`<div class="empty"><p>${t('customer.empty')}</p><a class="btn primary" href="#/customer/new">${t('nav.newOrder')}</a></div>`);

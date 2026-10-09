@@ -136,10 +136,28 @@ const toWrite = (env, w) => {
   if (w.pre) out.currentDocument = w.pre;
   return out;
 };
+// ختم التغيير: لكل مجموعة بيانات "بتتحدّث" بنزوّد عدّاد في مستند meta/stamp ضمن نفس الـ commit.
+// الواجهة بتسأل `sync` (قراءة واحدة) وما بتجيبش القوائم الكبيرة غير لما العدّاد يتغيّر — ده بيوفّر معظم قراءات Firestore (الكوتا المجانية).
+// الربط بالمسار بيتم تلقائياً هنا، فمفيش كتابة جديدة ممكن تنسى تزوّد العدّاد.
+const STAMP_OF = { orders: 'orders', offers: 'orders', users: 'users', wallets: 'wallet', withdrawals: 'withdrawals', refunds: 'refunds', disputes: 'disputes', reports: 'reports', sos_events: 'reports', blacklist: 'blacklist' };
+export const STAMP_KINDS = [...new Set(Object.values(STAMP_OF))];
+export const STAMP_PATH = 'meta/stamp';
+const stampsOf = (list) => {
+  const kinds = new Set();
+  for (const w of list) {
+    if (w.k !== 'delete' && w.mask && w.mask.length === 0 && !w.incs) continue; // guard: مجرد شرط من غير تعديل
+    const kind = STAMP_OF[w.path.split('/')[0]];
+    if (kind) kinds.add(kind);
+  }
+  return kinds;
+};
+
 /** ينفّذ مجموعة كتابات كمعاملة واحدة. أي شرط فاشل => HttpError(409,'conflict') ومفيش أي حاجة اتكتبت. */
 export async function run(env, writes) {
   const list = writes.flat().filter(Boolean);
   if (!list.length) return;
+  const kinds = stampsOf(list);
+  if (kinds.size) list.push(inc(STAMP_PATH, Object.fromEntries([...kinds].map((k) => [k, 1])), { k: 'stamp', updated_at: Date.now() }));
   if (list.length > 400) throw new HttpError(500, 'too_many_writes');
   await call(env, 'POST', `${docsUrl(env)}:commit`, { writes: list.map((w) => toWrite(env, w)) }, 'commit');
 }

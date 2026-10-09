@@ -1,7 +1,7 @@
 // كل المنطق الحساس (الصلاحيات، السعر، Escrow، العمولة، المحفظة، النزاعات) بيتنفذ هنا على السيرفر (Cloudflare Pages Functions).
 // البيانات في Firestore، والمتصفح مالوش وصول مباشر ليها: كل قراءة وكتابة بتعدّي من هنا وبتتفلتر حسب دور المستخدم.
 import { HttpError, verifyIdToken, newId } from '../_lib/core.js';
-import { F, now, rateLimit, walletCredit, walletTx, userOut, withdrawalOut, txOut, disputeOut, loadOrder, hydrateOrder, orderUpdate, orderOut } from '../_lib/db.js';
+import { F, STAMP_KINDS, STAMP_PATH, now, rateLimit, walletCredit, walletTx, userOut, withdrawalOut, txOut, disputeOut, loadOrder, hydrateOrder, orderUpdate, orderOut } from '../_lib/db.js';
 import { loadSettings, clearSettingsCache, sanitizeSettings, distanceKm, calcPrice, calcPassengerPrice, effectiveCommissionPct, canServe, cancelSplit, haversineM, split } from '../_lib/logic.js';
 import { saveFile, ownFiles, readFile } from '../_lib/files.js';
 import { notify, dispatchNewOrder, adminIds, orderNo, pushEnabled } from '../_lib/push.js';
@@ -99,6 +99,12 @@ const toAdmins = (c, type, vars, url) => bg(c, (async () => notify(c.env, await 
 // =====================================================================
 const ROUTES = {
   // ---------- عام ----------
+  // أرخص طلب ممكن (قراءة واحدة، من غير فحص المستخدم): عدّادات "إيه اللي اتغيّر" — الواجهة بتجيب القوائم الكبيرة بس لما عدّاد يتغيّر.
+  async sync({ env, waitUntil }) {
+    bg({ waitUntil }, sweepExpired(env)); // إنهاء الطلبات المدفوعة مقدماً اللي ماحدش قبلها بيحصل مع التحديث
+    const r = await F.get(env, STAMP_PATH);
+    return { stamp: Object.fromEntries(STAMP_KINDS.map((k) => [k, r?.[k] || 0])) };
+  },
   async settings({ env }) { return { settings: await loadSettings(env) }; },
   async me({ env, uid }) {
     const r = await F.get(env, `users/${uid}`);

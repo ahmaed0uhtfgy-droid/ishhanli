@@ -809,4 +809,29 @@ console.log('\n— الإلغاء برسوم والبلاغات والطوارئ
   await ok('إعادة ضبط حد الإلغاء', call('admin1', 'admin/settings/save', { ...(await settingsNow()), maxCancellations: 5 }));
 }
 
+// ---------------- sync: عدّادات "إيه اللي اتغيّر" (توفير قراءات Firestore) ----------------
+{
+  const stamp = async (uid = 'cust1') => (await ok('sync', call(uid, 'sync'))).stamp;
+  await bad('sync من غير توكن', onRequest({ request: new Request('https://x.test/api/sync', { method: 'POST', body: '{}' }), env, params: { route: ['sync'] } }).then(async (r) => ({ ...(await r.json()), status: r.status })), 401, 'unauthenticated');
+  const s0 = await stamp();
+  check('sync بيرجّع كل الأنواع كأرقام', ['orders', 'users', 'wallet', 'withdrawals', 'refunds', 'disputes', 'reports', 'blacklist'].every((k) => typeof s0[k] === 'number'));
+  const r0 = FS.stats.reads; await call('cust1', 'sync', {}, { ...env, SWEEP_MIN_INTERVAL_MS: 1e12 }); // من غير فحص الانتهاء الدوري (بيتنفذ كل 30 ثانية بس)
+  check('طلب sync = قراءة واحدة بالظبط (من غير فحص المستخدم)', FS.stats.reads - r0 === 1);
+  await call('cust1', 'orders/list'); await call('admin1', 'admin/withdrawals'); await call('admin1', 'admin/badges');
+  check('القراءة لوحدها ما بتغيّرش العدّادات', JSON.stringify(await stamp()) === JSON.stringify(s0));
+  cancelAll('cust3', ['open', 'accepted', 'payment_review', 'awaiting_payment']); // نضمن إن حد الطلبات المفتوحة مش مانع
+  clearRl(); const ph = await up('cust3', 'cargo');
+  await ok('طلب جديد', call('cust3', 'orders/create', { ...base, photos: [ph] }));
+  const s1 = await stamp();
+  check('إنشاء طلب بيزوّد orders بس', s1.orders > s0.orders && s1.users === s0.users && s1.wallet === s0.wallet && s1.blacklist === s0.blacklist);
+  await ok('حظر رقم', call('admin1', 'admin/blacklist/add', { type: 'phone', value: '01077777777', reason: 'x' }));
+  const s2 = await stamp();
+  check('القائمة السوداء بتزوّد عدّادها بس', s2.blacklist > s1.blacklist && s2.orders === s1.orders);
+  await ok('فك الحظر', call('admin1', 'admin/blacklist/remove', { id: 'phone_01077777777' }));
+  const s3 = await stamp();
+  await ok('حضور السواق', call('drv3', 'driver/presence', { online: true, lat: 30.05, lng: 31.2 }));
+  await ok('تسجيل جهاز إشعارات', call('drv3', 'push/register', { token: 'sync-test-token-' + 'x'.repeat(30) }));
+  check('الحضور وتسجيل الأجهزة ما بيعملوش "تغيير" وهمي في العدّادات', JSON.stringify(await stamp()) === JSON.stringify(s3));
+}
+
 console.log(`\n✅ كل الاختبارات نجحت (${pass})`);

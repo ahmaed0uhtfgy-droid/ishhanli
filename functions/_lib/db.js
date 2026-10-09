@@ -4,6 +4,7 @@ import { HttpError, newId } from './core.js';
 import * as F from './firestore.js';
 
 export { F };
+export { STAMP_KINDS, STAMP_PATH } from './firestore.js';
 export const now = () => Date.now();
 
 // ---------- المحفظة ----------

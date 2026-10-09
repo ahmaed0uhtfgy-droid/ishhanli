@@ -1,4 +1,5 @@
 import { api, poll } from '../api.js';
+import { gpoll } from '../sync.js';
 import { state } from '../state.js';
 import { t } from '../i18n.js';
 import { $, html, render, toast, errMsg, busy, spinner, waybill, stamp, orderNo, fmtMoney, fmtNum, fmtDate, ratingText, label, openModal, trustBadge } from '../ui.js';
@@ -104,7 +105,7 @@ function available(body) {
     render(list, rows.length ? html`${rows.map((o) => waybill(o))}` : html`<div class="empty">${t('driver.noneAvail')}</div>`);
   };
   sel.addEventListener('change', paint);
-  return poll(() => api('orders/list', { scope: 'available' }), 10000, ({ orders }) => {
+  return gpoll(['orders'], () => api('orders/list', { scope: 'available' }), 10000, ({ orders }) => {
     if (seen) {
       const fresh = orders.filter((o) => !seen.has(o.id));
       const fits = fresh.filter((o) => canServe(state.profile.vehicleType, o));
@@ -118,7 +119,7 @@ function available(body) {
 // ---------- شغلي ----------
 function jobs(body) {
   const prev = new Map(); let first = true;
-  return poll(() => api('orders/list', { scope: 'mine' }), 15000, ({ orders: rows }) => {
+  return gpoll(['orders'], () => api('orders/list', { scope: 'mine' }), 15000, ({ orders: rows }) => {
     for (const o of rows) { const p = prev.get(o.id); if (!first && p && p !== o.status) toast(`${orderNo(o.id)} — ${t('status.' + o.status)}`); prev.set(o.id, o.status); }
     first = false;
     const done = ['completed', 'cancelled', 'resolved'], act = rows.filter((o) => !done.includes(o.status)), old = rows.filter((o) => done.includes(o.status));
@@ -137,7 +138,7 @@ function wallet(body) {
       <p class="hint">${t('wallet.minNote')} ${fmtMoney(S.minWithdraw || 100)} — ${t('wallet.reviewNote')}</p><p class="err" id="werr" role="alert"></p>
       <button class="btn primary" type="submit">${t('wallet.request')}</button></form></div>
     <div class="stack"><div id="wds"></div><div id="txs"></div></div></div>`);
-  const p = poll(() => api('wallet'), 20000, ({ wallet: w, tx, withdrawals: rows }) => {
+  const p = gpoll(['wallet', 'withdrawals'], () => api('wallet'), 20000, ({ wallet: w, tx, withdrawals: rows }) => {
     render($('#bal', body), html`<div class="tiles"><div class="tile"><b>${fmtMoney(w.balance)}</b><span>${t('wallet.balance')}</span></div><div class="tile"><b>${fmtMoney(w.totalEarned)}</b><span>${t('wallet.earned')}</span></div></div>`);
     render($('#wds', body), html`<h3>${t('wallet.requests')}</h3>${rows.length ? html`<div class="table-wrap"><table><tbody>${rows.map((x) => html`<tr><td>${fmtDate(x.createdAt)}</td><td>${t('method.' + x.method)}</td><td class="num">${fmtMoney(x.amount)}</td><td>${stamp(x.status)}</td><td class="small">${x.note || ''}</td></tr>`)}</tbody></table></div>` : html`<p class="muted">—</p>`}`);
     render($('#txs', body), html`<h3>${t('wallet.history')}</h3>${tx.length ? html`<div class="table-wrap"><table><tbody>${tx.map((x) => html`<tr><td>${fmtDate(x.at)}</td><td>${t('tx.' + x.type)}${x.orderId ? html` <a href="#/order/${x.orderId}">${orderNo(x.orderId)}</a>` : ''}</td><td class="num" style="color:${x.amount < 0 ? 'var(--brick)' : 'var(--nile)'}">${x.amount > 0 ? '+' : ''}${fmtMoney(x.amount)}</td></tr>`)}</tbody></table></div>` : html`<p class="muted">—</p>`}`);

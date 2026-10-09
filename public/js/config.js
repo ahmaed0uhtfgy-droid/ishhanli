@@ -8,8 +8,8 @@ export const firebaseConfig = {
   messagingSenderId: '288713296891',   // للإشعارات (Project settings → Cloud Messaging)
 };
 
-// مضاعف فاصل التحديث الدوري. 3 = توفير قراءات Firestore على الخطة المجانية (Spark: 50 ألف قراءة/يوم). حطه 1 لو رقّيت لـ Blaze.
-export const POLL_SCALE = 3;
+// مضاعف فاصل التحديث الدوري. 2 = مناسب للخطة المجانية (Spark: 50 ألف قراءة/يوم) مع التحديث الذكي (sync). حطه 1 لو رقّيت لـ Blaze.
+export const POLL_SCALE = 2;
 globalThis.POLL_SCALE = POLL_SCALE;
 
 export const APP = {

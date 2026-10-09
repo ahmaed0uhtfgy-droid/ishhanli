@@ -72,4 +72,30 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 { // فاصل ديناميكي
   let n = 0, ms = 200; const p = poll(async () => ++n, () => ms, () => {}); await sleep(30); assert.equal(n, 1); ms = 10; await p.now(); await sleep(60); assert.ok(n >= 3, 'الفاصل الجديد اتطبق'); p();
 }
+{ // gate + sync: جلب البيانات بس لما العدّاد يتغيّر
+  const { makeSync } = await import('../public/js/gate.js');
+  let stamp = { orders: 1, users: 1 }, syncCalls = 0, fail = false;
+  const sy = makeSync(async () => { syncCalls++; if (fail) throw new Error('net'); return { ...stamp }; });
+  let fetches = 0; const got = [];
+  const p = sy.gpoll(['orders'], async () => ++fetches, 15, (v) => got.push(v), { every: 1e9 }); // every كبير: نقيس التغيير بس
+  await sleep(120);
+  assert.equal(fetches, 1, 'ثابت: بيجيب البيانات مرة واحدة بس'); assert.ok(syncCalls >= 1, 'بيسأل sync');
+  stamp = { orders: 2, users: 1 }; await sleep(2700); // sync مخزّن 2.5 ثانية (طلب مشترك)
+  assert.equal(fetches, 2, 'العدّاد اتغيّر: بيجيب من جديد');
+  stamp = { orders: 2, users: 99 }; await sleep(2700);
+  assert.equal(fetches, 2, 'نوع تاني اتغيّر: ما يهمّناش');
+  await p.now(); assert.equal(fetches, 3, 'now() بيجيب غصب عن العدّاد');
+  fail = true; stamp = { orders: 2, users: 99 }; await sleep(2700);
+  assert.ok(fetches >= 4, 'sync فشل: بيجيب البيانات عادي (مش بيقف)');
+  p();
+  // طلب مشترك: 3 محدّثات في نفس اللحظة = طلب sync واحد
+  fail = false; syncCalls = 0; await sleep(2600);
+  const ps = [1, 2, 3].map(() => sy.gpoll(['orders'], async () => 1, 1000, () => {})); await sleep(60); ps.forEach((x) => x());
+  assert.equal(syncCalls, 1, 'محدّثات متعددة بتشارك طلب sync واحد');
+  // أمان: كل 3 دورات لو gate(every=3) بيجيب حتى لو مفيش تغيير
+  const g = sy.gate(['orders'], { every: 3 }); const seq = []; for (let i = 0; i < 7; i++) seq.push(await g());
+  assert.deepEqual(seq, [true, false, false, true, false, false, true], 'تحديث أمان كل every دورة');
+  // فشل الجلب: reset بيخلّي الدورة الجاية تجيب
+  const g2 = sy.gate(['orders']); await g2(); assert.equal(await g2(), false); g2.reset(); assert.equal(await g2(), true, 'reset بعد فشل');
+}
 console.log('✅ poll tests passed');

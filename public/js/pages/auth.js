@@ -1,5 +1,6 @@
 import { auth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, deleteUser, RecaptchaVerifier, linkWithPhoneNumber } from '../firebase.js';
 import { api, poll } from '../api.js';
+import { gpoll } from '../sync.js';
 import { APP } from '../config.js';
 import { state } from '../state.js';
 import { t, getLang } from '../i18n.js';
@@ -136,7 +137,7 @@ export function renderStatus(el, p) {
     <p class="hint">${t('status.contact')}</p>
   </div>`);
   // الحساب المعلّق بيتحدّث تلقائياً أول ما الأدمن يفعّله
-  return poll(() => api('me'), 20000, (r) => {
+  return gpoll(['users'], () => api('me'), 20000, (r) => {
     if (r.profile && r.profile.status !== p.status) { state.profile = r.profile; window.dispatchEvent(new Event('app:refresh')); }
   });
 }

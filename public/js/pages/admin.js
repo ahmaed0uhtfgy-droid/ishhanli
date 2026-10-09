@@ -1,4 +1,5 @@
 import { api, poll } from '../api.js';
+import { gpoll } from '../sync.js';
 import { state } from '../state.js';
 import { t } from '../i18n.js';
 import { $, $$, html, raw, render, toast, errMsg, busy, spinner, stamp, orderNo, fmtMoney, fmtNum, fmtDate, ratingText, trustBadge, confirmDialog, promptDialog, openModal } from '../ui.js';
@@ -14,7 +15,7 @@ export function renderAdmin(el, tab) {
   render(el, html`<div class="page-head"><h1>${t('admin.title')}</h1></div>
     <nav class="tabs">${TABS.map((k) => html`<a href="#/admin/${k}" data-tab="${k}" class="${k === tab ? 'on' : ''}">${t('admin.tab.' + k)}<span class="dot" hidden></span></a>`)}</nav><div id="body">${spinner()}</div>`);
   // شارات الأعداد المعلّقة (استعلامات خفيفة على index الحالة) — كل 20 ثانية
-  const badges = poll(() => api('admin/badges'), 20000, ({ badges: b }) => {
+  const badges = gpoll(['orders', 'users', 'withdrawals', 'disputes', 'refunds', 'reports'], () => api('admin/badges'), 20000, ({ badges: b }) => {
     for (const [k, n] of Object.entries(b)) { const d = $(`[data-tab="${k}"] .dot`, el); if (d) { d.textContent = n; d.hidden = !n; } }
   }, { dedupe: true });
   const body = $('#body', el);
@@ -24,7 +25,7 @@ export function renderAdmin(el, tab) {
 
 // =====================================================================  نظرة عامة (إحصائيات SQL على كل الطلبات)
 function overview(body) {
-  return poll(() => api('admin/stats'), 120000, (s) => {
+  return gpoll(['orders', 'users', 'refunds'], () => api('admin/stats'), 120000, (s) => {
     const days = [...Array(14)].map((_, i) => { const d = new Date(); d.setDate(d.getDate() - (13 - i)); return d.toLocaleDateString('en-CA'); }); // YYYY-MM-DD
     const per = Object.fromEntries(s.perDay.map((x) => [x.d, x.n]));
     const perDay = days.map((d) => per[d] || 0), mx = Math.max(1, ...perDay), T = s.totals;
@@ -48,7 +49,7 @@ function overview(body) {
 
 // =====================================================================  المدفوعات (مراجعة إثبات التحويل)
 function payments(body) {
-  const p = poll(() => api('orders/list', { status: 'payment_review' }), 12000, ({ orders: rows }) => {
+  const p = gpoll(['orders'], () => api('orders/list', { status: 'payment_review' }), 12000, ({ orders: rows }) => {
     render(body, rows.length ? html`<div class="stack">${rows.map((o) => html`<div class="card"><div class="row"><b>${orderNo(o.id)}</b><span>${o.customerName}</span><span class="grow"></span><b style="font:700 1.4rem var(--font-display)">${fmtMoney(o.price)}</b></div>
       <p class="muted small">${t('order.payRef')}: <b>${o.paymentRef || '—'}</b> — ${fmtDate(o.paymentSubmittedAt)}</p>${imgs([o.paymentProof])}
       <div class="row" style="margin-top:.8rem"><button class="btn ok" data-act="confirm" data-id="${o.id}">${t('admin.confirmPay')}</button><button class="btn danger" data-act="reject" data-id="${o.id}">${t('admin.rejectPay')}</button><a class="btn ghost" href="#/order/${o.id}">${t('admin.open')}</a></div></div>`)}</div>` : html`<div class="empty">${t('admin.nonePayments')}</div>`);
@@ -115,7 +116,7 @@ function userModal(u, reload) {
 function orders(body) {
   render(body, html`<div class="row" style="margin-bottom:1rem"><select id="fs" style="max-width:220px"><option value="">${t('admin.allStatus')}</option>${['awaiting_payment', 'open', 'accepted', 'payment_review', 'paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered', 'completed', 'disputed', 'resolved', 'cancelled'].map((s) => html`<option value="${s}">${t('status.' + s)}</option>`)}</select></div><div id="tbl">${spinner()}</div>`);
   const sel = $('#fs', body);
-  const p = poll(() => api('orders/list', { status: sel.value, limit: 200 }), 15000, ({ orders: rows }) => {
+  const p = gpoll(['orders'], () => api('orders/list', { status: sel.value, limit: 200 }), 15000, ({ orders: rows }) => {
     render($('#tbl', body), html`<div class="table-wrap"><table><thead><tr><th>#</th><th>${t('admin.status')}</th><th>${t('order.customer')}</th><th>${t('order.driver')}</th><th>${t('order.price')}</th><th>${t('admin.date')}</th><th></th></tr></thead>
       <tbody>${rows.map((o) => html`<tr><td>${orderNo(o.id)}</td><td>${stamp(o.status)}</td><td>${o.customerName}</td><td>${o.driverName || '—'}</td><td class="num">${fmtMoney(o.price)}</td><td class="small">${fmtDate(o.createdAt)}</td><td><a class="btn sm ghost" href="#/order/${o.id}">${t('admin.open')}</a></td></tr>`)}</tbody></table></div>`);
   }, { dedupe: true, onError });
@@ -125,7 +126,7 @@ function orders(body) {
 
 // =====================================================================  طلبات السحب
 function withdrawals(body) {
-  const p = poll(() => api('admin/withdrawals'), 15000, ({ withdrawals: rows }) => {
+  const p = gpoll(['withdrawals'], () => api('admin/withdrawals'), 15000, ({ withdrawals: rows }) => {
     render(body, rows.length ? html`<div class="table-wrap"><table><thead><tr><th>${t('admin.date')}</th><th>${t('order.driver')}</th><th>${t('wallet.amount')}</th><th>${t('wallet.method')}</th><th>${t('wallet.account')}</th><th>${t('admin.status')}</th><th></th></tr></thead>
       <tbody>${rows.map((w) => html`<tr><td class="small">${fmtDate(w.createdAt)}</td><td>${w.name}<div class="small muted" dir="ltr">${w.phone}</div></td><td class="num"><b>${fmtMoney(w.amount)}</b></td><td>${t('method.' + w.method)}</td><td dir="ltr">${w.account}</td><td>${stamp(w.status)}</td>
       <td>${w.status === 'pending' ? html`<div class="row"><button class="btn sm ok" data-a="paid" data-id="${w.id}">${t('admin.markPaid')}</button><button class="btn sm danger" data-a="reject" data-id="${w.id}">${t('admin.reject')}</button></div>` : w.note || ''}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">${t('admin.noneWithdrawals')}</div>`);
@@ -144,7 +145,7 @@ function withdrawals(body) {
 
 // =====================================================================  الاسترجاع (تحويل يدوي على InstaPay)
 function refunds(body) {
-  const p = poll(() => api('admin/refunds'), 15000, ({ refunds: rows }) => {
+  const p = gpoll(['refunds'], () => api('admin/refunds'), 15000, ({ refunds: rows }) => {
     render(body, rows.length ? html`<div class="table-wrap"><table><thead><tr><th>${t('admin.date')}</th><th>${t('order.customer')}</th><th>#</th><th>${t('wallet.amount')}</th><th>${t('admin.reason')}</th><th>${t('admin.status')}</th><th></th></tr></thead>
       <tbody>${rows.map((r) => html`<tr><td class="small">${fmtDate(r.createdAt)}</td><td>${r.customerName}<div class="small muted" dir="ltr">${r.customerPhone}</div></td><td><a href="#/order/${r.orderId}">${orderNo(r.orderId)}</a></td><td class="num"><b>${fmtMoney(r.amount)}</b></td><td>${t('refund.reason.' + r.reason)}</td>
       <td><span class="stamp s-${r.status === 'paid' ? 'active' : 'pending'}">${t(r.status === 'paid' ? 'refund.done' : 'refund.wait')}</span></td>
@@ -165,7 +166,7 @@ function refunds(body) {
 function reports(body, badges) {
   const tel = (p) => (p ? html`<a href="tel:${String(p).replace(/[^0-9+]/g, '')}" dir="ltr">${p}</a>` : '—');
   const who = (x) => html`${x?.name || '—'} ${tel(x?.phone)}`;
-  const p = poll(() => api('admin/reports'), 10000, ({ reports: rs, sos }) => {
+  const p = gpoll(['reports'], () => api('admin/reports'), 10000, ({ reports: rs, sos }) => {
     render(body, html`<div class="stack">
       <h3>${t('admin.sosTitle')}</h3>
       ${sos.length ? sos.map((e) => html`<div class="card ${e.status === 'open' ? 'sos-card' : 'flat'}"><div class="row"><b>${orderNo(e.orderId)}</b><a class="small" href="#/order/${e.orderId}">${t('admin.open')}</a><span class="grow"></span>
@@ -195,7 +196,7 @@ function reports(body, badges) {
 
 // =====================================================================  النزاعات
 function disputes(body) {
-  const p = poll(() => api('admin/disputes'), 15000, ({ disputes: rows }) => {
+  const p = gpoll(['disputes', 'orders'], () => api('admin/disputes'), 15000, ({ disputes: rows }) => {
     if (!rows.length) { render(body, html`<div class="empty">${t('admin.noneDisputes')}</div>`); return; }
     render(body, html`<div class="stack">${rows.map((d) => html`<div class="card"><div class="row"><b>${orderNo(d.orderId)}</b><a href="#/order/${d.orderId}" class="small">${t('admin.open')}</a><span class="grow"></span>${stamp(d.status)}</div>
       <p><b>${t('dispute.reason.' + d.reason)}</b> — <span class="muted small">${t('dispute.openedBy')}: ${t('auth.role' + (d.openedByRole === 'driver' ? 'Driver' : 'Customer'))} · ${fmtDate(d.createdAt)}</span></p>
@@ -285,7 +286,7 @@ function settings(body) {
 function blacklist(body) {
   render(body, html`<form id="bf" class="card row" style="margin-bottom:1rem"><select name="type" style="max-width:150px"><option value="phone">${t('auth.phone')}</option><option value="nid">${t('auth.nationalId')}</option></select>
     <input name="value" class="grow" required placeholder="${t('admin.blValue')}" dir="ltr"><input name="reason" placeholder="${t('admin.reason')}" class="grow"><button class="btn primary" type="submit">${t('admin.add')}</button></form><p class="err" id="berr"></p><div id="tbl"></div>`);
-  const p = poll(() => api('admin/blacklist'), 30000, ({ items: rows }) => {
+  const p = gpoll(['blacklist'], () => api('admin/blacklist'), 30000, ({ items: rows }) => {
     render($('#tbl', body), rows.length ? html`<div class="table-wrap"><table><thead><tr><th>${t('admin.type')}</th><th>${t('admin.blValue')}</th><th>${t('admin.reason')}</th><th>${t('admin.date')}</th><th></th></tr></thead><tbody>${rows.map((r) => html`<tr><td>${t(r.type === 'phone' ? 'auth.phone' : 'auth.nationalId')}</td><td dir="ltr">${r.value}</td><td>${r.reason || '—'}</td><td class="small">${fmtDate(r.at)}</td><td><button class="btn sm ghost" data-del="${r.id}">✕</button></td></tr>`)}</tbody></table></div>` : html`<div class="empty">${t('admin.noneBlacklist')}</div>`);
   }, { dedupe: true, onError });
   $('#bf', body).addEventListener('submit', (e) => {
