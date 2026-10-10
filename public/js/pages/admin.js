@@ -4,8 +4,9 @@ import { state } from '../state.js';
 import { t } from '../i18n.js';
 import { $, $$, html, raw, render, toast, errMsg, busy, spinner, stamp, orderNo, fmtMoney, fmtNum, fmtDate, ratingText, trustBadge, confirmDialog, promptDialog, openModal } from '../ui.js';
 import { hydrate, imgTag } from '../storage.js';
+import { toCsv, downloadCsv } from '../csv.js';
 
-const TABS = ['overview', 'payments', 'users', 'orders', 'withdrawals', 'disputes', 'refunds', 'reports', 'settings', 'blacklist'];
+const TABS = ['overview', 'finance', 'payments', 'users', 'orders', 'withdrawals', 'disputes', 'refunds', 'reports', 'settings', 'blacklist'];
 const onError = (e) => toast(errMsg(e), true);
 const imgs = (refs) => html`<div class="photos">${(refs || []).filter(Boolean).map((r) => raw(imgTag(r)))}</div>`;
 const roleKey = (u) => 'auth.role' + (u.role === 'driver' ? 'Driver' : 'Customer');
@@ -19,7 +20,7 @@ export function renderAdmin(el, tab) {
     for (const [k, n] of Object.entries(b)) { const d = $(`[data-tab="${k}"] .dot`, el); if (d) { d.textContent = n; d.hidden = !n; } }
   }, { dedupe: true });
   const body = $('#body', el);
-  const stop = { overview, payments, users, orders, withdrawals, disputes, refunds, reports, settings, blacklist }[tab](body, badges);
+  const stop = { overview, finance, payments, users, orders, withdrawals, disputes, refunds, reports, settings, blacklist }[tab](body, badges);
   return () => { badges(); stop?.(); };
 }
 
@@ -45,6 +46,30 @@ function overview(body) {
         <div class="card"><h3>${t('admin.topDrivers')}</h3>${s.topDrivers.length ? html`<table><tbody>${s.topDrivers.map((d) => html`<tr><td>${d.name}</td><td class="num">${d.n} ${t('admin.trips')}</td><td class="num">${fmtMoney(d.earned)}</td></tr>`)}</tbody></table>` : html`<p class="muted">—</p>`}</div>
       </div><p class="hint">${t('admin.statsNote')}</p></div>`);
   }, { dedupe: true, onError });
+}
+
+// =====================================================================  تقرير مالي لفترة (بتجميع Firestore، من غير Polling)
+function finance(body) {
+  const ymd = (d) => d.toLocaleDateString('en-CA'), today = new Date(), start = new Date(); start.setDate(start.getDate() - 29);
+  let last = null;
+  render(body, html`<div class="stack"><form class="row" id="ff" style="align-items:end;gap:.75rem"><label>${t('admin.fin.from')}<input type="date" name="from" value="${ymd(start)}" required></label><label>${t('admin.fin.to')}<input type="date" name="to" value="${ymd(today)}" required></label>
+    <button class="btn" type="submit">${t('admin.fin.show')}</button><button class="btn ghost sm" type="button" id="csv" hidden>${t('admin.exportCsv')}</button></form><div id="fres"></div><p class="hint">${t('admin.fin.note')}</p></div>`);
+  const f = $('#ff', body), csvBtn = $('#csv', body);
+  f.addEventListener('submit', (e) => { e.preventDefault(); busy($('button[type=submit]', f), async () => {
+    const from = new Date(f.from.value + 'T00:00:00').getTime(), end = new Date(f.to.value + 'T00:00:00'); end.setDate(end.getDate() + 1); // اليوم الأخير شامل
+    if (!(from < end.getTime())) return toast(t('admin.fin.badRange'), true);
+    const r = last = await api('admin/finance', { from, to: end.getTime() });
+    csvBtn.hidden = false;
+    render($('#fres', body), html`<div class="tiles">
+      <div class="tile"><b>${r.orders}</b><span>${t('admin.fin.orders')}</span></div><div class="tile"><b>${fmtMoney(r.settledGross)}</b><span>${t('admin.fin.gross')}</span></div>
+      <div class="tile"><b>${fmtMoney(r.commission)}</b><span>${t('admin.fin.commission')}</span></div><div class="tile"><b>${fmtMoney(r.driverNet)}</b><span>${t('admin.fin.driverNet')}</span></div>
+      <div class="tile"><b>${fmtMoney(r.customerRefund)}</b><span>${t('admin.fin.refund')}</span></div><div class="tile"><b>${r.refunds.n} · ${fmtMoney(r.refunds.amount)}</b><span>${t('admin.fin.refReq')}</span></div>
+      <div class="tile"><b>${r.withdrawals.n} · ${fmtMoney(r.withdrawals.amount)}</b><span>${t('admin.fin.wdReq')}</span></div></div>`);
+  }); });
+  csvBtn.addEventListener('click', () => { if (!last) return; const r = last, d = (ms) => new Date(ms).toISOString().slice(0, 10);
+    downloadCsv(`finance-${d(r.from)}_${d(r.to - 1)}.csv`, toCsv([{ h: t('admin.fin.metric'), v: (x) => x[0] }, { h: t('admin.fin.value'), v: (x) => x[1] }], [
+      [t('admin.fin.from'), d(r.from)], [t('admin.fin.to'), d(r.to - 1)], [t('admin.fin.orders'), r.orders], [t('admin.fin.gross'), r.settledGross], [t('admin.fin.commission'), r.commission], [t('admin.fin.driverNet'), r.driverNet],
+      [t('admin.fin.refund'), r.customerRefund], [t('admin.fin.refReq') + ' (#)', r.refunds.n], [t('admin.fin.refReq'), r.refunds.amount], [t('admin.fin.wdReq') + ' (#)', r.withdrawals.n], [t('admin.fin.wdReq'), r.withdrawals.amount]])); });
 }
 
 // =====================================================================  المدفوعات (مراجعة إثبات التحويل)
@@ -112,26 +137,55 @@ function userModal(u, reload) {
   });
 }
 
-// =====================================================================  كل الطلبات
+// =====================================================================  كل الطلبات (بحث + عرض المزيد + تصدير)
 function orders(body) {
-  render(body, html`<div class="row" style="margin-bottom:1rem"><select id="fs" style="max-width:220px"><option value="">${t('admin.allStatus')}</option>${['awaiting_payment', 'open', 'accepted', 'payment_review', 'paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered', 'completed', 'disputed', 'resolved', 'cancelled'].map((s) => html`<option value="${s}">${t('status.' + s)}</option>`)}</select></div><div id="tbl">${spinner()}</div>`);
-  const sel = $('#fs', body);
-  const p = gpoll(['orders'], () => api('orders/list', { status: sel.value, limit: 200 }), 15000, ({ orders: rows }) => {
-    render($('#tbl', body), html`<div class="table-wrap"><table><thead><tr><th>#</th><th>${t('admin.status')}</th><th>${t('order.customer')}</th><th>${t('order.driver')}</th><th>${t('order.price')}</th><th>${t('admin.date')}</th><th></th></tr></thead>
-      <tbody>${rows.map((o) => html`<tr><td>${orderNo(o.id)}</td><td>${stamp(o.status)}</td><td>${o.customerName}</td><td>${o.driverName || '—'}</td><td class="num">${fmtMoney(o.price)}</td><td class="small">${fmtDate(o.createdAt)}</td><td><a class="btn sm ghost" href="#/order/${o.id}">${t('admin.open')}</a></td></tr>`)}</tbody></table></div>`);
+  let limit = 100, q = '', last = [], tm;
+  render(body, html`<div class="row" style="margin-bottom:1rem"><select id="fs" style="max-width:220px"><option value="">${t('admin.allStatus')}</option>${['awaiting_payment', 'open', 'accepted', 'payment_review', 'paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered', 'completed', 'disputed', 'resolved', 'cancelled'].map((s) => html`<option value="${s}">${t('status.' + s)}</option>`)}</select>
+    <input id="qs" type="search" placeholder="${t('admin.searchOrders')}" style="max-width:280px"><button class="btn ghost sm" id="csv">${t('admin.exportCsv')}</button></div><div id="tbl">${spinner()}</div><div class="row" id="more" hidden style="justify-content:center;margin-top:1rem"><button class="btn ghost" id="moreb">${t('admin.loadMore')}</button></div>`);
+  const sel = $('#fs', body), qs = $('#qs', body), more = $('#more', body);
+  const p = gpoll(['orders'], () => api('orders/list', { status: sel.value, q, limit }), 15000, ({ orders: rows }) => {
+    last = rows;
+    more.hidden = !(rows.length >= limit && limit < 300 && !q);
+    render($('#tbl', body), rows.length ? html`<div class="table-wrap"><table><thead><tr><th>#</th><th>${t('admin.status')}</th><th>${t('order.customer')}</th><th>${t('order.driver')}</th><th>${t('order.price')}</th><th>${t('admin.date')}</th><th></th></tr></thead>
+      <tbody>${rows.map((o) => html`<tr><td>${orderNo(o.id)}</td><td>${stamp(o.status)}</td><td>${o.customerName}</td><td>${o.driverName || '—'}</td><td class="num">${fmtMoney(o.price)}</td><td class="small">${fmtDate(o.createdAt)}</td><td><a class="btn sm ghost" href="#/order/${o.id}">${t('admin.open')}</a></td></tr>`)}</tbody></table></div>` : html`<div class="empty">${t('admin.noneOrders')}</div>`);
   }, { dedupe: true, onError });
-  sel.addEventListener('change', () => p.now());
+  sel.addEventListener('change', () => { limit = 100; p.now(); });
+  qs.addEventListener('input', () => { clearTimeout(tm); tm = setTimeout(() => { q = qs.value.trim(); limit = 100; p.now(); }, 350); }); // بحث بعد ما تبطّل تكتب
+  $('#moreb', body).addEventListener('click', () => { limit = Math.min(300, limit + 100); p.now(); });
+  $('#csv', body).addEventListener('click', () => downloadCsv('orders.csv', toCsv([
+    { h: '#', v: (o) => orderNo(o.id) }, { h: t('admin.status'), v: (o) => t('status.' + o.status) }, { h: t('order.customer'), v: (o) => o.customerName }, { h: t('auth.phone'), v: (o) => o.customerPhone },
+    { h: t('order.driver'), v: (o) => o.driverName }, { h: t('order.price'), v: (o) => o.price }, { h: t('admin.date'), v: (o) => new Date(o.createdAt).toISOString() },
+  ], last)));
   return p;
 }
 
-// =====================================================================  طلبات السحب
+// =====================================================================  طلبات السحب (تحديد عدّة طلبات وتأكيدها مرة واحدة + تصدير)
 function withdrawals(body) {
+  const sel = new Set(); let last = [];
+  const upd = () => { const b = $('#batch', body); if (b) { b.disabled = !sel.size; b.textContent = t('admin.payBatch', { n: sel.size }); } };
   const p = gpoll(['withdrawals'], () => api('admin/withdrawals'), 15000, ({ withdrawals: rows }) => {
-    render(body, rows.length ? html`<div class="table-wrap"><table><thead><tr><th>${t('admin.date')}</th><th>${t('order.driver')}</th><th>${t('wallet.amount')}</th><th>${t('wallet.method')}</th><th>${t('wallet.account')}</th><th>${t('admin.status')}</th><th></th></tr></thead>
-      <tbody>${rows.map((w) => html`<tr><td class="small">${fmtDate(w.createdAt)}</td><td>${w.name}<div class="small muted" dir="ltr">${w.phone}</div></td><td class="num"><b>${fmtMoney(w.amount)}</b></td><td>${t('method.' + w.method)}</td><td dir="ltr">${w.account}</td><td>${stamp(w.status)}</td>
+    last = rows;
+    for (const id of [...sel]) if (!rows.some((w) => w.id === id && w.status === 'pending')) sel.delete(id); // اللي اتعالج مبقاش متحدد
+    render(body, rows.length ? html`<div class="row" style="margin-bottom:1rem"><button class="btn ok" id="batch" disabled>${t('admin.payBatch', { n: sel.size })}</button><button class="btn ghost sm" id="csv">${t('admin.exportCsv')}</button></div>
+      <div class="table-wrap"><table><thead><tr><th></th><th>${t('admin.date')}</th><th>${t('order.driver')}</th><th>${t('wallet.amount')}</th><th>${t('wallet.method')}</th><th>${t('wallet.account')}</th><th>${t('admin.status')}</th><th></th></tr></thead>
+      <tbody>${rows.map((w) => html`<tr><td>${w.status === 'pending' ? html`<input type="checkbox" data-sel="${w.id}" ${sel.has(w.id) ? 'checked' : ''} aria-label="${t('admin.selectPending')}">` : ''}</td><td class="small">${fmtDate(w.createdAt)}</td><td>${w.name}<div class="small muted" dir="ltr">${w.phone}</div></td><td class="num"><b>${fmtMoney(w.amount)}</b></td><td>${t('method.' + w.method)}</td><td dir="ltr">${w.account}</td><td>${stamp(w.status)}</td>
       <td>${w.status === 'pending' ? html`<div class="row"><button class="btn sm ok" data-a="paid" data-id="${w.id}">${t('admin.markPaid')}</button><button class="btn sm danger" data-a="reject" data-id="${w.id}">${t('admin.reject')}</button></div>` : w.note || ''}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">${t('admin.noneWithdrawals')}</div>`);
+    upd();
   }, { dedupe: true, onError });
+  body.addEventListener('change', (e) => { const c = e.target.closest('[data-sel]'); if (!c) return; if (c.checked) sel.add(c.dataset.sel); else sel.delete(c.dataset.sel); upd(); });
   body.addEventListener('click', (e) => {
+    if (e.target.closest('#csv')) return downloadCsv('withdrawals.csv', toCsv([
+      { h: t('admin.date'), v: (w) => new Date(w.createdAt).toISOString() }, { h: t('order.driver'), v: (w) => w.name }, { h: t('auth.phone'), v: (w) => w.phone }, { h: t('wallet.amount'), v: (w) => w.amount },
+      { h: t('wallet.method'), v: (w) => t('method.' + w.method) }, { h: t('wallet.account'), v: (w) => w.account }, { h: t('admin.status'), v: (w) => w.status },
+    ], last));
+    const bb = e.target.closest('#batch');
+    if (bb) return busy(bb, async () => { // تأكيد تحويل عدّة طلبات مرة واحدة (بنكلّم السيرفر طلب طلب، وبنعرض كام نجح وكام فشل)
+      const ids = [...sel], total = last.filter((w) => sel.has(w.id)).reduce((a, w) => a + w.amount, 0);
+      if (!ids.length || !(await confirmDialog(t('admin.confirmBatch', { n: ids.length, total: fmtMoney(total) })))) return;
+      let ok = 0, fail = 0;
+      for (const id of ids) { try { await api('admin/withdrawal', { id, action: 'paid', note: '' }); ok++; sel.delete(id); } catch { fail++; } }
+      toast(t('admin.batchDone', { ok, fail }), fail > 0); await p.now();
+    });
     const b = e.target.closest('[data-a]'); if (!b) return;
     busy(b, async () => {
       let note = '';
@@ -145,13 +199,19 @@ function withdrawals(body) {
 
 // =====================================================================  الاسترجاع (تحويل يدوي على InstaPay)
 function refunds(body) {
+  let last = [];
   const p = gpoll(['refunds'], () => api('admin/refunds'), 15000, ({ refunds: rows }) => {
-    render(body, rows.length ? html`<div class="table-wrap"><table><thead><tr><th>${t('admin.date')}</th><th>${t('order.customer')}</th><th>#</th><th>${t('wallet.amount')}</th><th>${t('admin.reason')}</th><th>${t('admin.status')}</th><th></th></tr></thead>
+    last = rows;
+    render(body, rows.length ? html`<div class="row" style="margin-bottom:1rem"><button class="btn ghost sm" id="csv">${t('admin.exportCsv')}</button></div><div class="table-wrap"><table><thead><tr><th>${t('admin.date')}</th><th>${t('order.customer')}</th><th>#</th><th>${t('wallet.amount')}</th><th>${t('admin.reason')}</th><th>${t('admin.status')}</th><th></th></tr></thead>
       <tbody>${rows.map((r) => html`<tr><td class="small">${fmtDate(r.createdAt)}</td><td>${r.customerName}<div class="small muted" dir="ltr">${r.customerPhone}</div></td><td><a href="#/order/${r.orderId}">${orderNo(r.orderId)}</a></td><td class="num"><b>${fmtMoney(r.amount)}</b></td><td>${t('refund.reason.' + r.reason)}</td>
       <td><span class="stamp s-${r.status === 'paid' ? 'active' : 'pending'}">${t(r.status === 'paid' ? 'refund.done' : 'refund.wait')}</span></td>
       <td>${r.status === 'pending' ? html`<button class="btn sm ok" data-id="${r.id}" data-amount="${r.amount}">${t('admin.markRefunded')}</button>` : r.note || ''}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">${t('admin.noneRefunds')}</div>`);
   }, { dedupe: true, onError });
   body.addEventListener('click', (e) => {
+    if (e.target.closest('#csv')) return downloadCsv('refunds.csv', toCsv([
+      { h: t('admin.date'), v: (r) => new Date(r.createdAt).toISOString() }, { h: t('order.customer'), v: (r) => r.customerName }, { h: t('auth.phone'), v: (r) => r.customerPhone }, { h: '#', v: (r) => orderNo(r.orderId) },
+      { h: t('wallet.amount'), v: (r) => r.amount }, { h: t('admin.reason'), v: (r) => r.reason }, { h: t('admin.status'), v: (r) => r.status },
+    ], last));
     const b = e.target.closest('[data-id]'); if (!b) return;
     busy(b, async () => {
       const note = await promptDialog(t('admin.confirmRefund', { amount: fmtMoney(b.dataset.amount) }) + ' — ' + t('order.payRef'));

@@ -809,6 +809,38 @@ console.log('\n— الإلغاء برسوم والبلاغات والطوارئ
   await ok('إعادة ضبط حد الإلغاء', call('admin1', 'admin/settings/save', { ...(await settingsNow()), maxCancellations: 5 }));
 }
 
+// ---------------- تقرير مالي ----------------
+{
+  const day = 86400e3, from = Date.now() - 400 * day + 100 * day, to = Date.now() + day; // آخر ~300 يوم (كل بيانات الاختبار جواها)
+  const fin = await ok('تقرير مالي', call('admin1', 'admin/finance', { from, to }));
+  const inR = FS.list('orders').filter((o) => o.created_at >= from && o.created_at < to), sum = (rows, k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+  check('عدد الطلبات = اللي في القاعدة', fin.orders === inR.length && fin.orders > 3);
+  check('العمولة = مجموع عمولات الطلبات', fin.commission === sum(inR, 'commission') && fin.commission > 0);
+  check('مستحقات السواقين والمرتجع مطابقة', fin.driverNet === sum(inR, 'driver_net') && fin.customerRefund === sum(inR, 'customer_refund'));
+  check('إجمالي المُسوّى = عمولة + سواق + مرتجع', fin.settledGross === fin.commission + fin.driverNet + fin.customerRefund);
+  check('الاسترجاع والسحب بيتحسبوا', fin.refunds.n === FS.list('refunds').filter((r) => r.created_at >= from && r.created_at < to).length && fin.withdrawals.amount === sum(FS.list('withdrawals').filter((w) => w.created_at >= from && w.created_at < to), 'amount'));
+  const none = await call('admin1', 'admin/finance', { from: Date.now() + day, to: Date.now() + 2 * day });
+  check('فترة فاضية = أصفار', none.orders === 0 && none.commission === 0 && none.settledGross === 0);
+  await bad('مدى معكوس', call('admin1', 'admin/finance', { from: to, to: from }), 400, 'bad_range');
+  await bad('مدى أكبر من سنة', call('admin1', 'admin/finance', { from: 0, to: Date.now() }), 400, 'bad_range');
+  await bad('عميل مش مسموح', call('cust3', 'admin/finance', { from, to }), 403, 'forbidden');
+}
+
+// ---------------- لوحة الأدمن: بحث الطلبات ----------------
+{
+  const all = (await ok('قائمة الطلبات للأدمن', call('admin1', 'orders/list', { limit: 50 }))).orders;
+  check('فيه طلبات للبحث فيها', all.length > 3);
+  const o = all.find((x) => x.customerName && x.driverName) || all[0];
+  const byNo = (await call('admin1', 'orders/list', { q: '#' + o.id.slice(0, 6).toUpperCase() })).orders;
+  check('بحث برقم الطلب (حتى بـ # وحروف كبيرة)', byNo.some((x) => x.id === o.id) && byNo.length <= all.length);
+  const byName = (await call('admin1', 'orders/list', { q: o.customerName.slice(0, 3) })).orders;
+  check('بحث باسم العميل', byName.some((x) => x.id === o.id));
+  check('بحث من غير نتيجة', (await call('admin1', 'orders/list', { q: 'zzzz-no-match' })).orders.length === 0);
+  check('بحث مع فلتر حالة بيشتغل (الفهارس: مساواة بس)', (await call('admin1', 'orders/list', { q: 'zzzz', status: 'open' })).status === 200);
+  const mine = (await call('cust3', 'orders/list')).orders.length;
+  check('العميل بيتجاهل q (بيشوف طلباته كلها)', (await call('cust3', 'orders/list', { q: 'zzzz-no-match' })).orders.length === mine);
+}
+
 // ---------------- sync: عدّادات "إيه اللي اتغيّر" (توفير قراءات Firestore) ----------------
 {
   const stamp = async (uid = 'cust1') => (await ok('sync', call(uid, 'sync'))).stamp;

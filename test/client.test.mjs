@@ -98,4 +98,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // فشل الجلب: reset بيخلّي الدورة الجاية تجيب
   const g2 = sy.gate(['orders']); await g2(); assert.equal(await g2(), false); g2.reset(); assert.equal(await g2(), true, 'reset بعد فشل');
 }
+{ // تصدير CSV: BOM + اقتباس + حماية من حقن الصيغ
+  const { toCsv } = await import('../public/js/csv.js');
+  const csv = toCsv([{ h: 'name', v: (r) => r.n }, { h: 'amount', v: (r) => r.a }], [{ n: 'أحمد, "الكبير"', a: -5 }, { n: '=HYPERLINK("x")', a: 10 }, { n: '+cmd', a: 0 }, { n: 'عادي', a: null }]);
+  const lines = csv.split('\r\n');
+  assert.equal(csv.charCodeAt(0), 0xfeff, 'BOM عشان Excel يقرا العربي');
+  assert.equal(lines[1], '"أحمد, ""الكبير""",-5', 'اقتباس الفاصلة والعلامات + الرقم السالب يفضل رقم');
+  assert.equal(lines[2], `"'=HYPERLINK(""x"")",10`, 'حقن الصيغ متحصّن');
+  assert.equal(lines[3], "'+cmd,0"); assert.equal(lines[4], 'عادي,');
+}
 console.log('✅ poll tests passed');

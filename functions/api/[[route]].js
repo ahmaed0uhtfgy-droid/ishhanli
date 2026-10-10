@@ -179,11 +179,13 @@ const ROUTES = {
         ? (await F.query(c.env, 'orders', { eq: { driver_id: c.uid }, limit: 100 })).sort(byDesc('updated_at'))
         : (await F.query(c.env, 'orders', { eq: { status: 'open' }, limit: 100 })).sort(byDesc('created_at'));
     } else {
-      const status = c.body.status ? String(c.body.status) : null, lim = int(c.body.limit ?? 200, 1, 300);
+      const status = c.body.status ? String(c.body.status) : null, lim = String(c.body.q ?? '').trim() ? 300 : int(c.body.limit ?? 200, 1, 300); // مع البحث بنفحص آخر 300 طلب
       rows = status ? (await F.query(c.env, 'orders', { eq: { status }, limit: lim })).sort(byDesc('created_at'))
         : await F.query(c.env, 'orders', { order: ['created_at', 'desc'], limit: lim });
     }
     const out = rows.map((r) => orderOut(hydrateOrder(r), u, { brief: true }));
+    const q = u.role === 'admin' ? String(c.body.q ?? '').trim().replace(/^#/, '').slice(0, 40).toLowerCase() : ''; // بحث الأدمن: رقم الطلب / اسم أو موبايل العميل أو السواق
+    if (q) { const has = (v) => String(v ?? '').toLowerCase().includes(q); return { orders: out.filter((o) => has(o.id.slice(0, 6)) || has(o.customerName) || has(o.customerPhone) || has(o.driverName) || has(o.driverPhone)) }; }
     if (u.role === 'customer') { // عدد العروض المعلّقة على كل طلب مفتوح
       const open = out.filter((o) => o.status === 'open').map((o) => o.id);
       if (open.length) {
@@ -607,6 +609,21 @@ const ROUTES = {
       perDay: daily.map((r, i) => (r && r.n > 0 ? { d: days[i], n: r.n } : null)).filter(Boolean),
       refundsDue: refunds.n,
     };
+  },
+
+  // تقرير مالي لفترة: كله بتجميع Firestore (sum/count) — بيتحسب بقراءات قليلة جداً من غير ما نقرا الطلبات نفسها.
+  // الأرقام حسب تاريخ إنشاء الطلب (مش تاريخ التسوية). الاسترجاع والسحب حسب تاريخ طلبهم.
+  async 'admin/finance'(c) {
+    await need(c, ['admin']);
+    const from = int(c.body.from, 0, 4e12, 'bad_range'), to = int(c.body.to, 1, 4e12, 'bad_range');
+    if (to <= from || to - from > 366 * 86400e3) throw new HttpError(400, 'bad_range');
+    const rng = { range: [['created_at', '>=', from], ['created_at', '<', to]] };
+    const [o, rf, wd] = await Promise.all([
+      F.aggregate(c.env, 'orders', rng, { n: ['count'], commission: ['sum', 'commission'], driver: ['sum', 'driver_net'], refund: ['sum', 'customer_refund'] }),
+      F.aggregate(c.env, 'refunds', rng, { n: ['count'], amount: ['sum', 'amount'] }),
+      F.aggregate(c.env, 'withdrawals', rng, { n: ['count'], amount: ['sum', 'amount'] }),
+    ]);
+    return { from, to, orders: o.n, commission: o.commission, driverNet: o.driver, customerRefund: o.refund, settledGross: o.commission + o.driver + o.refund, refunds: { n: rf.n, amount: rf.amount }, withdrawals: { n: wd.n, amount: wd.amount } };
   },
 
   async 'admin/users'(c) {
