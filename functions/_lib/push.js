@@ -48,6 +48,7 @@ const MSG = {
   offer_accepted: { ar: ['تم قبول عرضك', 'العميل قبل عرضك ({price} ج) على الطلب {no} — استنى تأكيد الدفع'], en: ['Your offer was accepted', 'The customer accepted your EGP {price} offer on {no} — wait for payment confirmation'] },
   offer_rejected: { ar: ['تم اختيار سواق آخر', 'الطلب {no} اتاخد من سواق تاني'], en: ['Another driver was chosen', 'Order {no} went to another driver'] },
   accepted: { ar: ['سواق قبل طلبك', 'السواق {driver} قبل الطلب {no} — ادفع لتأكيد الحجز'], en: ['A driver accepted your order', 'Driver {driver} accepted {no} — pay to confirm the booking'] },
+  handler_assigned: { ar: ['تم تحديد سواق الشحنة', 'السواق {name} (لوحة {plate}) هيستلم الطلب {no}'], en: ['Your shipment driver is set', 'Driver {name} (plate {plate}) will pick up {no}'] },
   proof: { ar: ['إثبات دفع جديد', 'الطلب {no} محتاج مراجعة'], en: ['New payment proof', 'Order {no} needs review'] },
   paid_driver: { ar: ['تم تأكيد الدفع — ابدأ التنفيذ', 'المبلغ محجوز للطلب {no}'], en: ['Payment confirmed — start the job', 'Funds are held for order {no}'] },
   paid_customer: { ar: ['تم تأكيد دفعك', 'المبلغ محجوز وهيبدأ السواق تنفيذ الطلب {no}'], en: ['Payment confirmed', 'Funds are held and the driver will start order {no}'] },

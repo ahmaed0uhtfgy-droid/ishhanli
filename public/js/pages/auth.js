@@ -1,4 +1,4 @@
-import { auth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, deleteUser, RecaptchaVerifier, linkWithPhoneNumber } from '../firebase.js';
+import { auth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, deleteUser, RecaptchaVerifier, linkWithPhoneNumber, GoogleAuthProvider, signInWithPopup, signInWithRedirect } from '../firebase.js';
 import { api, poll } from '../api.js';
 import { gpoll } from '../sync.js';
 import { APP } from '../config.js';
@@ -6,6 +6,24 @@ import { state } from '../state.js';
 import { t, getLang } from '../i18n.js';
 import { $, html, render, toast, errMsg, busy, promptDialog } from '../ui.js';
 import { uploadImage } from '../storage.js';
+
+// تسجيل الدخول بجوجل: نافذة منبثقة، ولو المتصفح منعها (غالباً موبايل) بنحوّل لإعادة توجيه. الحساب الجديد بيروح لصفحة «أكمل بياناتك».
+const GOOGLE_BTN = () => html`<button class="btn ghost block" type="button" id="gbtn"><svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true" style="vertical-align:middle;margin-inline-end:.5rem"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.6 5.9c4.4-4.1 7-10.1 7-17.6z"/><path fill="#FBBC05" d="M10.5 28.7A14.5 14.5 0 0 1 9.5 24c0-1.6.3-3.2.8-4.7l-7.9-6.1A24 24 0 0 0 0 24c0 3.9.9 7.5 2.6 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.6-5.9c-2.1 1.4-4.9 2.3-8.3 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>${t('auth.google')}</button>`;
+async function googleSignIn(btn, errEl) {
+  errEl.textContent = '';
+  await busy(btn, async () => {
+    const provider = new GoogleAuthProvider(); provider.setCustomParameters({ prompt: 'select_account' });
+    try {
+      await signInWithPopup(auth, provider);
+      api('auth/login').catch(() => {});
+    } catch (er) {
+      if (er?.code === 'auth/popup-blocked') { await signInWithRedirect(auth, provider); return; }
+      if (er?.code === 'auth/popup-closed-by-user' || er?.code === 'auth/cancelled-popup-request') return; // المستخدم قفل النافذة: مش خطأ
+      console.error('google sign-in failed', er?.code, er?.message);
+      errEl.textContent = errMsg(er) + ' (' + String(er?.code || er?.message || 'unknown').slice(0, 60) + ')';
+    }
+  });
+}
 
 const VEHICLES = ['pickup', 'half_ton', 'truck', 'van', 'car', 'microbus', 'minibus'];
 
@@ -17,12 +35,15 @@ export function renderLogin(el) {
       <label class="f">${t('auth.password')}<input type="password" name="password" autocomplete="current-password" required></label>
       <p class="err" id="err" role="alert"></p>
       <button class="btn primary block" type="submit">${t('nav.login')}</button>
+      <p class="hint" style="text-align:center">${t('auth.or')}</p>
+      ${GOOGLE_BTN()}
     </form>
     <div class="row"><a href="#/forgot">${t('auth.forgot')}</a><span class="grow"></span><a href="#/register">${t('auth.noAccount')}</a></div>
   </div>`);
+  $('#gbtn', el).addEventListener('click', () => googleSignIn($('#gbtn', el), $('#err', el)));
   $('#f', el).addEventListener('submit', (e) => {
     e.preventDefault(); const f = e.target;
-    busy($('button', f), async () => {
+    busy($('button[type=submit]', f), async () => {
       try { await signInWithEmailAndPassword(auth, f.email.value.trim(), f.password.value); api('auth/login').catch(() => {}); } catch (er) { $('#err', el).textContent = errMsg(er); }
     });
   });
@@ -60,7 +81,7 @@ export function renderRegister(el, query) {
   const file = (name, key, req = true) => html`<label class="f">${t(key)}<input type="file" name="${name}" accept="image/*" ${req ? 'required' : ''}></label>`;
   render(el, html`<div class="auth card stack">
     <h1>${t('auth.registerTitle')}</h1>
-    ${needsAccount ? '' : html`<div class="action info">${t('auth.completeProfile')}</div>`}
+    ${needsAccount ? html`${GOOGLE_BTN()}<p class="hint" style="text-align:center">${t('auth.orEmail')}</p>` : html`<div class="action info">${t('auth.completeProfile')}</div>`}
     <div class="role-pick" role="group" aria-label="${t('auth.iAm')}">
       <button type="button" data-role="customer"><b>${t('auth.roleCustomer')}</b><span class="hint">${t('auth.roleCustomerHint')}</span></button>
       <button type="button" data-role="driver"><b>${t('auth.roleDriver')}</b><span class="hint">${t('auth.roleDriverHint')}</span></button>
@@ -79,7 +100,13 @@ export function renderRegister(el, query) {
       ${file('idFile', 'auth.idPhoto')}
       <div id="driverOnly" class="stack" hidden>
         <label class="f">${t('auth.vehicleType')}<select name="vehicleType">${VEHICLES.map((v) => html`<option value="${v}">${t('vehicle.' + v)}</option>`)}</select></label>
-        ${file('licenseFile', 'auth.license', false)}${file('vehicleRegFile', 'auth.vehicleReg', false)}${file('vehiclePhotoFile', 'auth.vehiclePhoto', false)}
+        <label class="row"><input type="checkbox" name="isCompany"> <span>${t('auth.asCompany')}</span></label>
+        <div id="companyOnly" class="stack" hidden>
+          <label class="f">${t('auth.companyName')}<input name="companyName" maxlength="80"></label>
+          ${file('commercialRegFile', 'auth.commercialReg', false)}${file('taxCardFile', 'auth.taxCard', false)}
+          <p class="hint">${t('auth.companyHint')}</p>
+        </div>
+        <div id="indivDocs" class="stack">${file('licenseFile', 'auth.license', false)}${file('vehicleRegFile', 'auth.vehicleReg', false)}${file('vehiclePhotoFile', 'auth.vehiclePhoto', false)}</div>
         <p class="hint">${t('auth.driverReview')}</p>
       </div>
       <label class="row"><input type="checkbox" name="terms" required> <span>${t('auth.terms')}</span></label>
@@ -91,14 +118,18 @@ export function renderRegister(el, query) {
   </div>`);
 
   const f = $('#f', el), err = $('#err', el);
-  const paint = () => { el.querySelectorAll('[data-role]').forEach((b) => b.classList.toggle('on', b.dataset.role === role)); $('#driverOnly', el).hidden = role !== 'driver'; };
+  if (needsAccount) $('#gbtn', el).addEventListener('click', () => googleSignIn($('#gbtn', el), err));
+  const isCo = () => role === 'driver' && f.isCompany.checked;
+  const paint = () => { el.querySelectorAll('[data-role]').forEach((b) => b.classList.toggle('on', b.dataset.role === role)); $('#driverOnly', el).hidden = role !== 'driver'; $('#companyOnly', el).hidden = !isCo(); $('#indivDocs', el).hidden = isCo(); };
+  f.isCompany.addEventListener('change', paint);
   el.addEventListener('click', (e) => { const b = e.target.closest('[data-role]'); if (b) { role = b.dataset.role; paint(); } });
   paint();
 
   f.addEventListener('submit', (e) => {
     e.preventDefault(); err.textContent = '';
     if (!f.terms.checked) { err.textContent = t('err.terms'); return; }
-    if (role === 'driver' && !(f.licenseFile.files[0] && f.vehicleRegFile.files[0] && f.vehiclePhotoFile.files[0])) { err.textContent = t('err.driverDocs'); return; }
+    if (isCo()) { if (f.companyName.value.trim().length < 2 || !(f.commercialRegFile.files[0] && f.taxCardFile.files[0])) { err.textContent = t('err.companyDocs'); return; } }
+    else if (role === 'driver' && !(f.licenseFile.files[0] && f.vehicleRegFile.files[0] && f.vehiclePhotoFile.files[0])) { err.textContent = t('err.driverDocs'); return; }
     if (!f.idFile.files[0]) { err.textContent = t('err.bad_file'); return; }
     busy($('#submit', el), async () => {
       const say = (k) => { $('#progress', el).textContent = t(k); };
@@ -111,9 +142,15 @@ export function renderRegister(el, query) {
         body.idRef = await uploadImage(f.idFile.files[0], 'id');
         if (role === 'driver') {
           body.vehicleType = f.vehicleType.value;
-          body.licenseRef = await uploadImage(f.licenseFile.files[0], 'license');
-          body.vehicleRegRef = await uploadImage(f.vehicleRegFile.files[0], 'vehicle');
-          body.vehiclePhotoRef = await uploadImage(f.vehiclePhotoFile.files[0], 'vehiclePhoto');
+          if (isCo()) { // شركة شحن: مستنداتها بدل مستندات السواق الفرد
+            body.accountType = 'company'; body.companyName = f.companyName.value.trim();
+            body.commercialRegRef = await uploadImage(f.commercialRegFile.files[0], 'company');
+            body.taxCardRef = await uploadImage(f.taxCardFile.files[0], 'company');
+          } else {
+            body.licenseRef = await uploadImage(f.licenseFile.files[0], 'license');
+            body.vehicleRegRef = await uploadImage(f.vehicleRegFile.files[0], 'vehicle');
+            body.vehiclePhotoRef = await uploadImage(f.vehiclePhotoFile.files[0], 'vehiclePhoto');
+          }
         }
         if (APP.phoneOTP && !auth.currentUser.phoneNumber) await verifyPhone(String(f.phone.value).replace(/\D/g, ''));
         say('auth.saving');
@@ -125,7 +162,9 @@ export function renderRegister(el, query) {
       } catch (er) {
         state.registering = false; $('#progress', el).textContent = '';
         if (created && ['blacklisted', 'duplicate', 'bad_phone', 'bad_national_id'].includes(er.code)) { try { await deleteUser(auth.currentUser); } catch { /* ignore */ } }
-        err.textContent = errMsg(er);
+        console.error('register failed', er?.code, er?.message, er);
+        const msg = errMsg(er) + ' (' + String(er?.code || er?.message || 'unknown').slice(0, 60) + ')'; // الكود بيساعد في تشخيص السبب
+        err.textContent = msg; toast(msg, true); // toast كمان: الفورم ممكن يتعاد رسمه ويمسح رسالة الخطأ
       }
     });
   });

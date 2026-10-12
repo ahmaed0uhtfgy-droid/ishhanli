@@ -46,6 +46,12 @@ export const userOut = (r) => r && ({
   ratingCount: r.rating_count, completedOrders: r.completed_orders, cancelCount: r.cancel_count, addresses: parseArr(r.addresses),
   profileEditedAt: r.profile_edited_at || 0, profileEditDays: r.profile_edit_days ?? null, createdAt: r.created_at,
   referralCode: r.referral_code || null, referredBy: r.referred_by || null, totpEnabled: !!r.totp_enabled,
+  accountType: r.account_type || 'individual', companyName: r.company_name || null, commercialRegRef: r.commercial_reg_ref || null, taxCardRef: r.tax_card_ref || null,
+});
+// سواق تابع لشركة شحن: بياناته (بطاقة/رخصة/لوحة) بتتسجّل عشان لو الشحنة اتلفت أو اتسرقت يبقى معروف مين استلمها
+export const fleetOut = (r) => ({
+  id: r.id, companyUid: r.company_uid, name: r.name, phone: r.phone, nationalId: r.national_id, plate: r.plate, vehicleType: r.vehicle_type,
+  idRef: r.id_ref, licenseRef: r.license_ref, vehiclePhotoRef: r.vehicle_photo_ref || null, active: r.active !== false, createdAt: r.created_at,
 });
 export const withdrawalOut = (r) => ({
   id: r.id, uid: r.uid, name: r.name, phone: r.phone, amount: r.amount, method: r.method, account: r.account, status: r.status,
@@ -92,6 +98,10 @@ const AFTER_PAYMENT = ['paid', 'heading_pickup', 'picked_up', 'in_transit', 'del
 export function orderOut(o, viewer, { brief = false } = {}) {
   const { _v, _ut, ...x } = o;
   x.version = _v;
+  if (x.handler && viewer.role !== 'admin' && o.driverId !== viewer.uid) { // العميل يشوف اسم/موبايل/لوحة سواق الشركة بس — مش بطاقته ولا رخصته
+    const { name, phone, plate, vehicleType } = x.handler; x.handler = { name, phone, plate, vehicleType };
+  }
+  if (viewer.role !== 'admin') delete x.handlerHistory;
   if (viewer.role === 'driver') {
     delete x.paymentProof; delete x.paymentRef; delete x.paymentRejectReason;
     if (o.driverId !== viewer.uid) { delete x.customerName; delete x.customerPhone; }

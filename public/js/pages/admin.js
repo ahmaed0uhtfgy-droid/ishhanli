@@ -6,10 +6,10 @@ import { $, $$, html, raw, render, toast, errMsg, busy, spinner, stamp, orderNo,
 import { hydrate, imgTag } from '../storage.js';
 import { toCsv, downloadCsv, downloadJson } from '../csv.js';
 
-const TABS = ['overview', 'finance', 'payments', 'users', 'orders', 'withdrawals', 'disputes', 'refunds', 'reports', 'coupons', 'referrals', 'settings', 'blacklist', 'audit', 'monitoring'];
+const TABS = ['overview', 'finance', 'payments', 'users', 'joins', 'orders', 'withdrawals', 'disputes', 'refunds', 'reports', 'coupons', 'referrals', 'settings', 'blacklist', 'audit', 'monitoring'];
 const onError = (e) => toast(errMsg(e), true);
 const imgs = (refs) => html`<div class="photos">${(refs || []).filter(Boolean).map((r) => raw(imgTag(r)))}</div>`;
-const roleKey = (u) => 'auth.role' + (u.role === 'driver' ? 'Driver' : 'Customer');
+const roleKey = (u) => (u.accountType === 'company' ? 'auth.roleCompany' : 'auth.role' + (u.role === 'driver' ? 'Driver' : 'Customer'));
 
 export function renderAdmin(el, tab) {
   if (!TABS.includes(tab)) tab = 'overview';
@@ -18,9 +18,10 @@ export function renderAdmin(el, tab) {
   // شارات الأعداد المعلّقة (استعلامات خفيفة على index الحالة) — كل 20 ثانية
   const badges = gpoll(['orders', 'users', 'withdrawals', 'disputes', 'refunds', 'reports'], () => api('admin/badges'), 20000, ({ badges: b }) => {
     for (const [k, n] of Object.entries(b)) { const d = $(`[data-tab="${k}"] .dot`, el); if (d) { d.textContent = n; d.hidden = !n; } }
+    const dj = $('[data-tab="joins"] .dot', el); if (dj) { dj.textContent = b.users || 0; dj.hidden = !b.users; } // طلبات الانضمام = الحسابات المعلّقة
   }, { dedupe: true });
   const body = $('#body', el);
-  const stop = { overview, finance, payments, users, orders, withdrawals, disputes, refunds, reports, coupons, referrals, settings, blacklist, audit, monitoring }[tab](body, badges);
+  const stop = { overview, finance, payments, users, joins, orders, withdrawals, disputes, refunds, reports, coupons, referrals, settings, blacklist, audit, monitoring }[tab](body, badges);
   return () => { badges(); stop?.(); };
 }
 
@@ -112,17 +113,47 @@ function users(body, badges) {
   return () => clearTimeout(timer);
 }
 
+// =====================================================================  طلبات الانضمام (سواقين وشركات شحن معلّقين) — مستنداتهم ظاهرة مباشرة للمراجعة
+function joins(body, badges) {
+  let cur = [];
+  const p = gpoll(['users'], () => api('admin/users', { status: 'pending' }), 20000, ({ users: rows }) => {
+    cur = rows.filter((u) => u.status === 'pending');
+    render(body, cur.length ? html`<div class="stack">${cur.map((u) => html`<div class="card stack">
+      <div class="row"><h3 class="grow">${u.accountType === 'company' ? (u.companyName || u.name) : u.name}</h3><span class="stamp s-pending">${t(roleKey(u))}</span></div>
+      <dl class="kv"><dt>${t('auth.name')}</dt><dd>${u.name}</dd><dt>${t('auth.phone')}</dt><dd dir="ltr">${u.phone}</dd><dt>${t('auth.nationalId')}</dt><dd dir="ltr">${u.nationalId}</dd>
+        ${u.role === 'driver' && u.vehicleType ? html`<dt>${t('auth.vehicleType')}</dt><dd>${t('vehicle.' + u.vehicleType)}</dd>` : ''}<dt>${t('admin.joinedAt')}</dt><dd>${fmtDate(u.createdAt)}</dd></dl>
+      ${u.role === 'driver' ? imgs([u.idRef, u.licenseRef, u.vehicleRegRef, u.vehiclePhotoRef, u.commercialRegRef, u.taxCardRef]) : imgs([u.idRef])}
+      <div class="row"><button class="btn ok" data-d="active" data-id="${u.id}">${t('admin.approve')}</button><button class="btn danger" data-d="rejected" data-id="${u.id}">${t('admin.reject')}</button><button class="btn ghost sm" data-open="${u.id}">${t('admin.review')}</button></div></div>`)}</div>` : html`<div class="empty">${t('admin.noJoins')}</div>`);
+    hydrate(body);
+  }, { dedupe: true, onError });
+  body.addEventListener('click', (e) => {
+    const o = e.target.closest('[data-open]');
+    if (o) return void userModal(cur.find((u) => u.id === o.dataset.open), async () => { await p.now?.(); badges.now(); });
+    const b = e.target.closest('[data-d]'); if (!b) return;
+    busy(b, async () => {
+      try {
+        let reason = '';
+        if (b.dataset.d === 'rejected') { reason = await promptDialog(t('admin.rejectReason'), { required: true }); if (reason === null) return; }
+        await api('admin/user', { uid: b.dataset.id, status: b.dataset.d, reason, blacklist: false });
+        toast(t('common.done')); await p.now?.(); badges.now();
+      } catch (er) { onError(er); }
+    });
+  });
+  return p;
+}
+
 function userModal(u, reload) {
   if (!u) return;
-  const docsRefs = [['auth.idPhoto', u.idRef], ['auth.license', u.licenseRef], ['auth.vehicleReg', u.vehicleRegRef], ['auth.vehiclePhoto', u.vehiclePhotoRef]].filter(([, r]) => r);
+  const docsRefs = [['auth.idPhoto', u.idRef], ['auth.license', u.licenseRef], ['auth.vehicleReg', u.vehicleRegRef], ['auth.vehiclePhoto', u.vehiclePhotoRef], ['auth.commercialReg', u.commercialRegRef], ['auth.taxCard', u.taxCardRef]].filter(([, r]) => r);
   const { el, close } = openModal(html`<div class="row"><h3 class="grow">${u.name}</h3>${stamp(u.status)}</div>
     <dl class="kv"><dt>${t('admin.role')}</dt><dd>${t(roleKey(u))}</dd><dt>${t('auth.phone')}</dt><dd dir="ltr">${u.phone} ${u.phoneVerified ? '✓' : ''}</dd>
       <dt>${t('auth.nationalId')}</dt><dd dir="ltr">${u.nationalId}</dd><dt>${t('auth.email')}</dt><dd dir="ltr">${u.email}</dd><dt>${t('auth.area')}</dt><dd>${u.area || '—'}</dd>
-      ${u.vehicleType ? html`<dt>${t('auth.vehicleType')}</dt><dd>${t('vehicle.' + u.vehicleType)}</dd>` : ''}
+      ${u.vehicleType ? html`<dt>${t('auth.vehicleType')}</dt><dd>${t('vehicle.' + u.vehicleType)}</dd>` : ''}${u.companyName ? html`<dt>${t('auth.companyName')}</dt><dd>${u.companyName}</dd>` : ''}
       ${u.trust ? html`<dt>${t('trust.title')}</dt><dd>${trustBadge(u.trust)}</dd>` : ''}<dt>${t('admin.trips')}</dt><dd>${u.completedOrders || 0}</dd><dt>${t('admin.cancels')}</dt><dd>${u.cancelCount || 0}</dd><dt>${t('admin.rating')}</dt><dd>${ratingText(u)}</dd>
       ${u.statusReason ? html`<dt>${t('status.reason')}</dt><dd>${u.statusReason}</dd>` : ''}</dl>
     <h3 style="margin-top:1rem">${t('admin.documents')}</h3>
     <div class="stack">${docsRefs.map(([k, r]) => html`<div><div class="muted small">${t(k)}</div>${imgs([r])}</div>`)}</div>
+    ${u.accountType === 'company' ? html`<h3 style="margin-top:1rem">${t('fleet.listTitle')}</h3><div id="fleetBox">${spinner()}</div>` : ''}
     <label class="f" style="margin-top:1rem">${t('admin.reason')}<input id="reason"></label>
     <label class="row" style="margin-top:.5rem"><input type="checkbox" id="bl"> <span class="small">${t('admin.addBlacklist')}</span></label>
     <div class="action" style="margin-top:1rem"><h3>${t('admin.profileEdit')}</h3>
@@ -135,6 +166,11 @@ function userModal(u, reload) {
       ${u.status === 'pending' ? html`<button class="btn danger" data-s="rejected">${t('admin.reject')}</button>` : ''}
       ${u.status !== 'banned' ? html`<button class="btn danger" data-s="banned">${t('admin.ban')}</button>` : ''}</div>`, { wide: true });
   hydrate(el);
+  if (u.accountType === 'company') api('admin/fleet', { uid: u.id }).then(({ drivers }) => { // سواقين الشركة ببياناتهم ومستنداتهم (حتى الموقوفين: السجل بيفضل)
+    render($('#fleetBox', el), drivers.length ? html`<div class="stack">${drivers.map((d) => html`<div class="card stack"><div class="row"><b class="grow">${d.name}</b>${d.active ? '' : html`<span class="stamp s-banned">${t('fleet.removed')}</span>`}</div>
+      <div class="muted small" dir="ltr">${d.phone} · ${d.nationalId} · ${d.plate}</div>${imgs([d.idRef, d.licenseRef, d.vehiclePhotoRef])}</div>`)}</div>` : html`<div class="empty">${t('fleet.empty')}</div>`);
+    hydrate($('#fleetBox', el));
+  }).catch((er) => { const b = $('#fleetBox', el); if (b) b.textContent = errMsg(er); });
   el.addEventListener('click', (e) => {
     const pe = e.target.closest('[data-pe]');
     if (pe) return void busy(pe, async () => {

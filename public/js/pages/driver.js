@@ -2,7 +2,8 @@ import { api, poll } from '../api.js';
 import { gpoll } from '../sync.js';
 import { state } from '../state.js';
 import { t } from '../i18n.js';
-import { $, html, render, toast, errMsg, busy, spinner, waybill, stamp, orderNo, fmtMoney, fmtNum, fmtDate, ratingText, label, openModal, trustBadge, printNode } from '../ui.js';
+import { $, html, render, toast, errMsg, busy, spinner, waybill, stamp, orderNo, fmtMoney, fmtNum, fmtDate, ratingText, label, openModal, trustBadge, printNode, confirmDialog } from '../ui.js';
+import { uploadImage } from '../storage.js';
 import { getPos } from '../geo.js';
 import { chime, unlockAudio } from '../sound.js';
 import { pushSupport, enablePush } from '../push.js';
@@ -20,15 +21,16 @@ const canServe = (v, o) => {
 };
 
 export function renderDriver(el, tab) {
+  const company = state.profile.accountType === 'company', tabs = company ? [...TABS, ['fleet', 'fleet.tab']] : TABS; // شركة الشحن عندها تاب لسواقينها
   render(el, html`<div class="page-head"><h1>${t('driver.title')}</h1><span class="muted">${ratingText(state.profile)}</span></div>
     <div id="trust"></div>
     <div id="presence"></div>
-    <nav class="tabs" aria-label="driver">${TABS.map(([k, l]) => html`<a href="#/driver${k === 'available' ? '' : '/' + k}" class="${tab === k ? 'on' : ''}">${t(l)}</a>`)}</nav><div id="body">${spinner()}</div>`);
+    <nav class="tabs" aria-label="driver">${tabs.map(([k, l]) => html`<a href="#/driver${k === 'available' ? '' : '/' + k}" class="${tab === k ? 'on' : ''}">${t(l)}</a>`)}</nav><div id="body">${spinner()}</div>`);
   const body = $('#body', el), stopPresence = presenceBar($('#presence', el));
   const paintTrust = (tr) => render($('#trust', el), tr ? trustCard(tr) : '');
   paintTrust(state.profile.trust);
   api('me').then((r) => { if (r.profile?.trust) { Object.assign(state.profile, { trust: r.profile.trust, ratingSum: r.profile.ratingSum, ratingCount: r.profile.ratingCount, completedOrders: r.profile.completedOrders }); paintTrust(r.profile.trust); } }).catch(() => {});
-  const stopTab = tab === 'jobs' ? jobs(body) : tab === 'wallet' ? wallet(body) : available(body);
+  const stopTab = tab === 'jobs' ? jobs(body) : tab === 'wallet' ? wallet(body) : tab === 'fleet' && company ? fleet(body) : available(body);
   return () => { stopPresence(); stopTab?.(); };
 }
 
@@ -125,6 +127,48 @@ function jobs(body) {
     const done = ['completed', 'cancelled', 'resolved'], act = rows.filter((o) => !done.includes(o.status)), old = rows.filter((o) => done.includes(o.status));
     render(body, rows.length ? html`<div class="stack">${act.length ? html`<h3>${t('driver.active')}</h3>${act.map((o) => waybill(o))}` : ''}${old.length ? html`<h3>${t('driver.history')}</h3>${old.map((o) => waybill(o))}` : ''}</div>` : html`<div class="empty">${t('driver.noJobs')}</div>`);
   }, { dedupe: true, onError });
+}
+
+// ---------- سواقين الشركة: بيانات كاملة لكل سواق (بطاقة/رخصة/لوحة) — عشان لو الشحنة اتلفت أو اتسرقت يبقى معروف مين استلمها ----------
+const FLEET_VEHICLES = ['pickup', 'half_ton', 'truck', 'van', 'car', 'microbus', 'minibus'];
+function fleet(body) {
+  const file = (name, key, req = true) => html`<label class="f">${t(key)}<input type="file" name="${name}" accept="image/*" ${req ? 'required' : ''}></label>`;
+  render(body, html`<div class="stack"><div class="card stack"><h3>${t('fleet.addTitle')}</h3><p class="hint">${t('fleet.addHint')}</p>
+    <form id="ff" class="stack" novalidate>
+      <label class="f">${t('fleet.name')}<input name="name" required minlength="2" maxlength="80"></label>
+      <div class="grid-2"><label class="f">${t('auth.phone')}<input name="phone" inputmode="tel" placeholder="01xxxxxxxxx" required></label>
+        <label class="f">${t('auth.nationalId')}<input name="nationalId" inputmode="numeric" maxlength="14" required></label></div>
+      <div class="grid-2"><label class="f">${t('fleet.plate')}<input name="plate" maxlength="20" required></label>
+        <label class="f">${t('auth.vehicleType')}<select name="vehicleType">${FLEET_VEHICLES.map((v) => html`<option value="${v}">${t('vehicle.' + v)}</option>`)}</select></label></div>
+      ${file('idFile', 'auth.idPhoto')}${file('licenseFile', 'auth.license')}${file('vehiclePhotoFile', 'auth.vehiclePhoto', false)}
+      <p class="err" id="ferr" role="alert"></p>
+      <button class="btn primary block" type="submit" id="fsub">${t('fleet.add')}</button></form></div>
+    <h3>${t('fleet.listTitle')}</h3><div id="flist">${spinner()}</div></div>`);
+  const load = async () => {
+    try {
+      const { drivers } = await api('fleet/list');
+      render($('#flist', body), drivers.length ? html`<div class="stack">${drivers.map((d) => html`<div class="card"><div class="row"><div class="grow"><b>${d.name}</b><div class="muted small" dir="ltr">${d.phone} · ${d.plate}</div><div class="muted small">${t('vehicle.' + d.vehicleType)}</div></div><button class="btn ghost sm" data-rm="${d.id}">${t('fleet.remove')}</button></div></div>`)}</div>` : html`<div class="empty">${t('fleet.empty')}</div>`);
+    } catch (e) { render($('#flist', body), html`<div class="empty">${errMsg(e)}</div>`); }
+  };
+  const f = $('#ff', body), err = $('#ferr', body);
+  f.addEventListener('submit', (e) => {
+    e.preventDefault(); err.textContent = '';
+    if (!(f.idFile.files[0] && f.licenseFile.files[0])) { err.textContent = t('err.bad_file'); return; }
+    busy($('#fsub', body), async () => {
+      try {
+        const b = { name: f.name.value, phone: f.phone.value, nationalId: f.nationalId.value, plate: f.plate.value, vehicleType: f.vehicleType.value };
+        b.idRef = await uploadImage(f.idFile.files[0], 'id'); b.licenseRef = await uploadImage(f.licenseFile.files[0], 'license');
+        if (f.vehiclePhotoFile.files[0]) b.vehiclePhotoRef = await uploadImage(f.vehiclePhotoFile.files[0], 'vehiclePhoto');
+        await api('fleet/add', b); toast(t('fleet.added')); f.reset(); await load();
+      } catch (er) { console.error('fleet add failed', er?.code, er?.message); err.textContent = errMsg(er) + ' (' + String(er?.code || er?.message || 'unknown').slice(0, 60) + ')'; }
+    });
+  });
+  body.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-rm]'); if (!b) return;
+    if (!(await confirmDialog(t('fleet.removeAsk'), { danger: true, ok: t('fleet.remove') }))) return;
+    busy(b, async () => { try { await api('fleet/remove', { id: b.dataset.rm }); toast(t('common.done')); await load(); } catch (er) { onError(er); } });
+  });
+  load();
 }
 
 // ---------- المحفظة ----------

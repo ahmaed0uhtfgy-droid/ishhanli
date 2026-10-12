@@ -1,7 +1,7 @@
 // كل المنطق الحساس (الصلاحيات، السعر، Escrow، العمولة، المحفظة، النزاعات) بيتنفذ هنا على السيرفر (Cloudflare Pages Functions).
 // البيانات في Firestore، والمتصفح مالوش وصول مباشر ليها: كل قراءة وكتابة بتعدّي من هنا وبتتفلتر حسب دور المستخدم.
 import { HttpError, verifyIdToken, newId } from '../_lib/core.js';
-import { F, STAMP_KINDS, STAMP_PATH, now, rateLimit, walletCredit, walletTx, userOut, withdrawalOut, txOut, disputeOut, loadOrder, hydrateOrder, orderUpdate, orderOut, auditLog } from '../_lib/db.js';
+import { F, STAMP_KINDS, STAMP_PATH, now, rateLimit, walletCredit, walletTx, userOut, fleetOut, withdrawalOut, txOut, disputeOut, loadOrder, hydrateOrder, orderUpdate, orderOut, auditLog } from '../_lib/db.js';
 import { randomBase32, verifyTotp, otpauthURL } from '../_lib/totp.js';
 import { loadSettings, clearSettingsCache, sanitizeSettings, distanceKm, calcPrice, calcPassengerPrice, effectiveCommissionPct, canServe, cancelSplit, couponDiscount, haversineM, split } from '../_lib/logic.js';
 import { saveFile, ownFiles, readFile } from '../_lib/files.js';
@@ -75,6 +75,7 @@ async function need(c, roles, opts = {}) {
   }
   return userOut(r);
 }
+async function needCompany(c) { const u = await need(c, ['driver']); if (u.accountType !== 'company') throw new HttpError(403, 'company_only'); return u; }
 async function viewer(c) { // أي مستخدم مفعّل (أو أدمن) للقراءة
   const u = userOut(await F.get(c.env, `users/${c.uid}`));
   if (!u) throw new HttpError(403, 'no_profile');
@@ -207,10 +208,15 @@ const ROUTES = {
     if (!/^[23]\d{13}$/.test(nid)) throw new HttpError(400, 'bad_national_id');
     const name = str(body.name, 2, 80), area = str(body.area ?? '', 0, 60), lang = body.lang === 'en' ? 'en' : 'ar';
     const refs = { id: fileRef(body.idRef) }, driver = role === 'driver';
-    let vehicleType = null;
+    const company = driver && body.accountType === 'company'; // شركة شحن: بتتعامل كسواق، لكن بمستندات الشركة، وسواقينها بيتسجّلوا لاحقاً
+    let vehicleType = null, companyName = null;
     if (driver) {
       vehicleType = str(body.vehicleType, 2, 40);
-      refs.license = fileRef(body.licenseRef); refs.vehicleReg = fileRef(body.vehicleRegRef); refs.vehiclePhoto = fileRef(body.vehiclePhotoRef);
+      if (company) {
+        companyName = str(body.companyName, 2, 80);
+        refs.company = fileRef(body.commercialRegRef); refs.tax = fileRef(body.taxCardRef);
+        if (body.licenseRef) refs.license = fileRef(body.licenseRef);
+      } else { refs.license = fileRef(body.licenseRef); refs.vehicleReg = fileRef(body.vehicleRegRef); refs.vehiclePhoto = fileRef(body.vehiclePhotoRef); }
     }
     await ownFiles(env, uid, Object.values(refs));
     if ((await F.getMany(env, 'blacklist', [`phone_${phone}`, `nid_${nid}`])).some(Boolean)) throw new HttpError(403, 'blacklisted');
@@ -230,6 +236,7 @@ const ROUTES = {
       F.create(`users/${uid}`, {
         uid, role, status, status_reason: null, name, phone, email: token.email ?? null, national_id: nid, area, lang, id_ref: refs.id, license_ref: refs.license ?? null,
         vehicle_reg_ref: refs.vehicleReg ?? null, vehicle_photo_ref: refs.vehiclePhoto ?? null, vehicle_type: vehicleType, phone_verified: !!token.phone_number,
+        account_type: company ? 'company' : 'individual', company_name: companyName, commercial_reg_ref: refs.company ?? null, tax_card_ref: refs.tax ?? null,
         rating_sum: 0, rating_count: 0, completed_orders: 0, cancel_count: 0, reviewed_by: null, reviewed_at: null, created_at: now(),
         referral_code: refCode, referred_by: referrer ? referrer.uid : null,
       }),
@@ -271,6 +278,52 @@ const ROUTES = {
   async 'files/upload'(c) {
     const profile = userOut(await F.get(c.env, `users/${c.uid}`));
     return { ref: await saveFile(c.env, c.uid, profile, c.body.kind, c.body.data) };
+  },
+
+  // ---------- سواقين شركة الشحن: كل سواق بيانات كاملة (بطاقة/رخصة/لوحة) — والشركة بتحدد مين استلم كل شحنة ----------
+  async 'fleet/list'(c) {
+    const u = await needCompany(c);
+    const rows = (await F.query(c.env, 'fleet_drivers', { eq: { company_uid: u.uid }, limit: 100 })).filter((r) => r.active !== false);
+    return { drivers: rows.sort((a, b) => b.created_at - a.created_at).map(fleetOut) };
+  },
+  async 'fleet/add'(c) {
+    const u = await needCompany(c), b = c.body;
+    const name = str(b.name, 2, 80), phone = phoneOf(b.phone), plate = str(b.plate, 3, 20), vehicleType = str(b.vehicleType, 2, 40);
+    const nid = String(b.nationalId ?? '').replace(/\D/g, '');
+    if (!/^[23]\d{13}$/.test(nid)) throw new HttpError(400, 'bad_national_id');
+    const idRef = fileRef(b.idRef), licenseRef = fileRef(b.licenseRef), vehiclePhotoRef = b.vehiclePhotoRef ? fileRef(b.vehiclePhotoRef) : null;
+    await ownFiles(c.env, u.uid, [idRef, licenseRef, vehiclePhotoRef]);
+    const active = (await F.query(c.env, 'fleet_drivers', { eq: { company_uid: u.uid }, limit: 100 })).filter((r) => r.active !== false);
+    if (active.length >= 50) throw new HttpError(409, 'fleet_full');
+    if (active.some((r) => r.national_id === nid)) throw new HttpError(409, 'duplicate');
+    const id = newId();
+    await F.run(c.env, [F.create(`fleet_drivers/${id}`, { id, company_uid: u.uid, name, phone, national_id: nid, plate, vehicle_type: vehicleType, id_ref: idRef, license_ref: licenseRef, vehicle_photo_ref: vehiclePhotoRef, active: true, created_at: now() })]);
+    return { ok: true, id };
+  },
+  async 'fleet/remove'(c) { // إيقاف (مش مسح): السجل بيفضل عشان الشحنات القديمة تفضل مربوطة بسواقها
+    const u = await needCompany(c);
+    const r = await F.get(c.env, `fleet_drivers/${docId(c.body.id)}`);
+    if (!r || r.company_uid !== u.uid) throw new HttpError(404, 'not_found');
+    await F.run(c.env, [F.patch(`fleet_drivers/${r.id}`, { active: false, removed_at: now() })]);
+    return { ok: true };
+  },
+  // الشركة بتحدد السواق التابع ليها اللي هيستلم الشحنة (قبل الاستلام بس). الحالة بتتسجّل في الطلب كدليل.
+  async 'orders/handler'(c) {
+    const u = await needCompany(c);
+    const o = await loadOrder(c.env, docId(c.body.orderId));
+    if (o.driverId !== u.uid) throw new HttpError(403, 'forbidden');
+    if (!['accepted', 'payment_review', 'paid', 'heading_pickup'].includes(o.status)) throw new HttpError(409, 'bad_state');
+    const f = await F.get(c.env, `fleet_drivers/${docId(c.body.fleetDriverId)}`);
+    if (!f || f.company_uid !== u.uid || f.active === false) throw new HttpError(404, 'not_found');
+    const handler = { fleetDriverId: f.id, name: f.name, phone: f.phone, nationalId: f.national_id, plate: f.plate, vehicleType: f.vehicle_type, idRef: f.id_ref, licenseRef: f.license_ref, vehiclePhotoRef: f.vehicle_photo_ref || null, companyName: u.companyName, assignedAt: now() };
+    await F.run(c.env, orderUpdate(c.env, o, { handler, handlerHistory: [...(o.handlerHistory || []), { fleetDriverId: f.id, name: f.name, nationalId: f.national_id, plate: f.plate, at: now() }] }));
+    bg(c, notify(c.env, [o.customerId], 'handler_assigned', { name: f.name, plate: f.plate, no: orderNo(o.id) }, { url: `/#/order/${o.id}` }));
+    return { ok: true };
+  },
+  async 'admin/fleet'(c) { // الأدمن يشوف سواقين أي شركة (حتى الموقوفين) ببياناتهم ومستنداتهم
+    await need(c, ['admin']);
+    const rows = await F.query(c.env, 'fleet_drivers', { eq: { company_uid: uidOf(c.body.uid) }, limit: 100 });
+    return { drivers: rows.sort((a, b) => b.created_at - a.created_at).map(fleetOut) };
   },
 
   // ---------- الطلبات: قراءة ----------
@@ -521,11 +574,12 @@ const ROUTES = {
 
   // ---------- السواق يغيّر حالة التنفيذ (صورة + فحص GPS) ----------
   async 'orders/status'(c) {
-    await need(c, ['driver']);
+    const du = await need(c, ['driver']);
     const o = await loadOrder(c.env, docId(c.body.orderId));
     if (o.driverId !== c.uid) throw new HttpError(403, 'forbidden');
     const next = NEXT[o.status];
     if (!next || c.body.next !== next) throw new HttpError(409, 'bad_state');
+    if (next === 'picked_up' && du.accountType === 'company' && !o.handler) throw new HttpError(409, 'handler_required'); // الشركة لازم تحدد السواق اللي هيستلم الشحنة
     const s = await loadSettings(c.env);
     const patch = { status: next }; let loc = null;
     if (c.body.loc) loc = point(c.body.loc, false);

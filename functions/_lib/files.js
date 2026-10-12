@@ -3,9 +3,9 @@
 import { HttpError, newId } from './core.js';
 import { F, now, rateLimit } from './db.js';
 
-export const KINDS = ['id', 'license', 'vehicle', 'vehiclePhoto', 'cargo', 'handover', 'payment', 'evidence'];
+export const KINDS = ['id', 'license', 'vehicle', 'vehiclePhoto', 'company', 'cargo', 'handover', 'payment', 'evidence'];
 const SHARED = ['cargo', 'handover', 'vehiclePhoto', 'evidence']; // باقي الأنواع (بطاقة/رخصة/استمارة/إثبات دفع) للمالك والأدمن فقط
-const REG_KINDS = ['id', 'license', 'vehicle', 'vehiclePhoto'];    // المسموح رفعه قبل ما الحساب يتفعّل
+const REG_KINDS = ['id', 'license', 'vehicle', 'vehiclePhoto', 'company']; // company = سجل تجاري/بطاقة ضريبية (خاصة بالمالك والأدمن)    // المسموح رفعه قبل ما الحساب يتفعّل
 const MAX_B64 = 900_000;                                           // حد مستند Firestore = 1MiB
 
 const b64ToBytes = (b64) => { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; };

@@ -4,9 +4,10 @@ import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
   sendPasswordResetEmail, deleteUser, RecaptchaVerifier, linkWithPhoneNumber,
   EmailAuthProvider, reauthenticateWithCredential, updatePassword,
+  GoogleAuthProvider, signInWithPopup, signInWithRedirect,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { firebaseConfig } from './config.js';
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, sendPasswordResetEmail, deleteUser, RecaptchaVerifier, linkWithPhoneNumber, EmailAuthProvider, reauthenticateWithCredential, updatePassword };
+export { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, sendPasswordResetEmail, deleteUser, RecaptchaVerifier, linkWithPhoneNumber, EmailAuthProvider, reauthenticateWithCredential, updatePassword, GoogleAuthProvider, signInWithPopup, signInWithRedirect };

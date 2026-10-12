@@ -121,6 +121,7 @@ function route() {
   }
   if (!p) { // حساب Auth موجود لكن التسجيل ما اكتملش
     if (a !== 'register') return go('/register');
+    if (view.querySelector('#driverOnly')) return; // فورم التسجيل معروض بالفعل: ما نعيدش رسمه عشان ما نمسحش اللي اتكتب ولا رسالة الخطأ
     show(); return void (cleanup = renderRegister(view, query));
   }
   if (p.role !== 'admin' && p.status !== 'active') { show(); return void (cleanup = renderStatus(view, p)); }

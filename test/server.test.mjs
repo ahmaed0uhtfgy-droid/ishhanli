@@ -1162,4 +1162,63 @@ console.log('\n— الإلغاء برسوم والبلاغات والطوارئ
   await ok('مسار me مستثنى من الحدّ', call('admin1', 'me', {}, envRL));
 }
 
+// ------------------ شركة شحن: بتتعامل كسواق + سواقينها مسجّلين، وكل شحنة مربوطة بالسواق اللي استلمها ------------------
+{
+  FS.put('settings/pricing', { v: JSON.stringify({}) }); // الافتراضي: العميل بيتفعّل تلقائياً
+  const regCo = async (uid, extra = {}) => ({ role: 'driver', accountType: 'company', companyName: 'شركة النيل للشحن', vehicleType: 'truck', name: 'مدير الشركة', phone: '01077770001', nationalId: '29001011777701', idRef: await up(uid, 'id'), commercialRegRef: await up(uid, 'company'), taxCardRef: await up(uid, 'company'), ...extra });
+  await bad('شركة من غير سجل تجاري', call('comp1', 'register', { ...(await regCo('comp1')), commercialRegRef: undefined }), 400, 'bad_file');
+  await bad('شركة من غير اسم', call('comp1', 'register', await regCo('comp1', { companyName: '' })), 400, 'bad_input');
+  await ok('تسجيل شركة شحن', call('comp1', 'register', await regCo('comp1')));
+  check('الشركة دورها سواق + نوع الحساب شركة + pending', U('comp1').role === 'driver' && U('comp1').account_type === 'company' && U('comp1').status === 'pending' && U('comp1').company_name === 'شركة النيل للشحن');
+  check('مستندات الشركة محفوظة', !!U('comp1').commercial_reg_ref && !!U('comp1').tax_card_ref);
+  await bad('شركة معلّقة ما تضيفش سواقين', call('comp1', 'fleet/list'), 403, 'account_not_active');
+  await ok('أدمن يفعّل الشركة', call('admin1', 'admin/user', { uid: 'comp1', status: 'active' }));
+  await ok('عميل جديد (تفعيل تلقائي)', call('compC', 'register', { role: 'customer', name: 'عميل الشركة', phone: '01077770002', nationalId: '29001011777702', idRef: await up('compC', 'id') }));
+  check('عميل جديد active', U('compC').status === 'active');
+  await bad('عميل عادي مش شركة', call('compC', 'fleet/list'), 403, 'forbidden');
+  await bad('سواق فرد مش شركة', call('drv1', 'fleet/list'), 403, 'company_only');
+  const fleetBody = async (extra = {}) => ({ name: 'محمد السواق', phone: '01077770003', nationalId: '28001011777703', plate: 'أ ب ج 1234', vehicleType: 'truck', idRef: await up('comp1', 'id'), licenseRef: await up('comp1', 'license'), ...extra });
+  await bad('سواق من غير رخصة', call('comp1', 'fleet/add', { ...(await fleetBody()), licenseRef: undefined }), 400, 'bad_file');
+  await bad('رقم قومي غلط', call('comp1', 'fleet/add', await fleetBody({ nationalId: '123' })), 400, 'bad_national_id');
+  await bad('ملف بتاع حد تاني', call('comp1', 'fleet/add', await fleetBody({ idRef: await up('compC', 'id') })), 400, 'bad_file');
+  const fa = await ok('إضافة سواق للشركة', call('comp1', 'fleet/add', await fleetBody()));
+  await bad('نفس السواق مرتين', call('comp1', 'fleet/add', await fleetBody()), 409, 'duplicate');
+  const fb = await ok('سواق تاني', call('comp1', 'fleet/add', await fleetBody({ name: 'علي السواق', nationalId: '28001011777704', plate: 'س ص ع 5678' })));
+  check('قائمة سواقين الشركة', (await call('comp1', 'fleet/list')).drivers.length === 2);
+  await bad('شركة تانية ما تشوفش سواقين غيرها', call('drv1', 'fleet/list'), 403);
+
+  // طلب بيقبله سواق الشركة
+  const o = await ok('عميل الشركة ينشئ طلب', call('compC', 'orders/create', { ...base, photos: [await up('compC', 'cargo')] }));
+  await ok('الشركة تقبل الطلب', call('comp1', 'orders/accept', { orderId: o.id }));
+  await ok('عميل يرفع إثبات الدفع', call('compC', 'orders/pay', { orderId: o.id, proofRef: await up('compC', 'payment'), reference: '777' }));
+  await ok('أدمن يؤكد الدفع', call('admin1', 'admin/payment', { orderId: o.id, action: 'confirm' }));
+  await ok('الشركة: في الطريق للاستلام', call('comp1', 'orders/status', { orderId: o.id, next: 'heading_pickup' }));
+  const hnd = await up('comp1', 'handover');
+  await bad('استلام من غير تحديد السواق', call('comp1', 'orders/status', { orderId: o.id, next: 'picked_up', photoRef: hnd, loc: CAIRO }), 409, 'handler_required');
+  await bad('سواق شركة تانية', call('comp1', 'orders/handler', { orderId: o.id, fleetDriverId: 'doesnotexist12345' }), 404, 'not_found');
+  await bad('عميل ما يحددش السواق', call('compC', 'orders/handler', { orderId: o.id, fleetDriverId: fa.id }), 403, 'forbidden');
+  await bad('سواق فرد ما يحددش', call('drv1', 'orders/handler', { orderId: o.id, fleetDriverId: fa.id }), 403, 'company_only');
+  await ok('تحديد السواق المستلم', call('comp1', 'orders/handler', { orderId: o.id, fleetDriverId: fa.id }));
+  await ok('تغيير السواق قبل الاستلام', call('comp1', 'orders/handler', { orderId: o.id, fleetDriverId: fb.id }));
+  await ok('الرجوع للسواق الأول', call('comp1', 'orders/handler', { orderId: o.id, fleetDriverId: fa.id }));
+
+  const cv = (await call('compC', 'orders/get', { orderId: o.id })).order;
+  check('العميل يشوف اسم/لوحة السواق', cv.handler?.name === 'محمد السواق' && cv.handler?.plate === 'أ ب ج 1234');
+  check('العميل مايشوفش بطاقة/رخصة/رقم قومي السواق', cv.handler && !cv.handler.nationalId && !cv.handler.idRef && !cv.handler.licenseRef && !cv.handlerHistory);
+  const av = (await call('admin1', 'orders/get', { orderId: o.id })).order;
+  check('الأدمن يشوف بيانات السواق كاملة', av.handler.nationalId === '28001011777703' && !!av.handler.idRef && !!av.handler.licenseRef);
+  check('الأدمن يشوف سجل تغيير السواق', av.handlerHistory.length === 3);
+  const fl = await ok('الأدمن يشوف سواقين الشركة', call('admin1', 'admin/fleet', { uid: 'comp1' }));
+  check('سواقين الشركة عند الأدمن بمستنداتهم', fl.drivers.length === 2 && fl.drivers.every((d) => d.idRef && d.licenseRef && d.nationalId));
+  await bad('غير الأدمن ما يشوفش سواقين شركة', call('compC', 'admin/fleet', { uid: 'comp1' }), 403, 'forbidden');
+
+  await ok('تم الاستلام بعد تحديد السواق', call('comp1', 'orders/status', { orderId: o.id, next: 'picked_up', photoRef: hnd, loc: CAIRO }));
+  await bad('ما ينفعش تغيير السواق بعد الاستلام', call('comp1', 'orders/handler', { orderId: o.id, fleetDriverId: fb.id }), 409, 'bad_state');
+
+  await ok('إيقاف سواق', call('comp1', 'fleet/remove', { id: fb.id }));
+  check('الموقوف مش في القائمة بس سجله محفوظ', (await call('comp1', 'fleet/list')).drivers.length === 1 && (await call('admin1', 'admin/fleet', { uid: 'comp1' })).drivers.length === 2);
+  check('الشحنة لسه مربوطة بسواقها بعد أي تغيير', (await call('admin1', 'orders/get', { orderId: o.id })).order.handler.nationalId === '28001011777703');
+  FS.put('settings/pricing', { v: JSON.stringify({ autoApproveCustomers: false }) });
+}
+
 console.log(`\n✅ كل الاختبارات نجحت (${pass})`);

@@ -33,6 +33,8 @@ export function renderOrder(el, id) {
     <div class="map-col"><div id="map" class="map tall"></div><p class="hint" id="liveHint"></p></div></div>`);
 
   const left = $('#left', el), hint = $('#liveHint', el);
+  let fleet = []; // سواقين الشركة (لو الحساب شركة): بنختار منهم مين هيستلم الشحنة
+  if (role === 'driver' && state.profile.accountType === 'company') api('fleet/list').then((r) => { fleet = r.drivers; if (order) paint(order); }).catch(() => {});
   let offerSort = 'price', map = null, order = null, truck = null, poller = null, lastVersion = null, watchId = null, lastSent = 0, getStars = () => 0;
 
   const truckTo = (lat, lng) => {
@@ -167,6 +169,13 @@ export function renderOrder(el, id) {
     return '';
   }
 
+  function handlerHtml(o) { // الشركة بتحدد السواق التابع ليها اللي هيستلم الشحنة (قبل الاستلام)
+    if (!(role === 'driver' && o.driverId === uid && state.profile.accountType === 'company' && ['accepted', 'payment_review', 'paid', 'heading_pickup'].includes(o.status))) return '';
+    const h = o.handler;
+    return html`<div class="action"><h3>${t('fleet.handlerTitle')}</h3>
+      ${h ? html`<p>${t('fleet.currentHandler')}: <b>${h.name}</b> — <span dir="ltr">${h.plate}</span></p>` : html`<p class="err">${t('fleet.handlerRequired')}</p>`}
+      ${fleet.length ? html`<div class="row"><select id="handlerSel" class="grow">${fleet.map((d) => html`<option value="${d.id}" ${h && h.fleetDriverId === d.id ? 'selected' : ''}>${d.name} — ${d.plate}</option>`)}</select><button class="btn primary" data-act="setHandler">${t('fleet.assign')}</button></div>` : html`<p class="hint"><a href="#/driver/fleet">${t('fleet.addFirst')}</a></p>`}</div>`;
+  }
   function detailsHtml(o) {
     const showDriver = o.driverId && (role !== 'driver');
     const showCustomer = role === 'admin' || (role === 'driver' && o.driverId === uid);
@@ -180,8 +189,11 @@ export function renderOrder(el, id) {
       ${o.discount ? html`${kv(t('coupon.discount'), html`<span style="color:var(--nile)">− ${fmtMoney(o.discount)}</span>${o.couponCode ? html` <span class="muted small">(${o.couponCode})</span>` : ''}`)}${kv(t('coupon.due'), html`<b>${fmtMoney(dueOf(o))}</b>`)}` : ''}
       ${o.description ? kv(t('order.notes'), o.description) : ''}
       ${showDriver ? kv(t('order.driver'), html`${o.driverName} — ${tel(o.driverPhone)} <span class="muted small">(${t('vehicle.' + o.driverVehicle) === 'vehicle.' + o.driverVehicle ? o.driverVehicle : t('vehicle.' + o.driverVehicle)})</span>${o.driverTrust ? html`<div style="margin-top:.2rem">${trustBadge(o.driverTrust)}</div>` : ''}`) : ''}
+      ${o.handler ? kv(t('fleet.handler'), html`${o.handler.name} — ${tel(o.handler.phone)} <span class="muted small" dir="ltr">(${o.handler.plate})</span>${o.handler.companyName && role !== 'customer' ? html` <span class="muted small">· ${o.handler.companyName}</span>` : ''}`) : ''}
       ${showCustomer ? kv(t('order.customer'), html`${o.customerName}${showCustPhone ? html` — ${tel(o.customerPhone)}` : ''}`) : ''}
     </dl></div>
+    ${o.handler && role === 'admin' ? html`<div class="card stack"><h3>${t('fleet.handlerDocs')}</h3><dl class="kv"><dt>${t('fleet.name')}</dt><dd>${o.handler.name}</dd><dt>${t('auth.nationalId')}</dt><dd dir="ltr">${o.handler.nationalId}</dd><dt>${t('auth.phone')}</dt><dd dir="ltr">${o.handler.phone}</dd><dt>${t('fleet.plate')}</dt><dd dir="ltr">${o.handler.plate}</dd></dl>${photos([o.handler.idRef, o.handler.licenseRef, o.handler.vehiclePhotoRef].filter(Boolean))}
+      ${(o.handlerHistory || []).length > 1 ? html`<div class="muted small">${t('fleet.handlerHistory')}</div><ul class="log">${o.handlerHistory.map((x) => html`<li><span>${x.name} — ${x.plate}</span><span class="muted">${fmtDate(x.at)}</span></li>`)}</ul>` : ''}</div>` : ''}
     <div class="card stack"><h3>${t('order.photos')}</h3>
       ${o.photos?.length ? html`<div><div class="muted small">${t('order.cargoPhotos')}</div>${photos(o.photos)}</div>` : ''}
       ${o.pickupPhoto ? html`<div><div class="muted small">${t('order.pickupPhoto')}</div>${photos([o.pickupPhoto])}</div>` : ''}
@@ -258,7 +270,7 @@ export function renderOrder(el, id) {
   function paint(o) {
     render($('#title', el), html`${t('order.title')} ${orderNo(o.id)} ${stamp(o.status, o.service)}`);
     render($('#rlink', el), RECEIPT_STATUS.includes(o.status) ? html`<a class="btn ghost sm" href="#/receipt/${o.id}">${t('receipt.open')}</a>` : '');
-    render(left, html`${stepsHtml(o)}<div id="actions">${actionsHtml(o)}</div>${safetyHtml(o)}${detailsHtml(o)}`);
+    render(left, html`${stepsHtml(o)}<div id="actions">${actionsHtml(o)}${handlerHtml(o)}</div>${safetyHtml(o)}${detailsHtml(o)}`);
     hydrate(left);
     const st = $('#stars', left); if (st) getStars = starsInput(st);
     drawMap(o); syncTracking(o); syncChat(o);
@@ -273,6 +285,7 @@ export function renderOrder(el, id) {
     offerWithdraw: () => call('offers/withdraw', {}, 'offer.withdrawn'),
     async offerAccept(b) { if (await confirmDialog(t('offer.accept') + '؟', { ok: t('offer.accept') })) await call('offers/accept', { offerId: b.dataset.id }, 'offer.acceptedToast'); },
     offerReject: (b) => call('offers/reject', { offerId: b.dataset.id }, 'common.done'),
+    setHandler: () => call('orders/handler', { fleetDriverId: $('#handlerSel', left).value }, 'common.done'),
     sort(b) { offerSort = b.dataset.s; paint(order); },
     report: () => openReport(),
     sos: () => openSos(),
