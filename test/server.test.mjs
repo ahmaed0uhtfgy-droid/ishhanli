@@ -107,6 +107,7 @@ const people = {
 };
 await bad('حساب جديد ما يقدرش يرفع صورة شحنة', call('cust1', 'files/upload', { kind: 'cargo', data: JPEG }), 403, 'no_profile');
 await bad('ملف مش JPEG', call('cust1', 'files/upload', { kind: 'id', data: 'data:image/jpeg;base64,' + Buffer.alloc(400, 1).toString('base64') }), 400, 'bad_image');
+FS.put('settings/pricing', { v: JSON.stringify({ autoApproveCustomers: false }) }); // اختبار مسار الموافقة اليدوية
 for (const [uid, p] of Object.entries(people)) {
   const body = { ...p, idRef: await up(uid, 'id') };
   if (p.role === 'driver') { body.licenseRef = await up(uid, 'license'); body.vehicleRegRef = await up(uid, 'vehicle'); body.vehiclePhotoRef = await up(uid, 'vehiclePhoto'); }
@@ -128,6 +129,17 @@ check('me لمستخدم مجهول = null', (await call('nobody', 'me')).profil
 // موافقة الأدمن
 for (const u of ['cust1', 'cust2', 'drv1', 'drv2']) await ok(`أدمن يفعّل ${u}`, call('admin1', 'admin/user', { uid: u, status: 'active' }));
 const badges0 = await ok('badges', call('admin1', 'admin/badges')); assert.equal(badges0.badges.users, 0);
+
+// الافتراضي (من غير إعدادات محفوظة): العميل بيتفعّل تلقائياً، والسواق لازم مراجعة يدوية
+FS.put('settings/pricing', { v: JSON.stringify({}) });
+{
+  const reg = async (uid, p) => { const body = { ...p, idRef: await up(uid, 'id') }; if (p.role === 'driver') { body.licenseRef = await up(uid, 'license'); body.vehicleRegRef = await up(uid, 'vehicle'); body.vehiclePhotoRef = await up(uid, 'vehiclePhoto'); } return ok(`تسجيل ${uid}`, call(uid, 'register', body)); };
+  await reg('autoC', { role: 'customer', name: 'عميل تلقائي', phone: '01099990001', nationalId: '29001011999991' });
+  await reg('autoD', { role: 'driver', name: 'سواق مراجعة', phone: '01299990002', nationalId: '28001011999992', vehicleType: 'pickup' });
+  check('العميل بيتفعّل تلقائياً افتراضياً', U('autoC').status === 'active');
+  check('السواق بيفضل pending لحد المراجعة', U('autoD').status === 'pending');
+}
+FS.put('settings/pricing', { v: JSON.stringify({ autoApproveCustomers: false }) }); // نرجّع للوضع اليدوي لباقي الاختبارات
 
 // حساب المستخدم: تعديل البيانات + العناوين المحفوظة (كل التحقق على السيرفر)
 await bad('تعديل من غير أي تغييرات', call('cust1', 'account/update', {}), 400, 'nothing_to_update');

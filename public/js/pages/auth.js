@@ -133,10 +133,10 @@ export function renderRegister(el, query) {
 }
 
 export function renderStatus(el, p) {
-  const s = p.status;
+  const s = p.status, drv = p.role === 'driver' && s === 'pending'; // السواق المعلّق: رسالة أوضح بتقوله مستنيين إيه
   render(el, html`<div class="auth card stack">
-    <div class="row"><h1 class="grow">${t('status.title_' + s)}</h1><span class="stamp s-${s}">${t('status.' + s)}</span></div>
-    <p>${t('status.msg_' + s)}</p>
+    <div class="row"><h1 class="grow">${t(drv ? 'status.title_pending_driver' : 'status.title_' + s)}</h1><span class="stamp s-${s}">${t('status.' + s)}</span></div>
+    <p>${t(drv ? 'status.msg_pending_driver' : 'status.msg_' + s)}</p>
     ${p.statusReason ? html`<div class="action bad"><b>${t('status.reason')}:</b> ${p.statusReason}</div>` : ''}
     <p class="hint">${t('status.contact')}</p>
   </div>`);

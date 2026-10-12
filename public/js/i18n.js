@@ -97,6 +97,8 @@ const ROWS = [
   ['status.title_banned', 'الحساب محظور', 'Account banned'], ['status.msg_banned', 'تم حظر هذا الحساب من استخدام المنصة.', 'This account has been banned from the platform.'],
   ['status.title_suspended', 'الحساب موقوف مؤقتاً', 'Account suspended'], ['status.msg_suspended', 'تم إيقاف حسابك تلقائياً لتكرار الإلغاء. تواصل مع الإدارة لإعادة التفعيل.', 'Your account was suspended automatically due to repeated cancellations. Contact support to reactivate it.'],
   ['status.reason', 'السبب', 'Reason'], ['status.contact', 'لأي استفسار تواصل مع الدعم.', 'For any question, please contact support.'],
+  ['status.title_pending_driver', 'بنراجع مستنداتك', 'We are reviewing your documents'],
+  ['status.msg_pending_driver', 'استلمنا بياناتك ومستنداتك (البطاقة، رخصة القيادة، رخصة العربية، وصورة العربية) وبنراجعها يدوياً. هتوصلك إشعار أول ما حسابك يتفعّل، وبعدها هتشوف الطلبات المتاحة وتقدر تقدّم عروضك.', 'We received your details and documents (ID, driving license, vehicle registration and vehicle photo) and are reviewing them by hand. You will get a notification as soon as your account is activated, and then you can see available orders and send offers.'],
   ['step.open', 'طلب', 'Requested'], ['step.accepted', 'قبول السواق', 'Accepted'], ['step.paid', 'دفع', 'Paid'], ['step.picked_up', 'استلام', 'Picked up'], ['step.in_transit', 'في الطريق', 'On the way'], ['step.delivered', 'تسليم', 'Delivered'], ['step.completed', 'اكتمل', 'Done'],
 
   // ---------- العميل: طلب جديد ----------

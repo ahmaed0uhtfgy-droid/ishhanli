@@ -11,7 +11,7 @@ export const DEFAULTS = {
   geofenceMeters: 300,     // أقصى بُعد للسواق عن نقطة الاستلام/التسليم عند تغيير الحالة (0 = تعطيل)
   maxCancellations: 5,     // تجميد الحساب تلقائياً بعد الوصول للعدد ده
   minWithdraw: 100,        // أقل مبلغ سحب
-  autoApproveCustomers: false,
+  autoApproveCustomers: true, // العميل بيتفعّل تلقائياً (الأدمن يقدر يقفلها من الإعدادات)؛ السواق دايماً مراجعة يدوية
   // إلغاء العميل بعد قبول سواق على طلب مدفوع: نسبة تعويض للسواق + نسبة للمنصة، والباقي يرجع للعميل (% من سعر الطلب)
   cancelPaidDriverPct: 10, cancelPaidPlatformPct: 5,          // السواق قبل ولسه ما بدأش الطريق
   cancelHeadingDriverPct: 30, cancelHeadingPlatformPct: 10,   // السواق في الطريق للاستلام
@@ -76,7 +76,7 @@ export async function loadSettings(env) {
     geofenceMeters: num(d.geofenceMeters, D.geofenceMeters, 0, 100000),
     maxCancellations: num(d.maxCancellations, D.maxCancellations, 1, 1000),
     minWithdraw: num(d.minWithdraw, D.minWithdraw, 1),
-    autoApproveCustomers: d.autoApproveCustomers === true,
+    autoApproveCustomers: typeof d.autoApproveCustomers === 'boolean' ? d.autoApproveCustomers : D.autoApproveCustomers,
     prepaidGraceMin: Math.floor(num(d.prepaidGraceMin, D.prepaidGraceMin, 0, 1440)),
     ...(() => { // نسب الإلغاء: كل مرحلة مجموعها لا يتعدى 100%
       const pair = (dk, pk) => { const dp = num(d[dk], D[dk], 0, 100); return [dp, Math.min(num(d[pk], D[pk], 0, 100), 100 - dp)]; };

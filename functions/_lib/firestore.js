@@ -49,8 +49,8 @@ async function failure(res, what) {
   if (CONFLICT.has(status)) {
     const e = new HttpError(409, 'conflict');
     const msg = String((Array.isArray(j) ? j[0]?.error?.message : j?.error?.message) || '');
-    // فهرس ناقص: نحتفظ بنص الخطأ (فيه رابط إنشاء الفهرس) عشان نعرف نصلّحه بدل ما يضيع ورا «conflict»
-    if (status === 'FAILED_PRECONDITION' && /index/i.test(msg)) { e.detail = msg.slice(0, 700); console.error('firestore_index_required', what, e.detail); }
+    // أخطاء القراءة/التجميع (مش الكتابة): نحتفظ بحالة ونص خطأ Firestore (فيه رابط إنشاء الفهرس لو ناقص) بدل ما يضيع ورا «conflict»
+    if (what !== 'commit') { e.detail = `${status} [${what}] ${msg}`.slice(0, 700); console.error('firestore_read_conflict', what, e.detail); }
     return e;
   }
   console.error('firestore_error', what, res.status, status, JSON.stringify(j).slice(0, 300));
