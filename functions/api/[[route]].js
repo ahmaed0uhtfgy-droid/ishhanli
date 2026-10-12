@@ -66,7 +66,7 @@ async function need(c, roles, opts = {}) {
   const r = await F.get(c.env, `users/${c.uid}`);
   if (!r) throw new HttpError(403, 'no_profile');
   if (!roles.includes(r.role)) throw new HttpError(403, 'forbidden');
-  if (r.status !== 'active') throw new HttpError(403, 'account_not_active');
+  if (r.status !== 'active' && r.role !== 'admin') throw new HttpError(403, 'account_not_active'); // الأدمن مستثنى زي viewer() — الدور بيحمي المسارات
   // التحقق بخطوتين للأدمن: لو مفعّل، لازم جلسة 2FA سارية (ما عدا شاشات الإعداد نفسها)
   if (!opts.skip2fa && r.role === 'admin' && r.totp_enabled) {
     const tk = (c.request?.headers?.get('x-2fa') || '').trim();
