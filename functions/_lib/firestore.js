@@ -46,7 +46,13 @@ const CONFLICT = new Set(['ABORTED', 'ALREADY_EXISTS', 'FAILED_PRECONDITION', 'N
 async function failure(res, what) {
   const j = await res.json().catch(() => ({}));
   const status = Array.isArray(j) ? j[0]?.error?.status : j?.error?.status;
-  if (CONFLICT.has(status)) return new HttpError(409, 'conflict');
+  if (CONFLICT.has(status)) {
+    const e = new HttpError(409, 'conflict');
+    const msg = String((Array.isArray(j) ? j[0]?.error?.message : j?.error?.message) || '');
+    // فهرس ناقص: نحتفظ بنص الخطأ (فيه رابط إنشاء الفهرس) عشان نعرف نصلّحه بدل ما يضيع ورا «conflict»
+    if (status === 'FAILED_PRECONDITION' && /index/i.test(msg)) { e.detail = msg.slice(0, 700); console.error('firestore_index_required', what, e.detail); }
+    return e;
+  }
   console.error('firestore_error', what, res.status, status, JSON.stringify(j).slice(0, 300));
   return new HttpError(500, status === 'RESOURCE_EXHAUSTED' ? 'quota_exceeded' : 'db_error');
 }

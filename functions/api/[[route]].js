@@ -1316,7 +1316,7 @@ export async function onRequest({ request, env, params, waitUntil }) {
     bg2(flushMetrics(env));
     return json(out);
   } catch (e) {
-    if (e instanceof HttpError) { bg2(flushMetrics(env)); return json({ error: e.code }, e.status); }
+    if (e instanceof HttpError) { bg2(flushMetrics(env)); return json(e.detail ? { error: e.code, detail: e.detail } : { error: e.code }, e.status); }
     console.error(e);
     bg2(recordError(env, { source: 'server', route, uid, status: 500, message: e?.message || String(e), stack: e?.stack }));
     bg2(sentryCapture(env, e, { route, uid }));
