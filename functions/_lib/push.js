@@ -62,6 +62,7 @@ const MSG = {
   account_rejected: { ar: ['تعذّر تفعيل حسابك', 'راجع السبب داخل التطبيق'], en: ['We could not activate your account', 'Open the app to see the reason'] },
   withdrawal_paid: { ar: ['تم تحويل مبلغ السحب', 'تم تحويل {amount} ج'], en: ['Withdrawal sent', 'EGP {amount} was transferred'] },
   withdrawal_rejected: { ar: ['تم رفض طلب السحب', 'رجع المبلغ {amount} ج لمحفظتك'], en: ['Withdrawal rejected', 'EGP {amount} was returned to your wallet'] },
+  quota_alert: { ar: ['تنبيه استهلاك Firestore', 'قراءات النهارده {reads} (الحد {limit}). راجع تاب المراقبة'], en: ['Firestore usage alert', 'Today’s reads: {reads} (limit {limit}). Check the Monitoring tab'] },
 };
 const fill = (s, v) => s.replace(/\{(\w+)\}/g, (_, k) => String(v[k] ?? ''));
 export const orderNo = (id) => '#' + String(id).slice(0, 6).toUpperCase();

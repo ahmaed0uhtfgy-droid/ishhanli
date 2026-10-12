@@ -13,6 +13,14 @@ const docsUrl = (env) => `${HOST}/${dbName(env)}/documents`;
 export const docName = (env, path) => `${dbName(env)}/documents/${path}`;
 const urlPath = (path) => path.split('/').map(encodeURIComponent).join('/');
 
+// ---------- عدّاد الاستخدام (تقدير الكوتا) ----------
+// بيتجمّع جوه الـ isolate (مشترك بين الطلبات) وبيتفضّى كتابةً في metrics/{day} عن طريق _lib/metrics.js.
+// تقديري: مستند قراءة = 1، استعلام = عدد المستندات الراجعة، تجميع = 1، commit = عدد الكتابات.
+let stat = { reads: 0, writes: 0 };
+const bump = (k, n = 1) => { stat[k] += n; };
+/** يرجّع العدّاد المتجمّع ويصفّره (بيتنادى من مهام الخلفية بعد رد الطلب). */
+export const takeStats = () => { const s = stat; stat = { reads: 0, writes: 0 }; return s; };
+
 // ---------- ترميز القيم ----------
 const encV = (v) => {
   if (v === null || v === undefined) return { nullValue: null };
@@ -54,6 +62,7 @@ async function call(env, method, url, body, what) {
 export async function get(env, path) {
   const token = await googleToken(env, SCOPE);
   const res = await fetch(`${docsUrl(env)}/${urlPath(path)}`, { headers: { Authorization: `Bearer ${token}` } });
+  bump('reads');
   if (res.status === 404) return null;
   if (!res.ok) throw await failure(res, 'get');
   return rowOf(await res.json());
@@ -62,6 +71,7 @@ export async function get(env, path) {
 export async function getMany(env, col, ids, fields = null) { // fields = مصفوفة حقول للقراءة فقط (توفير حجم النقل؛ مثلاً من غير الصور)
   const uniq = [...new Set(ids.filter(Boolean))];
   if (!uniq.length) return ids.map(() => null);
+  bump('reads', uniq.length);
   const found = new Map();
   for (let i = 0; i < uniq.length; i += 100) {
     const chunk = uniq.slice(i, i + 100);
@@ -101,7 +111,9 @@ export async function query(env, col, opts = {}) {
   const { parent, q } = structured(col, opts);
   const url = `${docsUrl(env)}${parent ? '/' + urlPath(parent) : ''}:runQuery`;
   const out = await call(env, 'POST', url, { structuredQuery: q }, 'runQuery');
-  return out.filter((e) => e.document).map((e) => rowOf(e.document));
+  const rows = out.filter((e) => e.document).map((e) => rowOf(e.document));
+  bump('reads', rows.length);
+  return rows;
 }
 /** تجميع (count / sum) بدون قراءة كل المستندات. aggs: { alias: ['count'] | ['sum','حقل'] } */
 export async function aggregate(env, col, filt = {}, aggs = { n: ['count'] }) {
@@ -109,6 +121,7 @@ export async function aggregate(env, col, filt = {}, aggs = { n: ['count'] }) {
   const aggregations = Object.entries(aggs).map(([alias, [kind, field]]) => (kind === 'count' ? { alias, count: {} } : { alias, sum: { field: { fieldPath: field } } }));
   const url = `${docsUrl(env)}${parent ? '/' + urlPath(parent) : ''}:runAggregationQuery`;
   const out = await call(env, 'POST', url, { structuredAggregationQuery: { structuredQuery: q, aggregations } }, 'aggregate');
+  bump('reads');
   const f = out[0]?.result?.aggregateFields || {}, res = {};
   for (const alias of Object.keys(aggs)) res[alias] = Number(f[alias]?.integerValue ?? f[alias]?.doubleValue ?? 0);
   return res;
@@ -139,7 +152,7 @@ const toWrite = (env, w) => {
 // ختم التغيير: لكل مجموعة بيانات "بتتحدّث" بنزوّد عدّاد في مستند meta/stamp ضمن نفس الـ commit.
 // الواجهة بتسأل `sync` (قراءة واحدة) وما بتجيبش القوائم الكبيرة غير لما العدّاد يتغيّر — ده بيوفّر معظم قراءات Firestore (الكوتا المجانية).
 // الربط بالمسار بيتم تلقائياً هنا، فمفيش كتابة جديدة ممكن تنسى تزوّد العدّاد.
-const STAMP_OF = { orders: 'orders', offers: 'orders', users: 'users', wallets: 'wallet', withdrawals: 'withdrawals', refunds: 'refunds', disputes: 'disputes', reports: 'reports', sos_events: 'reports', blacklist: 'blacklist' };
+const STAMP_OF = { orders: 'orders', offers: 'orders', users: 'users', wallets: 'wallet', withdrawals: 'withdrawals', refunds: 'refunds', disputes: 'disputes', reports: 'reports', sos_events: 'reports', blacklist: 'blacklist', audit: 'audit' };
 export const STAMP_KINDS = [...new Set(Object.values(STAMP_OF))];
 export const STAMP_PATH = 'meta/stamp';
 const stampsOf = (list) => {
@@ -160,4 +173,5 @@ export async function run(env, writes) {
   if (kinds.size) list.push(inc(STAMP_PATH, Object.fromEntries([...kinds].map((k) => [k, 1])), { k: 'stamp', updated_at: Date.now() }));
   if (list.length > 400) throw new HttpError(500, 'too_many_writes');
   await call(env, 'POST', `${docsUrl(env)}:commit`, { writes: list.map((w) => toWrite(env, w)) }, 'commit');
+  bump('writes', list.length);
 }

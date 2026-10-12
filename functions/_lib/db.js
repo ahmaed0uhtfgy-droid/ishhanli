@@ -12,6 +12,18 @@ export const now = () => Date.now();
 export const walletCredit = (uid, amount) => F.inc(`wallets/${uid}`, { balance: amount, total_earned: Math.max(amount, 0) }, { uid, updated_at: now() });
 export const walletTx = (t) => { const id = newId(); return F.create(`wallets/${t.uid}/tx/${id}`, { id, uid: t.uid, type: t.type, amount: t.amount, order_id: t.orderId ?? null, gross: t.gross ?? null, commission: t.commission ?? null, withdrawal_id: t.withdrawalId ?? null, at: now() }); };
 
+// ---------- سجل عمليات الأدمن ----------
+/** كتابة سجل لعملية إدارية. بترجّع كتابة بتتحط في نفس الـ commit بتاع العملية نفسها (مفيش أثر ناقص). */
+export function auditLog(admin, action, fields = {}) {
+  const id = newId();
+  return F.create(`audit/${id}`, {
+    id, action, admin_uid: admin?.uid || admin?.id || null, admin_name: admin?.name || null,
+    target_type: fields.targetType ?? null, target_id: fields.targetId ?? null,
+    note: fields.note ? String(fields.note).slice(0, 200) : null,
+    meta: fields.meta ? JSON.stringify(fields.meta) : null, at: now(),
+  });
+}
+
 /**
  * حد معدّل (Rate limit) بنافذة متحركة: مستند واحد لكل (نوع، مستخدم) فيه آخر الأوقات. لو وصل الحد بيرمي 429، وإلا بيرجّع كتابة
  * بتسجّل المحاولة (تتحط في نفس الـ commit بتاع العملية عشان ما يتحسبش إلا لو العملية نجحت).
@@ -26,11 +38,14 @@ export async function rateLimit(env, kind, uid, windowMs, max, code = 'too_many_
 }
 
 // ---------- تحويل الصفوف ----------
+const parseArr = (s) => { try { const a = JSON.parse(s || '[]'); return Array.isArray(a) ? a : []; } catch { return []; } };
 export const userOut = (r) => r && ({
   id: r.uid, uid: r.uid, role: r.role, status: r.status, statusReason: r.status_reason, name: r.name, phone: r.phone, email: r.email,
   nationalId: r.national_id, area: r.area, lang: r.lang, idRef: r.id_ref, licenseRef: r.license_ref, vehicleRegRef: r.vehicle_reg_ref,
   vehiclePhotoRef: r.vehicle_photo_ref, vehicleType: r.vehicle_type, phoneVerified: !!r.phone_verified, ratingSum: r.rating_sum,
-  ratingCount: r.rating_count, completedOrders: r.completed_orders, cancelCount: r.cancel_count, createdAt: r.created_at,
+  ratingCount: r.rating_count, completedOrders: r.completed_orders, cancelCount: r.cancel_count, addresses: parseArr(r.addresses),
+  profileEditedAt: r.profile_edited_at || 0, profileEditDays: r.profile_edit_days ?? null, createdAt: r.created_at,
+  referralCode: r.referral_code || null, referredBy: r.referred_by || null, totpEnabled: !!r.totp_enabled,
 });
 export const withdrawalOut = (r) => ({
   id: r.id, uid: r.uid, name: r.name, phone: r.phone, amount: r.amount, method: r.method, account: r.account, status: r.status,

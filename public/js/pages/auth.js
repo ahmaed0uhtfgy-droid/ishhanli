@@ -23,7 +23,7 @@ export function renderLogin(el) {
   $('#f', el).addEventListener('submit', (e) => {
     e.preventDefault(); const f = e.target;
     busy($('button', f), async () => {
-      try { await signInWithEmailAndPassword(auth, f.email.value.trim(), f.password.value); } catch (er) { $('#err', el).textContent = errMsg(er); }
+      try { await signInWithEmailAndPassword(auth, f.email.value.trim(), f.password.value); api('auth/login').catch(() => {}); } catch (er) { $('#err', el).textContent = errMsg(er); }
     });
   });
   return () => {};
@@ -56,6 +56,7 @@ async function verifyPhone(phone) {
 export function renderRegister(el, query) {
   let role = query.get('role') === 'driver' ? 'driver' : 'customer';
   const needsAccount = !auth.currentUser;
+  const refPre = (query.get('ref') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12); // كود إحالة من رابط المشاركة
   const file = (name, key, req = true) => html`<label class="f">${t(key)}<input type="file" name="${name}" accept="image/*" ${req ? 'required' : ''}></label>`;
   render(el, html`<div class="auth card stack">
     <h1>${t('auth.registerTitle')}</h1>
@@ -71,6 +72,7 @@ export function renderRegister(el, query) {
         <label class="f">${t('auth.nationalId')}<input name="nationalId" inputmode="numeric" maxlength="14" placeholder="14 ${t('auth.digits')}" required></label>
       </div>
       <label class="f">${t('auth.area')}<input name="area" placeholder="${t('auth.areaHint')}"></label>
+      <label class="f">${t('auth.referral')}<input name="referral" value="${refPre}" dir="ltr" maxlength="12" placeholder="${t('auth.referralHint')}"></label>
       ${needsAccount ? html`<div class="grid-2">
         <label class="f">${t('auth.email')}<input type="email" name="email" autocomplete="email" required></label>
         <label class="f">${t('auth.password')}<input type="password" name="password" autocomplete="new-password" minlength="6" required></label></div>` : ''}
@@ -105,6 +107,7 @@ export function renderRegister(el, query) {
         if (!auth.currentUser) { await createUserWithEmailAndPassword(auth, f.email.value.trim(), f.password.value); created = true; }
         say('auth.uploading');
         const body = { role, name: f.name.value, phone: f.phone.value, nationalId: f.nationalId.value, area: f.area.value, lang: getLang() };
+        const ref = String(f.referral.value || '').trim(); if (ref) body.referral = ref; // كود إحالة (اختياري)
         body.idRef = await uploadImage(f.idFile.files[0], 'id');
         if (role === 'driver') {
           body.vehicleType = f.vehicleType.value;
@@ -117,6 +120,7 @@ export function renderRegister(el, query) {
         await api('register', body);
         toast(t('auth.registered'));
         state.profile = (await api('me')).profile;
+        api('auth/login').catch(() => {});
         state.registering = false; window.dispatchEvent(new Event('app:refresh'));
       } catch (er) {
         state.registering = false; $('#progress', el).textContent = '';

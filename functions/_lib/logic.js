@@ -46,6 +46,15 @@ export const DEFAULTS = {
     medium: { ar: 'متوسط (نص نقل)',          en: 'Medium (half-ton)',     mult: 1.4 },
     large:  { ar: 'كبير (نقل ثقيل)',         en: 'Large (heavy truck)',   mult: 2.0 },
   },
+  // تعديل بيانات الحساب: مرة كل N يوم — الأدمن بيقلّلها/يزوّدها أو يعطّلها، ويقدر يفتح القفل لمستخدم معيّن
+  profileEditEnabled: true,
+  profileEditCooldownDays: 15,
+  // صفحات السواقين العامة (SEO): مقفولة افتراضياً — الأدمن هو اللي يفعّلها. الصفحات بتعرض بيانات آمنة بس (بدون موبايل).
+  publicProfiles: false,
+  // الإحالة والحوافز: مقفولة افتراضياً. الأدمن يحدد المكافأة للمُحيل وللمُحال (جنيه)، وبتتصرف مرة واحدة عند أول طلب مكتمل للمُحال.
+  referralEnabled: false,
+  referralBonusReferrer: 0,
+  referralBonusReferred: 0,
 };
 
 const num = (v, d, min = 0, max = 1e9) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Math.min(max, Math.max(min, Number(v))) : d);
@@ -83,6 +92,12 @@ export async function loadSettings(env) {
     passengersEnabled: d.passengersEnabled === true,
     passengerClasses: d.passengerClasses && Object.keys(d.passengerClasses).length ? d.passengerClasses : D.passengerClasses,
     levelDiscountPct: { trusted: num(d.levelDiscountPct?.trusted, D.levelDiscountPct.trusted, 0, 50), pro: num(d.levelDiscountPct?.pro, D.levelDiscountPct.pro, 0, 50), elite: num(d.levelDiscountPct?.elite, D.levelDiscountPct.elite, 0, 50) },
+    profileEditEnabled: d.profileEditEnabled !== false,
+    profileEditCooldownDays: Math.floor(num(d.profileEditCooldownDays, D.profileEditCooldownDays, 0, 365)),
+    publicProfiles: d.publicProfiles === true,
+    referralEnabled: d.referralEnabled === true,
+    referralBonusReferrer: num(d.referralBonusReferrer, D.referralBonusReferrer, 0, 1e6),
+    referralBonusReferred: num(d.referralBonusReferred, D.referralBonusReferred, 0, 1e6),
   };
 }
 
@@ -150,6 +165,11 @@ export function sanitizeSettings(b) {
     categories: table(b.categories), sizes: table(b.sizes),
     passengersEnabled: b.passengersEnabled === true, passengerClasses: table(b.passengerClasses ?? DEFAULTS.passengerClasses, true),
     levelDiscountPct: { trusted: n(b.levelDiscountPct?.trusted ?? 0, 0, 50), pro: n(b.levelDiscountPct?.pro ?? 0, 0, 50), elite: n(b.levelDiscountPct?.elite ?? 0, 0, 50) },
+    profileEditEnabled: b.profileEditEnabled !== false, profileEditCooldownDays: Math.floor(n(b.profileEditCooldownDays ?? 15, 0, 365)),
+    publicProfiles: b.publicProfiles === true,
+    referralEnabled: b.referralEnabled === true,
+    referralBonusReferrer: Math.floor(n(b.referralBonusReferrer ?? 0, 0, 1e6)),
+    referralBonusReferred: Math.floor(n(b.referralBonusReferred ?? 0, 0, 1e6)),
   };
 }
 
@@ -188,4 +208,19 @@ export function cancelSplit(price, driverPct, platformPct) {
   const driver = Math.round((price * driverPct) / 100);
   const platform = Math.min(price - driver, Math.round((price * platformPct) / 100));
   return { driver, platform, refund: price - driver - platform };
+}
+
+/**
+ * قيمة خصم الكوبون على سعر معيّن بعد التحقق من صلاحيته (نوع/قيمة/تاريخ/حد استهلاك/حد أدنى).
+ * بيرمي HttpError برمز واضح لو الكوبون مش ساري، وبيرجّع رقم صحيح 0..price.
+ */
+export function couponDiscount(coupon, price, nowMs = Date.now()) {
+  if (!coupon || coupon.active !== true) throw new HttpError(400, 'coupon_invalid');
+  if (!['percent', 'amount'].includes(coupon.type)) throw new HttpError(400, 'coupon_invalid');
+  if (coupon.expires_at && nowMs >= coupon.expires_at) throw new HttpError(400, 'coupon_expired');
+  if (coupon.max_uses > 0 && (coupon.used_count || 0) >= coupon.max_uses) throw new HttpError(400, 'coupon_used_up');
+  if (coupon.min_price > 0 && price < coupon.min_price) throw new HttpError(400, 'coupon_min_price');
+  let d = coupon.type === 'percent' ? Math.round((price * Number(coupon.value || 0)) / 100) : Math.round(Number(coupon.value || 0));
+  if (coupon.max_discount > 0) d = Math.min(d, coupon.max_discount);
+  return Math.max(0, Math.min(d, price));
 }

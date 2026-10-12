@@ -8,6 +8,7 @@ import { uploadImage, hydrate, imgTag } from '../storage.js';
 
 const ACTIVE = ['heading_pickup', 'picked_up', 'in_transit'];
 const HELD = ['paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered'];
+const RECEIPT_STATUS = ['paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered', 'completed', 'resolved'];
 const STEPS = ['open', 'accepted', 'paid', 'picked_up', 'in_transit', 'delivered', 'completed'];
 const STEPS_PRE = ['pay', 'visible', 'accepted', 'picked_up', 'in_transit', 'delivered', 'completed'];
 const STEP_OF_PRE = { awaiting_payment: 0, payment_review: 0, open: 1, paid: 2, heading_pickup: 2, picked_up: 3, in_transit: 4, delivered: 5, completed: 6, resolved: 6 };
@@ -18,6 +19,7 @@ const NEXT_LABEL_P = { picked_up: 'order.actPickedP', delivered: 'order.actDeliv
 const NEXT_OF = { paid: 'heading_pickup', heading_pickup: 'picked_up', picked_up: 'in_transit', in_transit: 'delivered' };
 const REPORT_REASONS = ['abuse', 'harassment', 'unsafe', 'fraud', 'no_show', 'other'];
 const REASONS = ['damaged', 'delay', 'not_as_described', 'payment', 'no_show', 'other'];
+const dueOf = (o) => (o.amountDue ?? o.price); // المبلغ المطلوب دفعه فعلاً (بعد خصم الكوبون لو موجود)
 
 const isP = (o) => o?.service === 'passengers';
 const stepLabel = (s, o) => { const k = 'pstep.' + s; return isP(o) && t(k) !== k ? t(k) : t('step.' + s); };
@@ -26,7 +28,7 @@ const LV = { new: 0, trusted: 1, pro: 2, elite: 3 };
 export function renderOrder(el, id) {
   const role = state.profile.role, uid = state.user.uid;
   const home = role === 'admin' ? '/admin/orders' : role === 'driver' ? '/driver/jobs' : '/customer';
-  render(el, html`<div class="page-head"><h1 id="title">${t('order.title')} ${orderNo(id)}</h1><a class="btn ghost sm" href="#${home}">${t('common.back')}</a></div>
+  render(el, html`<div class="page-head"><h1 id="title">${t('order.title')} ${orderNo(id)}</h1><div class="row"><span id="rlink"></span><a class="btn ghost sm" href="#${home}">${t('common.back')}</a></div></div>
     <div class="order-layout"><div class="stack"><div class="stack" id="left">${spinner()}</div><div id="chat"></div></div>
     <div class="map-col"><div id="map" class="map tall"></div><p class="hint" id="liveHint"></p></div></div>`);
 
@@ -119,7 +121,8 @@ export function renderOrder(el, id) {
         const ip = state.settings.instapay || {};
         return html`<div class="action"><h3>${t('order.payTitle')}</h3><p>${t(o.payMode === 'before' ? 'order.payIntroPre' : 'order.payIntro')}</p>
           ${o.paymentRejectReason ? html`<p class="err">${t('order.payRejected')}: ${o.paymentRejectReason}</p>` : ''}
-          <div class="pay-box"><div class="muted small">${t('order.payAmount')}</div><b>${fmtMoney(o.price)}</b>
+          <div class="pay-box"><div class="muted small">${t('order.payAmount')}</div><b>${fmtMoney(dueOf(o))}</b>
+            ${o.discount ? html`<div class="small"><s class="muted">${fmtMoney(o.price)}</s> · ${t('coupon.applied')} ${fmtMoney(o.discount)}</div>` : ''}
             <div class="small">${t('order.payTo')}: <b dir="ltr">${ip.handle}</b> — ${ip.name}</div></div>
           <label class="f" style="margin-top:.8rem">${t('order.proof')}<input type="file" id="proof" accept="image/*"></label>
           <label class="f" style="margin-top:.5rem">${t('order.payRef')}<input id="payref" maxlength="40"></label>
@@ -144,7 +147,7 @@ export function renderOrder(el, id) {
       if (s === 'delivered') return html`<div class="action info"><p>${t('order.waitConfirm')}</p>${dispute}</div>`;
     }
     if (role === 'admin') {
-      if (s === 'payment_review') return html`<div class="action"><h3>${t('admin.reviewPayment')}</h3><p>${t('order.payAmount')}: <b>${fmtMoney(o.price)}</b> — ${t('order.payRef')}: <b>${o.paymentRef || '—'}</b></p>
+      if (s === 'payment_review') return html`<div class="action"><h3>${t('admin.reviewPayment')}</h3><p>${t('order.payAmount')}: <b>${fmtMoney(dueOf(o))}</b>${o.discount ? html` <span class="muted small">(${t('coupon.applied')} ${fmtMoney(o.discount)})</span>` : ''} — ${t('order.payRef')}: <b>${o.paymentRef || '—'}</b></p>
         <div class="row"><button class="btn ok" data-act="admPay" data-a="confirm">${t('admin.confirmPay')}</button><button class="btn danger" data-act="admPay" data-a="reject">${t('admin.rejectPay')}</button></div></div>`;
       if (['open', 'accepted', 'awaiting_payment'].includes(s) && o.escrowStatus !== 'held') return html`<div class="action"><h3>${t('admin.overridePrice')}</h3><div class="row"><input type="number" id="newPrice" min="1" value="${o.price}" style="max-width:160px"><input id="priceNote" class="grow" placeholder="${t('admin.priceNote')}"><button class="btn primary" data-act="admPrice">${t('common.save')}</button></div></div>`;
       if (s === 'disputed') return html`<div class="action bad">${t('order.disputed')} — <a href="#/admin/disputes">${t('admin.tab.disputes')}</a></div>`;
@@ -174,6 +177,7 @@ export function renderOrder(el, id) {
       ${kv(t('order.weight'), `${fmtNum(o.weightKg, 0)} ${t('common.kg')}`)}`}${kv(t('order.distance'), `${fmtNum(o.distanceKm)} ${t('common.km')}${o.distanceSource === 'estimate' ? ' ~' : ''}`)}
       ${kv(t('order.when'), fmtDate(o.scheduledAt))}
       ${o.payMode === 'before' ? kv(t('order.payMode'), t('order.prepaid')) : ''}${kv(t('order.price'), html`<b>${fmtMoney(o.price)}</b>${o.priceOverridden ? html` <span class="muted small">(${t('order.priceAdjusted')}${o.priceNote ? ': ' + o.priceNote : ''})</span>` : ''}${o.priceNegotiated ? html` <span class="muted small">(${t('order.priceNegotiated')})</span>` : ''}`)}
+      ${o.discount ? html`${kv(t('coupon.discount'), html`<span style="color:var(--nile)">− ${fmtMoney(o.discount)}</span>${o.couponCode ? html` <span class="muted small">(${o.couponCode})</span>` : ''}`)}${kv(t('coupon.due'), html`<b>${fmtMoney(dueOf(o))}</b>`)}` : ''}
       ${o.description ? kv(t('order.notes'), o.description) : ''}
       ${showDriver ? kv(t('order.driver'), html`${o.driverName} — ${tel(o.driverPhone)} <span class="muted small">(${t('vehicle.' + o.driverVehicle) === 'vehicle.' + o.driverVehicle ? o.driverVehicle : t('vehicle.' + o.driverVehicle)})</span>${o.driverTrust ? html`<div style="margin-top:.2rem">${trustBadge(o.driverTrust)}</div>` : ''}`) : ''}
       ${showCustomer ? kv(t('order.customer'), html`${o.customerName}${showCustPhone ? html` — ${tel(o.customerPhone)}` : ''}`) : ''}
@@ -253,6 +257,7 @@ export function renderOrder(el, id) {
 
   function paint(o) {
     render($('#title', el), html`${t('order.title')} ${orderNo(o.id)} ${stamp(o.status, o.service)}`);
+    render($('#rlink', el), RECEIPT_STATUS.includes(o.status) ? html`<a class="btn ghost sm" href="#/receipt/${o.id}">${t('receipt.open')}</a>` : '');
     render(left, html`${stepsHtml(o)}<div id="actions">${actionsHtml(o)}</div>${safetyHtml(o)}${detailsHtml(o)}`);
     hydrate(left);
     const st = $('#stars', left); if (st) getStars = starsInput(st);
@@ -279,12 +284,13 @@ export function renderOrder(el, id) {
       if (role === 'customer' && ['paid', 'heading_pickup'].includes(order.status) && order.escrowStatus === 'held') { // إلغاء برسوم بعد قبول السواق
         const S = state.settings, h = order.status === 'heading_pickup';
         const dp = h ? S.cancelHeadingDriverPct : S.cancelPaidDriverPct, pp = h ? S.cancelHeadingPlatformPct : S.cancelPaidPlatformPct;
-        const d = Math.round((order.price * dp) / 100), pl = Math.min(order.price - d, Math.round((order.price * pp) / 100));
-        if (!(await confirmDialog(t('order.cancelFeeAsk', { driver: fmtMoney(d), platform: fmtMoney(pl), refund: fmtMoney(order.price - d - pl) }), { danger: true, ok: t('order.cancelFee') }))) return;
+        const paid = dueOf(order); // الرسوم بتتحسب على المبلغ المدفوع فعلاً (بعد الكوبون)
+        const d = Math.round((paid * dp) / 100), pl = Math.min(paid - d, Math.round((paid * pp) / 100));
+        if (!(await confirmDialog(t('order.cancelFeeAsk', { driver: fmtMoney(d), platform: fmtMoney(pl), refund: fmtMoney(paid - d - pl) }), { danger: true, ok: t('order.cancelFee') }))) return;
         await call('orders/cancel', {}, 'order.cancelFeeToast'); return;
       }
       if (role === 'customer' && order.escrowStatus === 'held') { // مدفوع مقدماً => استرجاع
-        if (!(await confirmDialog(t('order.cancelRefundAsk', { amount: fmtMoney(order.price) }), { danger: true, ok: t('order.cancelRefund') }))) return;
+        if (!(await confirmDialog(t('order.cancelRefundAsk', { amount: fmtMoney(dueOf(order)) }), { danger: true, ok: t('order.cancelRefund') }))) return;
         await call('orders/cancel', {}, 'order.cancelRefundToast'); return;
       }
       const reason = await promptDialog(t('order.cancelAsk'));

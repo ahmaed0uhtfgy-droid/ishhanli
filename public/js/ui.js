@@ -109,3 +109,28 @@ export function enableZoom(root) {
     openModal(html`<img src="${img.src}" alt="" style="width:100%;border-radius:8px">`, { wide: true });
   });
 }
+
+// ---------- الطباعة (حفظ PDF من المتصفح) ----------
+const PRINT_CSS = `
+:root{--line:#d8dee7;--ink:#1e2a3a;--mut:#64748b;--gold:#c99400}
+*{box-sizing:border-box} body{font:15px/1.6 system-ui,'Segoe UI',Tahoma,sans-serif;color:var(--ink);margin:0;padding:28px;background:#fff}
+h1{font-size:22px;margin:0 0 .2rem} h2{font-size:16px;margin:1.2rem 0 .4rem;border-bottom:1px solid var(--line);padding-bottom:.3rem}
+.rc-head{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;border-bottom:2px solid var(--ink);padding-bottom:.8rem;margin-bottom:1rem}
+.rc-brand{font-weight:700;font-size:18px} .rc-brand b{color:var(--gold)}
+table{width:100%;border-collapse:collapse} td,th{text-align:start;padding:.45rem .5rem;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--mut);font-weight:600;width:38%} .num{font-variant-numeric:tabular-nums} .small{font-size:12px} .muted{color:var(--mut)}
+.rc-foot{margin-top:1.4rem;color:var(--mut);font-size:12px}
+@media print{body{padding:0}}
+`;
+
+/** يفتح نافذة جديدة فيها المحتوى (من غير شكل الموقع) ويشغّل الطباعة/حفظ PDF */
+export function printNode(title, node) {
+  const w = window.open('', '_blank', 'width=860,height=940');
+  if (!w) { toast(t('err.popup_blocked'), true); return false; }
+  const dir = getLang() === 'ar' ? 'rtl' : 'ltr', body = node instanceof Raw ? node.s : String(node);
+  w.document.write(`<!doctype html><html dir="${dir}" lang="${getLang()}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>${PRINT_CSS}</style></head><body>${body}</body></html>`);
+  w.document.close();
+  w.focus();
+  setTimeout(() => { try { w.print(); } catch { /* المستخدم يقدر يطبع يدوي */ } }, 350);
+  return true;
+}

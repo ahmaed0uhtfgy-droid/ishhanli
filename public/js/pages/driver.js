@@ -2,7 +2,7 @@ import { api, poll } from '../api.js';
 import { gpoll } from '../sync.js';
 import { state } from '../state.js';
 import { t } from '../i18n.js';
-import { $, html, render, toast, errMsg, busy, spinner, waybill, stamp, orderNo, fmtMoney, fmtNum, fmtDate, ratingText, label, openModal, trustBadge } from '../ui.js';
+import { $, html, render, toast, errMsg, busy, spinner, waybill, stamp, orderNo, fmtMoney, fmtNum, fmtDate, ratingText, label, openModal, trustBadge, printNode } from '../ui.js';
 import { getPos } from '../geo.js';
 import { chime, unlockAudio } from '../sound.js';
 import { pushSupport, enablePush } from '../push.js';
@@ -137,12 +137,22 @@ function wallet(body) {
       <label class="f">${t('wallet.account')}<input name="account" required minlength="5" maxlength="60" placeholder="${t('wallet.accountHint')}"></label>
       <p class="hint">${t('wallet.minNote')} ${fmtMoney(S.minWithdraw || 100)} — ${t('wallet.reviewNote')}</p><p class="err" id="werr" role="alert"></p>
       <button class="btn primary" type="submit">${t('wallet.request')}</button></form></div>
-    <div class="stack"><div id="wds"></div><div id="txs"></div></div></div>`);
+    <div class="stack"><div id="wds"></div><div id="txs"></div><div id="wk"></div></div></div>`);
   const p = gpoll(['wallet', 'withdrawals'], () => api('wallet'), 20000, ({ wallet: w, tx, withdrawals: rows }) => {
     render($('#bal', body), html`<div class="tiles"><div class="tile"><b>${fmtMoney(w.balance)}</b><span>${t('wallet.balance')}</span></div><div class="tile"><b>${fmtMoney(w.totalEarned)}</b><span>${t('wallet.earned')}</span></div></div>`);
     render($('#wds', body), html`<h3>${t('wallet.requests')}</h3>${rows.length ? html`<div class="table-wrap"><table><tbody>${rows.map((x) => html`<tr><td>${fmtDate(x.createdAt)}</td><td>${t('method.' + x.method)}</td><td class="num">${fmtMoney(x.amount)}</td><td>${stamp(x.status)}</td><td class="small">${x.note || ''}</td></tr>`)}</tbody></table></div>` : html`<p class="muted">—</p>`}`);
     render($('#txs', body), html`<h3>${t('wallet.history')}</h3>${tx.length ? html`<div class="table-wrap"><table><tbody>${tx.map((x) => html`<tr><td>${fmtDate(x.at)}</td><td>${t('tx.' + x.type)}${x.orderId ? html` <a href="#/order/${x.orderId}">${orderNo(x.orderId)}</a>` : ''}</td><td class="num" style="color:${x.amount < 0 ? 'var(--brick)' : 'var(--nile)'}">${x.amount > 0 ? '+' : ''}${fmtMoney(x.amount)}</td></tr>`)}</tbody></table></div>` : html`<p class="muted">—</p>`}`);
   }, { dedupe: true, onError });
+  let weeks = [];
+  const pw = gpoll(['wallet'], () => api('wallet/weekly'), 60000, ({ weeks: ws }) => {
+    weeks = ws || [];
+    render($('#wk', body), html`<div class="row"><h3 class="grow" style="margin:0">${t('wallet.weekly')}</h3>${weeks.length ? html`<button class="btn ghost sm" id="wkprint">${t('wallet.weeklyPrint')}</button>` : ''}</div>
+      ${weeks.length ? weeklyTable(weeks) : html`<p class="muted">${t('wallet.weeklyEmpty')}</p>`}<p class="hint">${t('wallet.weeklyNote')}</p>`);
+  }, { dedupe: true, onError });
+  body.addEventListener('click', (e) => {
+    if (!e.target.closest('#wkprint')) return;
+    printNode(t('wallet.weekly'), html`<h1>${t('wallet.weekly')}</h1><div class="muted small">${state.profile.name}</div>${weeklyTable(weeks)}<p class="rc-foot">${t('wallet.weeklyNote')}</p>`);
+  });
   $('#wf', body).addEventListener('submit', (e) => {
     e.preventDefault(); const f = e.target;
     busy($('button', f), async () => {
@@ -150,5 +160,15 @@ function wallet(body) {
       catch (er) { $('#werr', body).textContent = errMsg(er); }
     });
   });
-  return p;
+  return () => { p(); pw(); };
+}
+
+// تقرير المحفظة الأسبوعي (جدول مشترك بين العرض والطباعة)
+function weekLabel(ms) {
+  const f = (d) => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+  return `${f(new Date(ms))} – ${f(new Date(ms + 6 * 864e5))}`;
+}
+function weeklyTable(weeks) {
+  return html`<div class="table-wrap"><table><thead><tr><th>${t('wallet.week')}</th><th>${t('wallet.weeklyTrips')}</th><th>${t('wallet.weeklyGross')}</th><th>${t('wallet.weeklyEarned')}</th><th>${t('wallet.weeklyWithdrawn')}</th><th>${t('wallet.weeklyNet')}</th></tr></thead>
+    <tbody>${weeks.map((w) => html`<tr><td class="small">${weekLabel(w.start)}</td><td class="num">${w.trips}</td><td class="num">${fmtMoney(w.gross)}</td><td class="num">${fmtMoney(w.earned)}</td><td class="num">${fmtMoney(w.withdrawn)}</td><td class="num"><b style="color:${w.net < 0 ? 'var(--brick)' : 'var(--nile)'}">${fmtMoney(w.net)}</b></td></tr>`)}</tbody></table></div>`;
 }

@@ -42,6 +42,22 @@ setLang('ar'); assert.ok(stamp('awaiting_payment').s.includes('بانتظار د
   const out = html`<div class="msg"><p>${evil}</p></div>`.s; assert.ok(!out.includes('<img') && out.includes('&lt;img')); }
 // تطابق اللغتين
 for (const k of Object.keys(DICT.ar)) assert.ok(DICT.en[k], 'missing en: ' + k);
+// صفحات قانونية: كل مفاتيح الشروط والخصوصية موجودة في اللغتين
+{
+  const secs = { terms: ['use', 'account', 'pricing', 'cancel', 'duties', 'suspend', 'changes'], privacy: ['collect', 'use', 'share', 'store', 'retention', 'local', 'contact'] };
+  for (const [doc, list] of Object.entries(secs)) for (const k of list) for (const suf of ['t', 'd']) assert.ok(DICT.ar[`legal.${doc}.${k}.${suf}`] && DICT.en[`legal.${doc}.${k}.${suf}`], `legal ${doc}.${k}.${suf}`);
+  assert.ok(DICT.ar['legal.terms'] && DICT.en['legal.privacy'] && DICT.ar['footer.terms'] && DICT.en['footer.privacy']);
+}
+// كل مفتاح data-i18n في الصفحات الثابتة لازم يكون له ترجمة (يمنع نص ناقص في الصفحة الرئيسية)
+{
+  const { readFileSync, readdirSync } = await import('node:fs');
+  const dir = new URL('../public/', import.meta.url);
+  const re = /data-i18n="([^"]+)"/g;
+  for (const f of readdirSync(dir).filter((n) => n.endsWith('.html'))) {
+    const src = readFileSync(new URL(f, dir), 'utf8');
+    let m; while ((m = re.exec(src))) assert.ok(DICT.ar[m[1]] && DICT.en[m[1]], `data-i18n بلا ترجمة: ${f} → ${m[1]}`);
+  }
+}
 console.log('✅ client tests passed');
 
 // ================== poll ==================

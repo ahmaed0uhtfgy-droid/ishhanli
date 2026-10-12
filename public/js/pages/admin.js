@@ -4,9 +4,9 @@ import { state } from '../state.js';
 import { t } from '../i18n.js';
 import { $, $$, html, raw, render, toast, errMsg, busy, spinner, stamp, orderNo, fmtMoney, fmtNum, fmtDate, ratingText, trustBadge, confirmDialog, promptDialog, openModal } from '../ui.js';
 import { hydrate, imgTag } from '../storage.js';
-import { toCsv, downloadCsv } from '../csv.js';
+import { toCsv, downloadCsv, downloadJson } from '../csv.js';
 
-const TABS = ['overview', 'finance', 'payments', 'users', 'orders', 'withdrawals', 'disputes', 'refunds', 'reports', 'settings', 'blacklist'];
+const TABS = ['overview', 'finance', 'payments', 'users', 'orders', 'withdrawals', 'disputes', 'refunds', 'reports', 'coupons', 'referrals', 'settings', 'blacklist', 'audit', 'monitoring'];
 const onError = (e) => toast(errMsg(e), true);
 const imgs = (refs) => html`<div class="photos">${(refs || []).filter(Boolean).map((r) => raw(imgTag(r)))}</div>`;
 const roleKey = (u) => 'auth.role' + (u.role === 'driver' ? 'Driver' : 'Customer');
@@ -20,7 +20,7 @@ export function renderAdmin(el, tab) {
     for (const [k, n] of Object.entries(b)) { const d = $(`[data-tab="${k}"] .dot`, el); if (d) { d.textContent = n; d.hidden = !n; } }
   }, { dedupe: true });
   const body = $('#body', el);
-  const stop = { overview, finance, payments, users, orders, withdrawals, disputes, refunds, reports, settings, blacklist }[tab](body, badges);
+  const stop = { overview, finance, payments, users, orders, withdrawals, disputes, refunds, reports, coupons, referrals, settings, blacklist, audit, monitoring }[tab](body, badges);
   return () => { badges(); stop?.(); };
 }
 
@@ -95,15 +95,17 @@ function payments(body) {
 function users(body, badges) {
   render(body, html`<div class="row" style="margin-bottom:1rem"><select id="fr" style="max-width:160px"><option value="">${t('admin.allRoles')}</option><option value="customer">${t('auth.roleCustomer')}</option><option value="driver">${t('auth.roleDriver')}</option></select>
     <select id="fs" style="max-width:170px"><option value="">${t('admin.allStatus')}</option>${['pending', 'active', 'rejected', 'banned', 'suspended'].map((s) => html`<option value="${s}">${t('status.' + s)}</option>`)}</select>
-    <input id="fq" placeholder="${t('admin.searchUsers')}" style="max-width:260px"></div><div id="tbl">${spinner()}</div>`);
+    <input id="fq" placeholder="${t('admin.searchUsers')}" style="max-width:200px"><input id="fd" type="date" style="max-width:150px" aria-label="${t('admin.fin.from')}" title="${t('admin.fin.from')}"><input id="fto" type="date" style="max-width:150px" aria-label="${t('admin.fin.to')}" title="${t('admin.fin.to')}"></div><div id="tbl">${spinner()}</div>`);
   let all = [], timer = null;
-  const paint = () => render($('#tbl', body), html`<div class="table-wrap"><table><thead><tr><th>${t('auth.name')}</th><th>${t('admin.role')}</th><th>${t('auth.phone')}</th><th>${t('admin.status')}</th><th>${t('admin.rating')}</th><th>${t('trust.title')}</th><th>${t('admin.joined')}</th><th></th></tr></thead>
-    <tbody>${all.map((u) => html`<tr><td>${u.name}</td><td>${t(roleKey(u))}</td><td dir="ltr">${u.phone}</td><td>${stamp(u.status)}</td><td>${ratingText(u)}</td><td>${u.trust ? trustBadge(u.trust) : '—'}</td><td class="small">${fmtDate(u.createdAt)}</td><td><button class="btn sm ${u.status === 'pending' ? 'primary' : 'ghost'}" data-id="${u.id}">${t('admin.review')}</button></td></tr>`)}</tbody></table></div>`);
+  const inRange = () => { const f = $('#fd', body).value, tt = $('#fto', body).value; const fms = f ? new Date(f + 'T00:00:00').getTime() : 0, tms = tt ? new Date(tt + 'T23:59:59.999').getTime() : 0; return (ms) => (!fms || (ms || 0) >= fms) && (!tms || (ms || 0) <= tms); };
+  const paint = () => { const ok = inRange(), rows = all.filter((u) => ok(u.createdAt)); render($('#tbl', body), rows.length ? html`<div class="table-wrap"><table><thead><tr><th>${t('auth.name')}</th><th>${t('admin.role')}</th><th>${t('auth.phone')}</th><th>${t('admin.status')}</th><th>${t('admin.rating')}</th><th>${t('trust.title')}</th><th>${t('admin.joined')}</th><th></th></tr></thead>
+    <tbody>${rows.map((u) => html`<tr><td>${u.name}</td><td>${t(roleKey(u))}</td><td dir="ltr">${u.phone}</td><td>${stamp(u.status)}</td><td>${ratingText(u)}</td><td>${u.trust ? trustBadge(u.trust) : '—'}</td><td class="small">${fmtDate(u.createdAt)}</td><td><button class="btn sm ${u.status === 'pending' ? 'primary' : 'ghost'}" data-id="${u.id}">${t('admin.review')}</button></td></tr>`)}</tbody></table></div>` : html`<div class="empty">${t('admin.noneUsers')}</div>`); };
   async function load() {
     try { all = (await api('admin/users', { role: $('#fr', body).value, status: $('#fs', body).value, q: $('#fq', body).value })).users; paint(); }
     catch (e) { render($('#tbl', body), html`<div class="empty">${errMsg(e)}</div>`); }
   }
   ['#fr', '#fs'].forEach((s) => $(s, body).addEventListener('change', load));
+  ['#fd', '#fto'].forEach((s) => $(s, body).addEventListener('change', paint)); // فلتر التاريخ في الذاكرة (من غير فهارس مركّبة)
   $('#fq', body).addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(load, 350); });
   body.addEventListener('click', (e) => { const b = e.target.closest('[data-id]'); if (b) userModal(all.find((u) => u.id === b.dataset.id), async () => { await load(); badges.now(); }); });
   load();
@@ -123,12 +125,25 @@ function userModal(u, reload) {
     <div class="stack">${docsRefs.map(([k, r]) => html`<div><div class="muted small">${t(k)}</div>${imgs([r])}</div>`)}</div>
     <label class="f" style="margin-top:1rem">${t('admin.reason')}<input id="reason"></label>
     <label class="row" style="margin-top:.5rem"><input type="checkbox" id="bl"> <span class="small">${t('admin.addBlacklist')}</span></label>
+    <div class="action" style="margin-top:1rem"><h3>${t('admin.profileEdit')}</h3>
+      <p class="hint">${t('admin.profileEditLast')}: ${u.profileEditedAt ? fmtDate(u.profileEditedAt) : '—'}</p>
+      <label class="f" style="max-width:260px">${t('admin.profileEditCustom')}<input id="peDays" type="number" min="0" max="365" value="${u.profileEditDays ?? ''}" placeholder="—"></label>
+      <div class="row" style="margin-top:.5rem"><button class="btn ghost sm" type="button" data-pe="save">${t('common.save')}</button><button class="btn ok sm" type="button" data-pe="unlock">${t('admin.profileEditUnlock')}</button></div>
+      <p class="err" id="peerr" role="alert"></p></div>
     <div class="row end"><button class="btn ghost" data-s="close">${t('common.close')}</button>
       ${u.status !== 'active' ? html`<button class="btn ok" data-s="active">${t('admin.approve')}</button>` : ''}
       ${u.status === 'pending' ? html`<button class="btn danger" data-s="rejected">${t('admin.reject')}</button>` : ''}
       ${u.status !== 'banned' ? html`<button class="btn danger" data-s="banned">${t('admin.ban')}</button>` : ''}</div>`, { wide: true });
   hydrate(el);
   el.addEventListener('click', (e) => {
+    const pe = e.target.closest('[data-pe]');
+    if (pe) return void busy(pe, async () => {
+      try {
+        if (pe.dataset.pe === 'unlock') await api('admin/profile-edit', { uid: u.id, unlock: true });
+        else { const raw = $('#peDays', el).value.trim(); await api('admin/profile-edit', { uid: u.id, days: raw === '' ? null : Number(raw) }); }
+        toast(t('common.done')); close(); reload();
+      } catch (er) { $('#peerr', el).textContent = errMsg(er); }
+    });
     const b = e.target.closest('[data-s]'); if (!b) return; if (b.dataset.s === 'close') return close();
     busy(b, async () => {
       await api('admin/user', { uid: u.id, status: b.dataset.s, reason: $('#reason', el).value, blacklist: $('#bl', el).checked });
@@ -141,14 +156,17 @@ function userModal(u, reload) {
 function orders(body) {
   let limit = 100, q = '', last = [], tm;
   render(body, html`<div class="row" style="margin-bottom:1rem"><select id="fs" style="max-width:220px"><option value="">${t('admin.allStatus')}</option>${['awaiting_payment', 'open', 'accepted', 'payment_review', 'paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered', 'completed', 'disputed', 'resolved', 'cancelled'].map((s) => html`<option value="${s}">${t('status.' + s)}</option>`)}</select>
-    <input id="qs" type="search" placeholder="${t('admin.searchOrders')}" style="max-width:280px"><button class="btn ghost sm" id="csv">${t('admin.exportCsv')}</button></div><div id="tbl">${spinner()}</div><div class="row" id="more" hidden style="justify-content:center;margin-top:1rem"><button class="btn ghost" id="moreb">${t('admin.loadMore')}</button></div>`);
+    <input id="qs" type="search" placeholder="${t('admin.searchOrders')}" style="max-width:240px"><input id="od" type="date" style="max-width:150px" aria-label="${t('admin.fin.from')}" title="${t('admin.fin.from')}"><input id="ot" type="date" style="max-width:150px" aria-label="${t('admin.fin.to')}" title="${t('admin.fin.to')}"><button class="btn ghost sm" id="csv">${t('admin.exportCsv')}</button></div><div id="tbl">${spinner()}</div><div class="row" id="more" hidden style="justify-content:center;margin-top:1rem"><button class="btn ghost" id="moreb">${t('admin.loadMore')}</button></div>`);
   const sel = $('#fs', body), qs = $('#qs', body), more = $('#more', body);
+  const inRange = () => { const f = $('#od', body).value, tt = $('#ot', body).value; const fms = f ? new Date(f + 'T00:00:00').getTime() : 0, tms = tt ? new Date(tt + 'T23:59:59.999').getTime() : 0; return (ms) => (!fms || (ms || 0) >= fms) && (!tms || (ms || 0) <= tms); };
   const p = gpoll(['orders'], () => api('orders/list', { status: sel.value, q, limit }), 15000, ({ orders: rows }) => {
-    last = rows;
+    const ok = inRange(), shown = rows.filter((o) => ok(o.createdAt));
+    last = shown; // التصدير بيطلع النتائج المعروضة (بعد فلتر التاريخ)
     more.hidden = !(rows.length >= limit && limit < 300 && !q);
-    render($('#tbl', body), rows.length ? html`<div class="table-wrap"><table><thead><tr><th>#</th><th>${t('admin.status')}</th><th>${t('order.customer')}</th><th>${t('order.driver')}</th><th>${t('order.price')}</th><th>${t('admin.date')}</th><th></th></tr></thead>
-      <tbody>${rows.map((o) => html`<tr><td>${orderNo(o.id)}</td><td>${stamp(o.status)}</td><td>${o.customerName}</td><td>${o.driverName || '—'}</td><td class="num">${fmtMoney(o.price)}</td><td class="small">${fmtDate(o.createdAt)}</td><td><a class="btn sm ghost" href="#/order/${o.id}">${t('admin.open')}</a></td></tr>`)}</tbody></table></div>` : html`<div class="empty">${t('admin.noneOrders')}</div>`);
+    render($('#tbl', body), shown.length ? html`<div class="table-wrap"><table><thead><tr><th>#</th><th>${t('admin.status')}</th><th>${t('order.customer')}</th><th>${t('order.driver')}</th><th>${t('order.price')}</th><th>${t('admin.date')}</th><th></th></tr></thead>
+      <tbody>${shown.map((o) => html`<tr><td>${orderNo(o.id)}</td><td>${stamp(o.status)}</td><td>${o.customerName}</td><td>${o.driverName || '—'}</td><td class="num">${fmtMoney(o.price)}</td><td class="small">${fmtDate(o.createdAt)}</td><td><a class="btn sm ghost" href="#/order/${o.id}">${t('admin.open')}</a></td></tr>`)}</tbody></table></div>` : html`<div class="empty">${t('admin.noneOrders')}</div>`);
   }, { dedupe: true, onError });
+  ['#od', '#ot'].forEach((s) => $(s, body).addEventListener('change', () => p.now()));
   sel.addEventListener('change', () => { limit = 100; p.now(); });
   qs.addEventListener('input', () => { clearTimeout(tm); tm = setTimeout(() => { q = qs.value.trim(); limit = 100; p.now(); }, 350); }); // بحث بعد ما تبطّل تكتب
   $('#moreb', body).addEventListener('click', () => { limit = Math.min(300, limit + 100); p.now(); });
@@ -284,6 +302,25 @@ function disputes(body) {
 }
 
 // =====================================================================  الإعدادات (تسعير + عمولة) — الفحص النهائي على السيرفر
+// =====================================================================  الإحالة والحوافز
+function referrals(body) {
+  return gpoll(['referrals'], () => api('admin/referrals'), 30000, ({ config, pending, rewarded, paid, rows }) => {
+    const roleName = (rl) => t('auth.role' + (rl === 'driver' ? 'Driver' : 'Customer'));
+    render(body, html`<div class="stack">
+      <div class="tiles">
+        <div class="tile"><b>${fmtNum(pending)}</b><span>${t('admin.ref.pending')}</span></div>
+        <div class="tile"><b>${fmtNum(rewarded)}</b><span>${t('admin.ref.rewarded')}</span></div>
+        <div class="tile"><b>${fmtMoney(paid.referrer)}</b><span>${t('admin.ref.paidReferrer')}</span></div>
+        <div class="tile"><b>${fmtMoney(paid.referred)}</b><span>${t('admin.ref.paidReferred')}</span></div>
+      </div>
+      ${config.enabled ? '' : html`<p class="action info">${t('admin.refOff')}</p>`}
+      <div class="card"><p class="hint">${t('admin.ref.hint', { r: fmtMoney(config.bonusReferrer), d: fmtMoney(config.bonusReferred) })} <a href="#/admin/settings">${t('admin.tab.settings')}</a></p></div>
+      ${rows.length ? html`<div class="table-wrap"><table><thead><tr><th>${t('admin.ref.when')}</th><th>${t('admin.ref.user')}</th><th>${t('admin.ref.by')}</th><th>${t('admin.ref.status')}</th><th>${t('admin.ref.bonus')}</th></tr></thead>
+        <tbody>${rows.map((r) => html`<tr><td class="small">${fmtDate(r.createdAt)}</td><td>${r.userName} <span class="mut small">(${roleName(r.role)})</span></td><td>${r.referrerName} <span class="mut small">(${roleName(r.referrerRole)})</span></td><td>${r.status === 'rewarded' ? html`<span class="stamp s-active">${t('admin.ref.rewarded')}</span>` : html`<span class="stamp s-pending">${t('admin.ref.pending')}</span>`}</td><td class="small">${r.status === 'rewarded' ? html`${fmtMoney(r.bonusReferrer)} / ${fmtMoney(r.bonusReferred)}` : '—'}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">${t('admin.ref.none')}</div>`}
+    </div>`);
+  }, { dedupe: true, onError });
+}
+
 function settings(body) {
   const S = state.settings;
   const kvRow = (k, v = {}, seats = false) => html`<tr><td><input data-k value="${k}" ${k ? 'readonly' : ''} placeholder="key" style="min-width:110px"></td><td><input data-ar value="${v.ar || ''}"></td><td><input data-en value="${v.en || ''}" dir="ltr"></td><td><input data-m type="number" step="0.05" min="0.1" value="${v.mult ?? 1}" style="width:90px"></td>${seats ? html`<td><input data-seats type="number" min="1" max="100" value="${v.seats ?? 4}" style="width:80px"></td>` : ''}<td><button type="button" class="btn ghost sm" data-del>✕</button></td></tr>`;
@@ -309,6 +346,18 @@ function settings(body) {
       <label class="row"><input type="checkbox" name="offersEnabled" ${S.offersEnabled !== false ? 'checked' : ''}> <span>${t('admin.s.offersEnabled')}</span></label>
       <label class="row"><input type="checkbox" name="autoApproveCustomers" ${S.autoApproveCustomers ? 'checked' : ''}> <span>${t('admin.s.autoApprove')}</span></label></div>
     <div class="card stack"><h3>${t('admin.instapay')}</h3><div class="grid-2"><label class="f">${t('admin.s.handle')}<input name="instapay.handle" dir="ltr" value="${S.instapay?.handle || ''}"></label><label class="f">${t('admin.s.holder')}<input name="instapay.name" value="${S.instapay?.name || ''}"></label></div></div>
+    <div class="card stack"><h3>${t('admin.profileEdit')}</h3><p class="hint">${t('admin.profileEditHint')}</p>
+      <label class="row"><input type="checkbox" name="profileEditEnabled" ${S.profileEditEnabled !== false ? 'checked' : ''}> <span>${t('admin.s.profileEditEnabled')}</span></label>
+      <label class="f" style="max-width:240px">${t('admin.s.profileEditCooldown')}<input type="number" name="profileEditCooldownDays" min="0" max="365" value="${S.profileEditCooldownDays ?? 15}" required></label></div>
+    <div class="card stack"><h3>${t('admin.publicProfiles')}</h3><p class="hint">${t('admin.publicProfilesHint')}</p>
+      <label class="row"><input type="checkbox" name="publicProfiles" ${S.publicProfiles ? 'checked' : ''}> <span>${t('admin.s.publicProfiles')}</span></label></div>
+    <div class="card stack"><h3>${t('admin.referral')}</h3><p class="hint">${t('admin.referralHint')}</p>
+      <label class="row"><input type="checkbox" name="referralEnabled" ${S.referralEnabled ? 'checked' : ''}> <span>${t('admin.s.referralEnabled')}</span></label>
+      <div class="grid-2">
+        <label class="f">${t('admin.s.referralBonusReferrer')}<input type="number" name="referralBonusReferrer" min="0" max="1000000" value="${S.referralBonusReferrer ?? 0}" required></label>
+        <label class="f">${t('admin.s.referralBonusReferred')}<input type="number" name="referralBonusReferred" min="0" max="1000000" value="${S.referralBonusReferred ?? 0}" required></label>
+      </div>
+      <p class="hint">${t('admin.referralGo')} <a href="#/admin/referrals">${t('admin.tab.referrals')}</a></p></div>
     <p class="err" id="serr" role="alert"></p><div><button class="btn primary" type="submit">${t('common.save')}</button></div></form>`);
   const f = $('#sf', body);
   body.addEventListener('click', (e) => {
@@ -335,6 +384,9 @@ function settings(body) {
           categories: readKv('categories'), sizes: readKv('sizes'),
           passengersEnabled: f.elements.passengersEnabled.checked, passengerClasses: readKv('passengerClasses'),
           levelDiscountPct: { trusted: n('levelDiscountPct.trusted'), pro: n('levelDiscountPct.pro'), elite: n('levelDiscountPct.elite') },
+          profileEditEnabled: f.elements.profileEditEnabled.checked, profileEditCooldownDays: n('profileEditCooldownDays'),
+          publicProfiles: f.elements.publicProfiles.checked,
+          referralEnabled: f.elements.referralEnabled.checked, referralBonusReferrer: n('referralBonusReferrer'), referralBonusReferred: n('referralBonusReferred'),
         });
         state.settings = r.settings; $('#serr', body).textContent = ''; toast(t('admin.saved'));
       } catch (er) { $('#serr', body).textContent = errMsg(er); }
@@ -358,4 +410,118 @@ function blacklist(body) {
   });
   body.addEventListener('click', (e) => { const b = e.target.closest('[data-del]'); if (b) busy(b, async () => { if (await confirmDialog(t('common.sure'), { danger: true })) { await api('admin/blacklist/remove', { id: b.dataset.del }); await p.now(); } }); });
   return p;
+}
+
+// =====================================================================  كوبونات الخصم (يتحكم فيها الأدمن)
+function coupons(body) {
+  let cur = null, rows = []; // الكوبون اللي بيتعدّل حالياً (null = إنشاء جديد) + آخر قائمة
+  render(body, html`<div class="stack">
+    <form id="cf" class="card">
+      <h3 id="ctitle">${t('admin.coupon.new')}</h3>
+      <div class="grid-2">
+        <label class="f">${t('admin.coupon.code')}<input name="code" required maxlength="20" dir="ltr" placeholder="SAVE10" style="text-transform:uppercase"></label>
+        <label class="f">${t('admin.coupon.type')}<select name="type"><option value="percent">${t('admin.coupon.percent')}</option><option value="amount">${t('admin.coupon.amount')}</option></select></label>
+        <label class="f">${t('admin.coupon.value')}<input name="value" type="number" min="1" required></label>
+        <label class="f">${t('admin.coupon.maxDiscount')}<input name="maxDiscount" type="number" min="0" value="0"><span class="hint">${t('admin.coupon.maxDiscountHint')}</span></label>
+        <label class="f">${t('admin.coupon.minPrice')}<input name="minPrice" type="number" min="0" value="0"><span class="hint">${t('admin.coupon.minPriceHint')}</span></label>
+        <label class="f">${t('admin.coupon.maxUses')}<input name="maxUses" type="number" min="0" value="0"><span class="hint">${t('admin.coupon.zeroUnlimited')}</span></label>
+        <label class="f">${t('admin.coupon.perUser')}<input name="perUser" type="number" min="0" value="0"><span class="hint">${t('admin.coupon.zeroUnlimited')}</span></label>
+        <label class="f">${t('admin.coupon.expires')}<input name="expires" type="date"><span class="hint">${t('admin.coupon.expiresHint')}</span></label>
+      </div>
+      <label class="row" style="gap:.5rem;margin:.5rem 0"><input type="checkbox" name="active" checked style="width:auto"> ${t('admin.coupon.active')}</label>
+      <p class="err" id="cerr"></p>
+      <div class="row"><button class="btn primary" type="submit">${t('common.save')}</button><button class="btn ghost" type="button" id="ccancel" hidden>${t('common.cancel')}</button></div>
+    </form>
+    <div id="ctbl"></div></div>`);
+  const f = $('#cf', body), err = $('#cerr', body), title = $('#ctitle', body), cancel = $('#ccancel', body);
+  const fill = (c) => { // تعبئة النموذج للتعديل أو تصفيره
+    cur = c;
+    f.code.value = c?.code ?? ''; f.type.value = c?.type ?? 'percent'; f.value.value = c?.value ?? '';
+    f.maxDiscount.value = c?.maxDiscount ?? 0; f.minPrice.value = c?.minPrice ?? 0;
+    f.maxUses.value = c?.maxUses ?? 0; f.perUser.value = c?.perUser ?? 0;
+    f.expires.value = c?.expiresAt ? new Date(c.expiresAt).toISOString().slice(0, 10) : '';
+    f.active.checked = c ? c.active : true;
+    f.code.disabled = !!c; // الكود ثابت بعد الإنشاء
+    title.textContent = c ? t('admin.coupon.edit') : t('admin.coupon.new');
+    cancel.hidden = !c;
+  };
+  const p = gpoll(['coupons'], () => api('admin/coupons'), 60000, ({ coupons: list }) => {
+    rows = list;
+    render($('#ctbl', body), rows.length ? html`<div class="table-wrap"><table><thead><tr><th>${t('admin.coupon.code')}</th><th>${t('admin.coupon.type')}</th><th>${t('admin.coupon.value')}</th><th>${t('admin.coupon.used')}</th><th>${t('admin.coupon.perUserShort')}</th><th>${t('admin.coupon.status')}</th><th></th></tr></thead>
+      <tbody>${rows.map((c) => html`<tr><td dir="ltr"><b>${c.code}</b></td><td>${t(c.type === 'percent' ? 'admin.coupon.percent' : 'admin.coupon.amount')}</td><td class="num">${c.type === 'percent' ? `${c.value}%` : fmtMoney(c.value)}${c.maxDiscount ? html` <span class="muted small">≤ ${fmtMoney(c.maxDiscount)}</span>` : ''}${c.minPrice ? html` <div class="muted small">≥ ${fmtMoney(c.minPrice)}</div>` : ''}</td>
+        <td class="num">${c.usedCount}${c.maxUses ? ` / ${c.maxUses}` : ''}</td><td class="num">${c.perUser || '∞'}</td>
+        <td>${c.active ? html`<span class="stamp s-active">${t('admin.coupon.on')}</span>` : html`<span class="stamp s-banned">${t('admin.coupon.off')}</span>`}${c.expiresAt ? html` <div class="muted small">${fmtDate(c.expiresAt)}</div>` : ''}</td>
+        <td><button class="btn sm ghost" data-edit="${c.code}">${t('common.edit')}</button> <button class="btn sm ghost" data-del="${c.code}">✕</button></td></tr>`)}</tbody></table></div>` : html`<div class="empty">${t('admin.coupon.none')}</div>`);
+  }, { dedupe: true, onError });
+  f.addEventListener('submit', (e) => {
+    e.preventDefault(); busy($('button[type=submit]', f), async () => {
+      err.textContent = '';
+      try {
+        await api('admin/coupon', {
+          ...(cur ? { id: cur.code } : { code: f.code.value }),
+          type: f.type.value, value: f.value.value,
+          maxDiscount: f.maxDiscount.value || 0, minPrice: f.minPrice.value || 0,
+          maxUses: f.maxUses.value || 0, perUser: f.perUser.value || 0,
+          active: f.active.checked,
+          expiresAt: f.expires.value ? new Date(f.expires.value + 'T23:59:59').getTime() : 0,
+        });
+        fill(null); toast(t('common.done')); await p.now();
+      } catch (er) { err.textContent = errMsg(er); }
+    });
+  });
+  cancel.addEventListener('click', () => fill(null));
+  body.addEventListener('click', (e) => {
+    const ed = e.target.closest('[data-edit]'), dl = e.target.closest('[data-del]');
+    if (ed) { const c = rows.find((x) => x.code === ed.dataset.edit); if (c) { fill(c); f.scrollIntoView({ behavior: 'smooth', block: 'start' }); } return; }
+    if (dl) busy(dl, async () => { if (await confirmDialog(t('admin.coupon.deleteAsk', { code: dl.dataset.del }), { danger: true, ok: t('common.delete') })) { await api('admin/coupon', { action: 'delete', id: dl.dataset.del }); await p.now(); } });
+  });
+  return p;
+}
+
+
+// =====================================================================  سجل عمليات الأدمن (أمن ومساءلة)
+function audit(body) {
+  const tgt = (e) => { const id = e.targetId; if (!id) return '—'; if (e.targetType === 'order') return orderNo(id); if (e.targetType === 'user') return id; return `${e.targetType || ''} ${id}`.trim(); };
+  const label = (a) => { const k = 'audit.' + a; return t(k) === k ? a : t(k); }; // لو مفتاح الترجمة مش موجود نعرض الكود الخام
+  return gpoll(['audit'], () => api('admin/audit'), 20000, ({ entries }) => {
+    render(body, entries.length ? html`<div class="table-wrap"><table><thead><tr><th>${t('admin.a.when')}</th><th>${t('admin.a.who')}</th><th>${t('admin.a.what')}</th><th>${t('admin.a.target')}</th><th>${t('admin.a.note')}</th></tr></thead>
+      <tbody>${entries.map((e) => html`<tr><td class="small">${fmtDate(e.at)}</td><td>${e.adminName || e.adminUid || '—'}</td><td>${label(e.action)}</td><td class="small">${tgt(e)}</td><td class="small">${e.note || '—'}</td></tr>`)}</tbody></table></div>
+      <p class="hint">${t('admin.a.hint')}</p>` : html`<div class="empty">${t('admin.a.none')}</div>`);
+  }, { dedupe: true, onError });
+}
+
+// =====================================================================  المراقبة (استهلاك Firestore + الأخطاء)
+function monitoring(body) {
+  const load = () => Promise.all([api('admin/metrics'), api('admin/errors'), api('admin/logins')]).then(([m, e, l]) => ({ ...m, ...e, ...l }));
+  body.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-act="backup"]'); if (!b) return;
+    await busy(b, async () => {
+      const data = await api('admin/export', {});
+      const stamp = new Date().toISOString().slice(0, 10);
+      downloadJson(`ashhanli-backup-${stamp}.json`, JSON.stringify(data, null, 1));
+      toast(t('admin.bk.done', { n: fmtNum(Object.values(data.counts || {}).reduce((a, n) => a + n, 0)) }));
+    });
+  });
+  return gpoll([], load, 30000, ({ limit, days, errors, entries }) => {
+    const today = days.find((d) => d.day === new Date().toISOString().slice(0, 10)) || { reads: 0, writes: 0, errors: 0 };
+    const over = today.reads >= limit;
+    render(body, html`<div class="stack">
+      <div class="tiles">
+        <div class="tile"><b>${fmtNum(today.reads)}</b><span>${t('admin.mon.reads')}</span></div>
+        <div class="tile"><b>${fmtNum(today.writes)}</b><span>${t('admin.mon.writes')}</span></div>
+        <div class="tile"><b>${fmtNum(today.errors)}</b><span>${t('admin.mon.errors')}</span></div>
+        <div class="tile"><b>${fmtNum(limit)}</b><span>${t('admin.mon.limit')}</span></div>
+      </div>
+      ${over ? html`<p class="err">${t('admin.mon.alarm')}</p>` : ''}
+      <div class="card"><h3>${t('admin.mon.today')}</h3><p class="hint">${t('admin.mon.note')}</p></div>
+      <div class="card"><h3>${t('admin.mon.last30')}</h3>${days.length ? html`<div class="table-wrap"><table><thead><tr><th>${t('admin.mon.day')}</th><th>${t('admin.mon.reads')}</th><th>${t('admin.mon.writes')}</th><th>${t('admin.mon.errors')}</th></tr></thead>
+        <tbody>${days.map((d) => html`<tr><td dir="ltr">${d.day}</td><td class="num ${d.reads >= limit ? 'err' : ''}">${fmtNum(d.reads)}</td><td class="num">${fmtNum(d.writes)}</td><td class="num">${fmtNum(d.errors)}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">${t('admin.mon.daysNone')}</div>`}</div>
+      <div class="card"><h3>${t('admin.mon.errTitle')}</h3>${errors.length ? html`<div class="table-wrap"><table><thead><tr><th>${t('admin.mon.when')}</th><th>${t('admin.mon.source')}</th><th>${t('admin.mon.route')}</th><th>${t('admin.mon.user')}</th><th>${t('admin.mon.message')}</th></tr></thead>
+        <tbody>${errors.map((e) => html`<tr><td class="small">${fmtDate(e.at)}</td><td>${t(e.source === 'client' ? 'admin.mon.srcClient' : 'admin.mon.srcServer')}</td><td class="small" dir="ltr">${e.route || '—'}</td><td class="small" dir="ltr">${e.uid || '—'}</td><td class="small">${e.message || '—'}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">${t('admin.mon.errNone')}</div>`}</div>
+      <div class="card stack"><h3>${t('admin.bk.title')}</h3><p class="hint">${t('admin.bk.hint')}</p>
+        <div><button class="btn ghost" type="button" data-act="backup">${t('admin.bk.btn')}</button></div></div>
+      <div class="card"><h3>${t('admin.lg.title')}</h3><p class="hint">${t('admin.lg.hint')}</p>${(entries || []).length ? html`<div class="table-wrap"><table><thead><tr><th>${t('admin.lg.when')}</th><th>${t('admin.lg.who')}</th><th>${t('admin.lg.role')}</th><th>${t('admin.lg.device')}</th></tr></thead>
+        <tbody>${entries.map((e) => html`<tr><td class="small">${fmtDate(e.at)}</td><td class="small">${e.name || e.email || e.uid}</td><td class="small">${e.role ? t('auth.role' + (e.role === 'driver' ? 'Driver' : e.role === 'admin' ? 'Admin' : 'Customer')) : '—'}</td><td class="small" dir="ltr">${(e.ua || '—').slice(0, 60)}</td></tr>`)}</tbody></table></div>` : html`<div class="empty">${t('admin.lg.none')}</div>`}</div>
+    </div>`);
+  }, { every: 1, dedupe: true, onError });
 }

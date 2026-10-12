@@ -24,7 +24,7 @@ const FS = makeFirestore(PROJECT);
 const saPair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
 const saPem = '-----BEGIN PRIVATE KEY-----\n' + Buffer.from(await crypto.subtle.exportKey('pkcs8', saPair.privateKey)).toString('base64').match(/.{1,64}/g).join('\n') + '\n-----END PRIVATE KEY-----\n';
 const SA = JSON.stringify({ client_email: 'sa@demo.iam', private_key: saPem, project_id: PROJECT });
-const env = { FIREBASE_PROJECT_ID: PROJECT, FIREBASE_SERVICE_ACCOUNT: SA, SETTINGS_TTL_MS: '0', PUSH_DISABLED: '1' }; // الإشعارات متوقفة هنا (envPush بيشغّلها)
+const env = { FIREBASE_PROJECT_ID: PROJECT, FIREBASE_SERVICE_ACCOUNT: SA, SETTINGS_TTL_MS: '0', PUSH_DISABLED: '1', METRICS_DISABLED: '1', API_RATE_DISABLED: '1' }; // الإشعارات والعدّادات متوقفة هنا (envPush بيشغّل الإشعارات)
 const envPush = { ...env, PUSH_DISABLED: '0' };
 // مساعدات فحص مباشر لمحتوى القاعدة
 const U = (uid) => FS.get(`users/${uid}`);
@@ -119,6 +119,7 @@ await bad('تكرار الموبايل/الرقم القومي', call('cust9', '
 await bad('التسجيل بملف مش بتاعه', call('cust8', 'register', { ...people.cust1, phone: '01066666666', nationalId: '29901011234567', idRef: stolen }), 400, 'bad_file');
 await bad('رقم قومي غلط', call('cust7', 'register', { ...people.cust1, phone: '01077777777', nationalId: '123', idRef: await up('cust7', 'id') }), 400, 'bad_national_id');
 await bad('حساب لسه معلّق', call('cust1', 'quote', { pickup: CAIRO, dropoff: GIZA, category: 'goods', size: 'small' }), 403, 'account_not_active');
+await bad('حساب معلّق ما يعدّلش بياناته', call('cust1', 'account/update', { name: 'محاولة' }), 403, 'account_not_active');
 await bad('عميل يستخدم API الأدمن', call('cust1', 'admin/user', { uid: 'drv1', status: 'active' }), 403);
 await bad('عميل يفتح قائمة الأدمن', call('cust1', 'admin/users'), 403);
 const me = await ok('me', call('cust1', 'me')); assert.equal(me.profile.role, 'customer');
@@ -127,6 +128,41 @@ check('me لمستخدم مجهول = null', (await call('nobody', 'me')).profil
 // موافقة الأدمن
 for (const u of ['cust1', 'cust2', 'drv1', 'drv2']) await ok(`أدمن يفعّل ${u}`, call('admin1', 'admin/user', { uid: u, status: 'active' }));
 const badges0 = await ok('badges', call('admin1', 'admin/badges')); assert.equal(badges0.badges.users, 0);
+
+// حساب المستخدم: تعديل البيانات + العناوين المحفوظة (كل التحقق على السيرفر)
+await bad('تعديل من غير أي تغييرات', call('cust1', 'account/update', {}), 400, 'nothing_to_update');
+await bad('عنوان خارج مصر', call('cust1', 'account/update', { addresses: [{ label: 'بيت', lat: 10, lng: 10, address: 'x' }] }), 400, 'outside_egypt');
+await bad('عنوان من غير اسم', call('cust1', 'account/update', { addresses: [{ label: '', lat: 30.05, lng: 31.23, address: 'x' }] }), 400, 'bad_input');
+await bad('العناوين فوق الحد (10)', call('cust1', 'account/update', { addresses: Array.from({ length: 11 }, () => ({ label: 'x', lat: 30, lng: 31, address: 'y' })) }), 400, 'bad_addresses');
+const upSave = await ok('حفظ عناوين محفوظة', call('cust1', 'account/update', { addresses: [{ label: 'البيت', lat: 30.05, lng: 31.23, address: 'شارع 1' }, { label: 'المخزن', lat: 30.0, lng: 31.2, address: 'شارع 2' }] }));
+check('العناوين اتحفظت على المستند', upSave.profile.addresses.length === 2 && U('cust1').addresses.includes('المخزن'));
+check('me بيرجّع العناوين', (await call('cust1', 'me')).profile.addresses[0].label === 'البيت');
+const upName = await ok('تعديل الاسم والمنطقة', call('cust2', 'account/update', { name: 'عميل تاني محدّث', area: 'الزمالك' }));
+check('الرد محدّث والدور/الحالة ما اتغيّروش', upName.profile.name === 'عميل تاني محدّث' && U('cust2').area === 'الزمالك' && U('cust2').role === 'customer' && U('cust2').status === 'active');
+await bad('تعديل من غير حساب مسجّل', call('ghost9', 'account/update', { name: 'zz' }), 403, 'no_profile');
+
+// #6: قفل تعديل بيانات الحساب (15 يوم افتراضي) + تحكم كامل من الأدمن
+const meLock = (await ok('me بيعرض حالة القفل', call('cust1', 'me'))).profile.edit;
+check('القفل الافتراضي 15 يوم ومقفول بعد أول تعديل', meLock.enabled === true && meLock.days === 15 && meLock.locked === true);
+await bad('تعديل تاني جوه المدة مرفوض', call('cust1', 'account/update', { name: 'محاولة تانية' }), 429, 'profile_edit_locked');
+await bad('غير الأدمن ما يفتحش القفل', call('cust1', 'admin/profile-edit', { uid: 'cust1', unlock: true }), 403, 'forbidden');
+await ok('الأدمن يفتح القفل', call('admin1', 'admin/profile-edit', { uid: 'cust1', unlock: true }));
+await ok('تعديل بعد فتح القفل', call('cust1', 'account/update', { area: 'وسط البلد' }));
+await ok('الأدمن يحدّد مدة صفر للمستخدم', call('admin1', 'admin/profile-edit', { uid: 'cust1', days: 0 }));
+check('مدة صفر = مفيش قفل', (await call('cust1', 'me')).profile.edit.enabled === false);
+await ok('تعديل بمدة صفر', call('cust1', 'account/update', { area: 'المعادي' }));
+await ok('الأدمن يرجّع المدة العامة', call('admin1', 'admin/profile-edit', { uid: 'cust1', days: null }));
+const meBack = (await ok('me رجع للمدة العامة', call('cust1', 'me'))).profile.edit;
+check('الرجوع للمدة العامة (15) والقفل شغّال', meBack.days === 15 && meBack.enabled === true && meBack.locked === true);
+await ok('الأدمن معفى من القفل', call('admin1', 'account/update', { area: 'الإدارة' }));
+
+// #3: سجل عمليات الأدمن (أمن ومساءلة)
+await bad('غير الأدمن مايشوفش السجل', call('cust1', 'admin/audit'), 403, 'forbidden');
+const aud = await ok('الأدمن يشوف السجل', call('admin1', 'admin/audit'));
+check('السجل فيه عمليات تغيير حالة مستخدم', aud.entries.some((e) => e.action === 'user.status' && e.targetId && e.adminUid === 'admin1'));
+check('السجل فيه عملية قفل تعديل البيانات', aud.entries.some((e) => e.action === 'user.profile_edit' && e.targetId === 'cust1' && e.meta.days !== undefined));
+check('السجل مرتّب من الأحدث للأقدم', aud.entries.every((e, i) => i === 0 || aud.entries[i - 1].at >= e.at));
+check('السجل بيسجّل اللي حصل بعد آخر قراءة بس ماينقصش', aud.entries.length >= 6);
 
 // عرض سعر
 const q = await ok('عرض سعر', call('cust1', 'quote', { pickup: CAIRO, dropoff: GIZA, category: 'furniture', size: 'medium' }));
@@ -208,6 +244,11 @@ assert.equal(wallet(W).balance, 0);
 await ok('أدمن يؤكد التحويل', call('admin1', 'admin/withdrawal', { id: dbl.find((r) => r.status === 200).id, action: 'paid' }));
 const wl = await ok('المحفظة', call(W, 'wallet')); check('حركات المحفظة موجودة', wl.tx.length >= 3 && wl.withdrawals.length >= 2 && wl.wallet.balance === 0);
 await bad('عميل يفتح محفظة', call('cust1', 'wallet'), 403);
+const wk = await ok('التقرير الأسبوعي للسواق', call(W, 'wallet/weekly'));
+check('التقرير الأسبوعي بيجمّع الأسابيع صح', wk.weeks.length >= 1 && wk.weeks[0].earned === 142 && wk.weeks[0].trips === 1
+  && wk.weeks[0].withdrawn === 242 && wk.weeks[0].net === -100 && wk.weeks.every((x) => typeof x.start === 'number'));
+await bad('عميل يفتح التقرير الأسبوعي', call('cust1', 'wallet/weekly'), 403);
+
 
 // ------------------ نزاع ------------------
 const big = { ...base, size: 'large', category: 'building', photos: [await up('cust1', 'cargo')], dropoff: { lat: 31.2001, lng: 29.9187, address: 'الإسكندرية' } };
@@ -252,6 +293,8 @@ await ok('سواق يلغي بعد القبول', call(W, 'orders/cancel', { ord
 assert.equal(orderRow(o3.id).status, 'open'); assert.equal(orderRow(o3.id).driver_id, null);
 assert.equal(U(W).status, 'suspended', 'تجميد تلقائي');
 await bad('السواق المجمّد ممنوع', call(W, 'orders/accept', { orderId: o3.id }), 403, 'account_not_active');
+// نرجّع السواق المجمّد (اللي خسر/كسب السباق) نشِط عشان الاختبارات اللي بعده متعتمدش على نتيجته
+await ok('إعادة تفعيل السواق المتجمّد', call('admin1', 'admin/user', { uid: W, status: 'active' }));
 await ok('عميل يلغي طلب مفتوح', call('cust1', 'orders/cancel', { orderId: o3.id }));
 check('إلغاء طلب مفتوح ما بيتحسبش على العميل', U('cust1').cancel_count === 0);
 // حد الطلبات المفتوحة
@@ -864,6 +907,247 @@ console.log('\n— الإلغاء برسوم والبلاغات والطوارئ
   await ok('حضور السواق', call('drv3', 'driver/presence', { online: true, lat: 30.05, lng: 31.2 }));
   await ok('تسجيل جهاز إشعارات', call('drv3', 'push/register', { token: 'sync-test-token-' + 'x'.repeat(30) }));
   check('الحضور وتسجيل الأجهزة ما بيعملوش "تغيير" وهمي في العدّادات', JSON.stringify(await stamp()) === JSON.stringify(s3));
+}
+
+// ------------------ كوبونات الخصم ------------------
+{
+  clearRl();
+  const cargo3 = async () => [await up('cust3', 'cargo')];
+  await bad('عميل ينشئ كوبون', call('cust3', 'admin/coupon', { code: 'SAVE10', type: 'percent', value: 10 }), 403);
+  await bad('اسم كوبون غير صالح', call('admin1', 'admin/coupon', { code: 'x!', type: 'percent', value: 10 }), 400, 'bad_code');
+  await bad('قيمة كوبون غلط', call('admin1', 'admin/coupon', { code: 'BAD', type: 'percent', value: 0 }), 400, 'bad_value');
+  await ok('أدمن ينشئ كوبون نسبة', call('admin1', 'admin/coupon', { code: 'SAVE10', type: 'percent', value: 10, maxDiscount: 40, perUser: 1, maxUses: 5 }));
+  check('الكوبون اتخزن صح', FS.get('coupons/SAVE10').value === 10 && FS.get('coupons/SAVE10').used_count === 0 && FS.get('coupons/SAVE10').active === true);
+  await bad('كوبون بنفس الكود مرفوض', call('admin1', 'admin/coupon', { code: 'SAVE10', type: 'percent', value: 10 }), 409, 'coupon_exists');
+  const q1 = await ok('عرض سعر بكوبون', call('cust3', 'quote', { pickup: CAIRO, dropoff: GIZA, category: 'goods', size: 'small', coupon: 'save10' }));
+  check('الخصم 10% مع احترام الحد الأقصى والكود case-insensitive', q1.discount === 15 && q1.amountDue === q1.price - 15 && q1.couponCode === 'SAVE10');
+  const q2 = await ok('عرض سعر بكوبون مش موجود', call('cust3', 'quote', { pickup: CAIRO, dropoff: GIZA, category: 'goods', size: 'small', coupon: 'NOPE' }));
+  check('الكوبون الغلط ميوضّح السبب من غير ما يمنع السعر', q2.couponError === 'coupon_not_found' && q2.discount === undefined && q2.price > 0);
+  const co1 = await ok('طلب بكوبون', call('cust3', 'orders/create', { ...base, coupon: 'save10', photos: await cargo3() }));
+  check('المبلغ المطلوب بعد الخصم', co1.discount === 15 && co1.amountDue === co1.price - 15);
+  const row1 = JSON.parse(orderRow(co1.id).data);
+  check('الخصم مخزّن في الطلب والكوبون اتسجّل', row1.couponCode === 'SAVE10' && row1.discount === 15 && row1.amountDue === co1.price - 15);
+  check('عدّاد استخدام الكوبون زاد', FS.get('coupons/SAVE10').used_count === 1 && FS.get('coupons/SAVE10/uses/cust3').n === 1);
+  await bad('نفس المستخدم تجاوز حدّه', call('cust3', 'orders/create', { ...base, coupon: 'save10', photos: await cargo3() }), 400, 'coupon_user_limit');
+
+  await ok('كوبون مبلغ ثابت', call('admin1', 'admin/coupon', { code: 'MINUS30', type: 'amount', value: 30 }));
+  const co2 = await ok('طلب مدفوع مقدماً بكوبون', call('cust3', 'orders/create', { ...base, prepay: true, coupon: 'MINUS30', photos: await cargo3() }));
+  check('المبلغ المطلوب = السعر - 30', co2.amountDue === co2.price - 30);
+  await ok('دفع الطلب المخصوم', call('cust3', 'orders/pay', { orderId: co2.id, proofRef: await up('cust3', 'payment') }));
+  await ok('تأكيد الدفع', call('admin1', 'admin/payment', { orderId: co2.id, action: 'confirm' }));
+  await ok('إلغاء الطلب المخصوم', call('cust3', 'orders/cancel', { orderId: co2.id, reason: 'غيّرت رأيي' }));
+  check('الاسترجاع = المبلغ المدفوع فعلاً (بعد الخصم) مش السعر الكامل', FS.get(`refunds/${co2.id}`).amount === co2.price - 30);
+  await ok('تأكيد تحويل الاسترجاع', call('admin1', 'admin/refund', { id: co2.id }));
+
+  await ok('كوبون لمرة واحدة', call('admin1', 'admin/coupon', { code: 'ONCE', type: 'amount', value: 20, maxUses: 1 }));
+  await ok('استخدام الكوبون مرة', call('cust3', 'orders/create', { ...base, coupon: 'ONCE', photos: await cargo3() }));
+  await bad('الكوبون خلص (حد الاستخدام الكلي)', call('cust3', 'orders/create', { ...base, coupon: 'ONCE', photos: await cargo3() }), 400, 'coupon_used_up');
+  await ok('كوبون معطّل', call('admin1', 'admin/coupon', { code: 'OFF', type: 'amount', value: 10, active: false }));
+  await bad('كوبون معطّل مرفوض', call('cust3', 'orders/create', { ...base, coupon: 'OFF', photos: await cargo3() }), 400, 'coupon_invalid');
+  await ok('كوبون منتهي', call('admin1', 'admin/coupon', { code: 'OLD', type: 'amount', value: 10, expiresAt: Date.now() - 1000 }));
+  await bad('كوبون منتهي مرفوض', call('cust3', 'orders/create', { ...base, coupon: 'OLD', photos: await cargo3() }), 400, 'coupon_expired');
+  await ok('كوبون بحد أدنى', call('admin1', 'admin/coupon', { code: 'BIG', type: 'amount', value: 10, minPrice: 100000 }));
+  await bad('طلب أقل من الحد الأدنى مرفوض', call('cust3', 'orders/create', { ...base, coupon: 'BIG', photos: await cargo3() }), 400, 'coupon_min_price');
+
+  const cl = await ok('قائمة الكوبونات', call('admin1', 'admin/coupons'));
+  check('قائمة الكوبونات كاملة', cl.coupons.length >= 6 && cl.coupons.every((x) => x.code && typeof x.usedCount === 'number'));
+  await ok('تعديل كوبون', call('admin1', 'admin/coupon', { id: 'save10', type: 'percent', value: 20 }));
+  check('الكوبون اتعدل', FS.get('coupons/SAVE10').value === 20);
+  await ok('حذف كوبون', call('admin1', 'admin/coupon', { action: 'delete', id: 'OLD' }));
+  check('الكوبون اتحذف', !FS.get('coupons/OLD'));
+  await bad('حذف كوبون مش موجود', call('admin1', 'admin/coupon', { action: 'delete', id: 'GHOST' }), 404, 'not_found');
+  check('عمليات الكوبونات اتسجّلت في السجل', FS.list('audit').filter((a) => a.action.startsWith('coupon.')).length >= 4);
+}
+
+// ------------------ المراقبة (عدّاد الاستخدام + الأخطاء) ------------------
+{
+  clearRl();
+  const envM = { ...env, METRICS_DISABLED: '0', METRICS_FLUSH_OPS: '1', METRICS_READ_ALERT: '1' };
+  const today = new Date().toISOString().slice(0, 10);
+
+  await bad('المراقبة: مستخدم عادي ممنوع (metrics)', call('cust3', 'admin/metrics'), 403);
+  await bad('المراقبة: مستخدم عادي ممنوع (errors)', call('cust3', 'admin/errors'), 403);
+
+  const readsBefore = FS.get(`metrics/${today}`)?.reads || 0;
+  await ok('طلب بـ sync مع تشغيل العدّاد', call('cust3', 'sync', {}, envM));
+  check('العدّاد كتب قراءة اليوم', (FS.get(`metrics/${today}`)?.reads || 0) > readsBefore);
+
+  const mm = await ok('لوحة المراقبة للأدمن', call('admin1', 'admin/metrics', {}, envM));
+  check('المراقبة: فيه يوم النهارده وقراءات > 0', mm.limit === 1 && mm.days.some((d) => d.day === today && d.reads > 0));
+  check('المراقبة: تنبيه الكوتا اتسجّل مرة واحدة', !!FS.get(`metrics/${today}/alerts/reads`));
+
+  const ce = await ok('بلاغ خطأ من الواجهة', call('cust3', 'client/error', { message: 'boom client', stack: 'at x', url: '/#/customer', route: 'render' }, envM));
+  check('بلاغ الخطأ رجع ok', ce.ok === true);
+  const errs = await ok('قائمة الأخطاء للأدمن', call('admin1', 'admin/errors', {}, envM));
+  check('الخطأ ظهر في القائمة بمصدره', errs.errors.some((e) => e.source === 'client' && e.message === 'boom client' && e.uid === 'cust3'));
+
+  // حد المعدّل: 10 بلاغات في الدقيقة
+  for (let i = 0; i < 10; i++) await call('drv1', 'client/error', { message: 'spam ' + i }, envM);
+  await bad('بلاغات الواجهة محدودة المعدّل', call('drv1', 'client/error', { message: 'spam final' }, envM), 429, 'too_many_reports');
+}
+
+// ------------------ صفحات السواقين العامة (SEO) ------------------
+{
+  const { onRequest: driverPage } = await import('../functions/drivers/[id].js');
+  const { onRequest: driversIndex } = await import('../functions/drivers/index.js');
+  const callId = (id, method = 'GET') => driverPage({ request: new Request('https://x.test/drivers/' + id, { method }), env, params: { id } });
+
+  // 1) مقفولة افتراضياً: تحويل للرئيسية
+  FS.put('settings/pricing', { v: JSON.stringify({}) });
+  const off = await callId('drv1');
+  check('الصفحات العامة مقفولة افتراضياً (تحويل 302)', off.status === 302);
+  check('المقفول بيحوّل للرئيسية', (off.headers.get('location') || '').endsWith('/'));
+
+  // 2) تفعيلها + تجهيز سواق بتقييمات
+  FS.put('settings/pricing', { v: JSON.stringify({ publicProfiles: true }) });
+  const d0 = FS.get('users/drv1') || {};
+  FS.put('users/drv1', { ...d0, uid: 'drv1', role: 'driver', status: 'active', name: 'أحمد محمود علي', phone: '01012345678', vehicle_type: 'truck', rating_sum: 47, rating_count: 10, completed_orders: 30, cancel_count: 0, created_at: Date.now() });
+
+  const pg = await callId('drv1');
+  const htmlBody = await pg.text();
+  check('صفحة السواق ترجع 200 HTML', pg.status === 200 && /text\/html/.test(pg.headers.get('content-type') || ''));
+  check('الاسم مختصر مش كامل', htmlBody.includes('أحمد م.') && !htmlBody.includes('محمود علي'));
+  check('الصفحة بتعرض التقييم المجمّع', htmlBody.includes('"aggregateRating"') && htmlBody.includes('4.7'));
+  check('الصفحة ما بتعرضش الموبايل', !htmlBody.includes('01012345678'));
+  check('الصفحة فيها canonical وJSON-LD', htmlBody.includes('rel="canonical"') && htmlBody.includes('application/ld+json'));
+
+  // 3) الفهرس
+  const ix = await driversIndex({ request: new Request('https://x.test/drivers', { method: 'GET' }), env });
+  const ixBody = await ix.text();
+  check('فهرس السواقين 200 وفيه لينك للسواق', ix.status === 200 && ixBody.includes('/drivers/drv1'));
+
+  // 4) الحالات المرفوضة
+  check('سواق غير موجود => 404', (await callId('GHOSTDRIVER')).status === 404);
+  check('معرّف غير صالح => 404', (await callId('..%2Fetc%2Fpasswd')).status === 404);
+  check('ميثود مش مسموحة => 405', (await callId('drv1', 'POST')).status === 405);
+
+  FS.put('settings/pricing', { v: JSON.stringify({}) }); // نرجّع الإعدادات لأصلها
+}
+
+// ------------------ الإحالة والحوافز ------------------
+{
+  clearRl();
+  const regOk = async (uid, person, extra = {}) => {
+    const p = { ...person, idRef: await up(uid, 'id'), ...extra };
+    return ok(`تسجيل ${uid}`, call(uid, 'register', p));
+  };
+  const settings = (o) => FS.put('settings/pricing', { v: JSON.stringify(o) });
+  const runOrder = async (cust) => {
+    clearRl();
+    cancelAll(cust, ['open', 'accepted', 'payment_review']);
+    const o = await call(cust, 'orders/create', { ...base, photos: [await up(cust, 'cargo')] });
+    assert.equal(o.status, 200, 'إنشاء الطلب: ' + JSON.stringify(o));
+    await call('drv3', 'orders/accept', { orderId: o.id });
+    await fin(o.id, 'drv3', cust);
+    return o.id;
+  };
+
+  // 1) كود الإحالة بيتولّد لكل مستخدم، والربط بيتسجّل (المكافأة لسه مقفولة)
+  settings({ autoApproveCustomers: true, referralEnabled: false, referralBonusReferrer: 50, referralBonusReferred: 20 });
+  await regOk('refA', { role: 'customer', name: 'صاحب الكود', phone: '01090000001', nationalId: '29001019000101' });
+  const codeA = U('refA').referral_code;
+  check('كل مستخدم ليه كود إحالة', typeof codeA === 'string' && codeA.length >= 4 && codeA === codeA.toUpperCase());
+
+  await regOk('refC', { role: 'customer', name: 'عميل مُحال', phone: '01090000002', nationalId: '29001019000202' }, { referral: codeA });
+  check('الربط اتسجّل (referred_by)', U('refC').referred_by === 'refA');
+  check('مستند الإحالة pending', FS.get('referrals/refC')?.status === 'pending');
+
+  await regOk('refE', { role: 'customer', name: 'بكود غلط', phone: '01090000003', nationalId: '29001019000303' }, { referral: 'NOPE1234' });
+  check('كود مش موجود ما بيربطش', !U('refE').referred_by && !FS.get('referrals/refE'));
+
+  // 2) المكافأة مقفولة => أول طلب مكتمل ما بيصرفش
+  await runOrder('refC');
+  check('مفيش مكافأة والإحالة مقفولة', (wallet('refA')?.balance || 0) === 0 && FS.get('referrals/refC').status === 'pending');
+
+  // 3) تفعيل الإحالة => أول طلب مكتمل بعد التفعيل بيصرف للطرفين مرة واحدة
+  settings({ autoApproveCustomers: true, referralEnabled: true, referralBonusReferrer: 50, referralBonusReferred: 20 });
+  const wA0 = wallet('refA')?.balance || 0, wC0 = wallet('refC')?.balance || 0;
+  await runOrder('refC');
+  check('مكافأة صاحب الكود اتصرفت', (wallet('refA')?.balance || 0) === wA0 + 50);
+  check('مكافأة المُحال اتصرفت', (wallet('refC')?.balance || 0) === wC0 + 20);
+  check('الإحالة اتعلّمت rewarded', FS.get('referrals/refC')?.status === 'rewarded');
+
+  // 4) مفيش صرف مزدوج على الطلب التاني
+  const wA1 = wallet('refA').balance, wC1 = wallet('refC').balance;
+  await runOrder('refC');
+  check('مفيش صرف مزدوج للإحالة', wallet('refA').balance === wA1 && wallet('refC').balance === wC1);
+
+  // 5) لوحة الإحالات للأدمن + الصلاحيات
+  await bad('مستخدم عادي ممنوع من الإحالات', call('refC', 'admin/referrals'), 403);
+  const ar = await ok('لوحة الإحالات للأدمن', call('admin1', 'admin/referrals'));
+  check('الإحالة مفعّلة في الملخص والمبالغ صح', ar.config.enabled === true && ar.config.bonusReferrer === 50 && ar.config.bonusReferred === 20);
+  check('الإحالة ظاهرة في القائمة ومصروفة', ar.rows.some((r) => r.uid === 'refC' && r.status === 'rewarded' && r.referredBy === 'refA'));
+  check('إجمالي المدفوع صح', ar.paid.referrer >= 50 && ar.paid.referred >= 20);
+
+  // 6) الإحالة الذاتية مرفوضة (نفس المستخدم) + رجوع الإعدادات لأصلها
+  settings({});
+}
+
+// ------------------ النسخة الاحتياطية (تصدير الأدمن) ------------------
+{
+  await bad('مستخدم عادي ممنوع من النسخة الاحتياطية', call('cust1', 'admin/export'), 403);
+  const ex = await ok('تصدير الأدمن للبيانات', call('admin1', 'admin/export'));
+  check('التصدير فيه إصدار ووقت', ex.version === 1 && typeof ex.at === 'number');
+  check('التصدير بيضم الطلبات والمستخدمين والمحافظ', Array.isArray(ex.collections.orders) && Array.isArray(ex.collections.users) && Array.isArray(ex.collections.wallets));
+  check('عدّاد المجموعات مطابق للمصفوفات', ex.counts.users === ex.collections.users.length && ex.counts.orders === ex.collections.orders.length);
+  check('مفيش حقول داخلية مسرّبة', ex.collections.users.every((u) => !('_id' in u) && !('_ut' in u)));
+  check('معاملات المحافظ مضمّنة (إحالة مثلاً)', Object.values(ex.walletTx).some((rows) => rows.some((x) => x.type === 'referral' || x.type === 'referral_bonus')));
+
+  const cu = await ok('تصدير مجموعة واحدة (users)', call('admin1', 'admin/export', { col: 'users' }));
+  check('تصدير مجموعة واحدة بس', !!cu.collections.users && !cu.collections.orders);
+}
+
+// ------------------ سجل الدخول + التحقق بخطوتين (TOTP) ------------------
+{
+  const { totpCode } = await import('../functions/_lib/totp.js');
+  const call2fa = async (uid, route, body = {}, hdr = {}) => {
+    const req = new Request(`https://x.test/api/${route}`, { method: 'POST', headers: { Authorization: 'Bearer ' + (await idToken(uid)), ...hdr }, body: JSON.stringify(body) });
+    const bgTasks = [];
+    const res = await onRequest({ request: req, env, params: { route: route.split('/') }, waitUntil: (p) => bgTasks.push(p) });
+    const out = { ...(await res.json()), status: res.status };
+    await Promise.all(bgTasks);
+    return out;
+  };
+
+  // --- سجل الدخول ---
+  await ok('تسجيل الدخول بيتسجّل', call('admin1', 'auth/login'));
+  const lg = await ok('الأدمن يشوف سجل الدخول', call('admin1', 'admin/logins'));
+  check('سجل الدخول فيه عملية admin1', lg.entries.some((e) => e.uid === 'admin1'));
+
+  // --- التحقق بخطوتين للأدمن ---
+  const st0 = await ok('حالة 2FA مبدئيًا', call('admin1', 'admin/2fa/status'));
+  check('2FA مقفول افتراضيًا', st0.enabled === false);
+  const setup = await ok('إعداد 2FA', call('admin1', 'admin/2fa/setup'));
+  check('فيه سرّ ورابط otpauth', typeof setup.secret === 'string' && setup.secret.length >= 16 && setup.otpauth.startsWith('otpauth://'));
+  const counter = Math.floor(Date.now() / 1000 / 30);
+  const code1 = await totpCode(setup.secret, counter);
+  check('الكود 6 أرقام', /^\d{6}$/.test(code1));
+  await bad('كود غلط ما بيفعّلش', call('admin1', 'admin/2fa/enable', { code: '000000' }), 400, 'totp_bad_code');
+  await ok('تفعيل 2FA بكود صح', call('admin1', 'admin/2fa/enable', { code: code1 }));
+  const st1 = await ok('الحالة بعد التفعيل', call('admin1', 'admin/2fa/status'));
+  check('2FA مفعّل وجلسة غير محقّقة', st1.enabled === true && st1.verified === false);
+
+  await bad('مسار أدمن بدون جلسة 2FA مرفوض', call('admin1', 'admin/audit'), 403, 'totp_required');
+  const ver = await ok('التحقق يرجّع توكن جلسة', call('admin1', 'admin/2fa/verify', { code: code1 }));
+  check('توكن جلسة صالح', typeof ver.token === 'string' && ver.token.length > 10);
+  const audit2 = await ok('مسار أدمن مع جلسة 2FA', call2fa('admin1', 'admin/audit', {}, { 'x-2fa': ver.token }));
+  check('رجع سجل العمليات', Array.isArray(audit2.entries));
+  await bad('توكن جلسة غلط مرفوض', call2fa('admin1', 'admin/audit', {}, { 'x-2fa': 'bogus' }), 403, 'totp_required');
+
+  await ok('إغلاق 2FA بكود صح', call('admin1', 'admin/2fa/disable', { code: code1 }));
+  const st2 = await ok('الحالة بعد الإغلاق', call('admin1', 'admin/2fa/status'));
+  check('2FA اتقفل تاني', st2.enabled === false);
+  await ok('مسار الأدمن رجع من غير جلسة', call('admin1', 'admin/audit'));
+}
+
+// ------------------ الحدّ المركزي للطلبات (Rate limit) ------------------
+{
+  const envRL = { ...env, API_RATE_DISABLED: '0', API_RATE_PER_MIN: '2' };
+  await ok('حدّ مركزي: الطلب الأول', call('admin1', 'admin/audit', {}, envRL));
+  await ok('حدّ مركزي: الطلب التاني', call('admin1', 'admin/audit', {}, envRL));
+  await bad('حدّ مركزي: الطلب التالت مرفوض', call('admin1', 'admin/audit', {}, envRL), 429, 'too_many_requests');
+  await ok('مسار الاستطلاع (sync) مستثنى من الحدّ', call('admin1', 'sync', {}, envRL));
+  await ok('مسار me مستثنى من الحدّ', call('admin1', 'me', {}, envRL));
 }
 
 console.log(`\n✅ كل الاختبارات نجحت (${pass})`);

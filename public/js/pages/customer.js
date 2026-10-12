@@ -22,6 +22,7 @@ export function renderNewOrder(el) {
   const S = state.settings, cats = Object.entries(S.categories || {}), sizes = Object.entries(S.sizes || {}), classes = Object.entries(S.passengerClasses || {});
   if (!cats.length || !sizes.length) { render(el, html`<div class="empty">${t('err.settings')}</div>`); return () => {}; }
   const pts = {}; let mode = 'pickup', service = 'cargo', quote = null, qTimer = null, qSeq = 0;
+  const saved = Array.isArray(state.profile?.addresses) ? state.profile.addresses : [];
 
   render(el, html`<div class="page-head"><h1>${t('nav.newOrder')}</h1></div>
   <div class="order-layout">
@@ -30,6 +31,10 @@ export function renderNewOrder(el) {
       <div><div class="seg" role="group" aria-label="${t('new.pickMode')}"><button type="button" data-mode="pickup" class="on">${t('order.pickup')}</button><button type="button" data-mode="dropoff">${t('order.dropoff')}</button></div>
         <p class="hint">${t('new.mapHint')}</p></div>
       <div><div class="row"><input id="q" class="grow" placeholder="${t('new.search')}" aria-label="${t('new.search')}"><button type="button" class="btn ghost" id="qbtn">${t('common.search')}</button></div><div id="results"></div></div>
+      ${saved.length ? html`<div class="grid-2">
+        <label class="f">${t('account.pickSaved')}<select id="sA"><option value="">—</option>${saved.map((x, i) => html`<option value="${i}">${x.label}</option>`)}</select></label>
+        <label class="f">${t('account.dropSaved')}<select id="sB"><option value="">—</option>${saved.map((x, i) => html`<option value="${i}">${x.label}</option>`)}</select></label>
+      </div>` : ''}
       <label class="f">${t('order.pickup')}<input name="pAddr" placeholder="${t('new.addr')}"></label>
       <label class="f">${t('order.dropoff')}<input name="dAddr" placeholder="${t('new.addr')}"></label>
       ${S.passengersEnabled && classes.length ? html`<div class="grid-2" data-only="passengers" hidden><label class="f">${t('new.vehicleClass')}<select name="vehicleClass">${classes.map(([k, c]) => html`<option value="${k}">${label(c, k)}</option>`)}</select></label><label class="f">${t('new.passengers')}<input type="number" name="passengers" min="1" max="${classes[0][1].seats}" value="2" inputmode="numeric"></label></div><p class="hint" data-only="passengers" hidden>${t('new.paxNote')} ${t('new.prepayPax')}</p>` : ''}
@@ -46,6 +51,7 @@ export function renderNewOrder(el) {
       <label class="f">${t('order.notes')}<textarea name="description" maxlength="500" placeholder="${t('new.notesHint')}"></textarea></label>
       <label class="f" data-only="cargo">${t('new.photos')}<input type="file" name="photos" accept="image/*" multiple><span class="hint">${t('new.photosHint')}</span></label>
       <div id="previews" class="photos" data-only="cargo"></div>
+      <label class="f">${t('coupon.label')}<input name="coupon" maxlength="20" placeholder="${t('coupon.placeholder')}" autocomplete="off" style="text-transform:uppercase"></label>
       <div id="quote" class="action" aria-live="polite">${t('new.needPoints')}</div>
       <p class="err" id="err" role="alert"></p>
       <button class="btn primary block" type="submit" id="submit">${t('new.submit')}</button>
@@ -78,6 +84,13 @@ export function renderNewOrder(el) {
   f.pAddr.addEventListener('input', () => { if (pts.pickup) pts.pickup.address = f.pAddr.value; });
   f.dAddr.addEventListener('input', () => { if (pts.dropoff) pts.dropoff.address = f.dAddr.value; });
 
+  // عناوين محفوظة: تعبئة الاستلام/التسليم بضغطة
+  if (saved.length) {
+    const useSaved = (kind, i) => { const a = saved[i]; if (!a || !Number.isFinite(a.lat) || !Number.isFinite(a.lng)) return; map.setView([a.lat, a.lng], Math.max(map.getZoom(), 13)); setPoint(kind, a.lat, a.lng, a.address); };
+    $('#sA', el).addEventListener('change', (e) => { if (e.target.value !== '') useSaved('pickup', +e.target.value); });
+    $('#sB', el).addEventListener('change', (e) => { if (e.target.value !== '') useSaved('dropoff', +e.target.value); });
+  }
+
   // البحث عن مكان
   const runSearch = async () => {
     const q = $('#q', el).value.trim(); if (q.length < 3) return;
@@ -99,15 +112,18 @@ export function renderNewOrder(el) {
     const seq = ++qSeq; render(quoteBox, spinner());
     try {
       const r = await api('quote', service === 'passengers'
-        ? { service, pickup: pts.pickup, dropoff: pts.dropoff, vehicleClass: f.vehicleClass.value }
-        : { pickup: pts.pickup, dropoff: pts.dropoff, category: f.category.value, size: f.size.value });
+        ? { service, pickup: pts.pickup, dropoff: pts.dropoff, vehicleClass: f.vehicleClass.value, coupon: f.coupon.value.trim() }
+        : { pickup: pts.pickup, dropoff: pts.dropoff, category: f.category.value, size: f.size.value, coupon: f.coupon.value.trim() });
       if (seq !== qSeq) return; quote = r;
+      const disc = r.discount ? html`<p class="hint" style="margin:.4rem 0 0;color:var(--nile)">${t('coupon.applied')} ${fmtMoney(r.discount)} · ${t('coupon.due')} <b>${fmtMoney(r.amountDue)}</b></p>` : '';
+      const cerr = r.couponError ? html`<p class="hint" style="margin:.4rem 0 0;color:var(--brick)">${t('err.' + r.couponError)}</p>` : '';
       render(quoteBox, html`<div class="row"><div class="grow"><div class="muted small">${t('new.estPrice')}</div><b style="font:700 1.9rem var(--font-display)">${fmtMoney(r.price)}</b></div>
         <div class="muted small">${fmtNum(r.distanceKm)} ${t('common.km')}${r.source === 'estimate' ? ' ~' : ''}</div></div>
-        <p class="hint" style="margin:.5rem 0 0">${t('new.priceNote')}${r.source === 'estimate' ? ' ' + t('new.approxDist') : ''}</p>`);
+        <p class="hint" style="margin:.5rem 0 0">${t('new.priceNote')}${r.source === 'estimate' ? ' ' + t('new.approxDist') : ''}</p>${disc}${cerr}`);
     } catch (e) { if (seq === qSeq) { quote = null; quoteBox.textContent = errMsg(e); } }
   }
   f.category.addEventListener('change', scheduleQuote); f.size.addEventListener('change', scheduleQuote);
+  f.coupon.addEventListener('input', scheduleQuote); // كود الخصم بيغيّر السعر المطلوب (بيتحقق منه على السيرفر)
 
   // شحن بضاعة <-> نقل ركاب (لو الأدمن فعّل الركاب)
   const syncSeats = () => { const c = S.passengerClasses?.[f.vehicleClass?.value]; if (c && f.passengers) { f.passengers.max = c.seats; if (+f.passengers.value > c.seats) f.passengers.value = c.seats; } };
@@ -148,6 +164,7 @@ export function renderNewOrder(el) {
           prepay: !trip && !!f.prepay?.checked,
           ...(trip ? { service: 'passengers', vehicleClass: f.vehicleClass.value, passengers: f.passengers.value } : { service: 'cargo', category: f.category.value, size: f.size.value, weightKg: f.weightKg.value }),
           description: f.description.value, photos: refs, instant: !(f.offersOnly && f.offersOnly.checked), scheduledAt: new Date(f.scheduledAt.value).toISOString(),
+          coupon: f.coupon.value.trim(),
         });
         toast(t('new.created')); location.hash = `#/order/${r.id}`;
       } catch (er) { err.textContent = errMsg(er); $('#progress', el).textContent = ''; }

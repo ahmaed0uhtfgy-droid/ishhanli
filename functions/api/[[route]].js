@@ -1,11 +1,13 @@
 // كل المنطق الحساس (الصلاحيات، السعر، Escrow، العمولة، المحفظة، النزاعات) بيتنفذ هنا على السيرفر (Cloudflare Pages Functions).
 // البيانات في Firestore، والمتصفح مالوش وصول مباشر ليها: كل قراءة وكتابة بتعدّي من هنا وبتتفلتر حسب دور المستخدم.
 import { HttpError, verifyIdToken, newId } from '../_lib/core.js';
-import { F, STAMP_KINDS, STAMP_PATH, now, rateLimit, walletCredit, walletTx, userOut, withdrawalOut, txOut, disputeOut, loadOrder, hydrateOrder, orderUpdate, orderOut } from '../_lib/db.js';
-import { loadSettings, clearSettingsCache, sanitizeSettings, distanceKm, calcPrice, calcPassengerPrice, effectiveCommissionPct, canServe, cancelSplit, haversineM, split } from '../_lib/logic.js';
+import { F, STAMP_KINDS, STAMP_PATH, now, rateLimit, walletCredit, walletTx, userOut, withdrawalOut, txOut, disputeOut, loadOrder, hydrateOrder, orderUpdate, orderOut, auditLog } from '../_lib/db.js';
+import { randomBase32, verifyTotp, otpauthURL } from '../_lib/totp.js';
+import { loadSettings, clearSettingsCache, sanitizeSettings, distanceKm, calcPrice, calcPassengerPrice, effectiveCommissionPct, canServe, cancelSplit, couponDiscount, haversineM, split } from '../_lib/logic.js';
 import { saveFile, ownFiles, readFile } from '../_lib/files.js';
 import { notify, dispatchNewOrder, adminIds, orderNo, pushEnabled } from '../_lib/push.js';
 import { trustOf } from '../_lib/trust.js';
+import { flushMetrics, recordError, sentryCapture } from '../_lib/metrics.js';
 
 // ---------- تحقق من المدخلات ----------
 const str = (v, min, max, code = 'bad_input') => {
@@ -30,6 +32,19 @@ const point = (p, withAddress = true) => {
   if (!(lat >= 21.5 && lat <= 32 && lng >= 24.5 && lng <= 37)) throw new HttpError(400, 'outside_egypt');
   return withAddress ? { lat, lng, address: str(p.address ?? '', 0, 200) } : { lat, lng };
 };
+// عناوين العميل المحفوظة (اسم + نقطة على الخريطة) — بتتخزن كـ JSON نصي على مستند المستخدم
+const MAX_ADDRESSES = 10;
+const parseAddresses = (arr) => {
+  if (!Array.isArray(arr) || arr.length > MAX_ADDRESSES) throw new HttpError(400, 'bad_addresses');
+  return arr.map((a) => ({ label: str(a?.label ?? '', 1, 30), ...point(a, true) }));
+};
+// قفل تعديل بيانات الحساب: المدة الفعّالة (عامة أو مخصّصة للمستخدم) + آخر تعديل + الميعاد الجاي. الأدمن معفى دايماً.
+const editLock = (r, s) => {
+  const days = r?.profile_edit_days != null ? Number(r.profile_edit_days) : s.profileEditCooldownDays;
+  const lastAt = Number(r?.profile_edited_at || 0), nextAt = lastAt + days * 86400e3;
+  const enabled = !!r && r.role !== 'admin' && s.profileEditEnabled && days > 0;
+  return { enabled, days, lastAt, nextAt, locked: enabled && now() < nextAt };
+};
 const phoneOf = (v) => {
   let p = String(v ?? '').replace(/\D/g, '');
   if (p.startsWith('20') && p.length === 12) p = '0' + p.slice(2);
@@ -42,15 +57,22 @@ const L = (status, by, extra = {}) => ({ status, by, ...extra }); // سجل ال
 const offerKey = (orderId, uid) => `${orderId}_${uid}`;
 const offerId = (v) => { const s = String(v ?? ''); const m = /^([A-Za-z0-9]{10,40})_([A-Za-z0-9_-]{4,128})$/.exec(s); if (!m) throw new HttpError(400, 'bad_id'); return { key: s, orderId: m[1], uid: m[2] }; };
 const byDesc = (f) => (a, b) => (b[f] ?? 0) - (a[f] ?? 0);
+const RL_SKIP = new Set(['sync', 'me', 'settings', 'health']); // مسارات كتير ومتكررة (Polling) — ما تتحسبش في الحدّ المركزي
 const sha256hex = async (s) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))].map((b) => b.toString(16).padStart(2, '0')).join('');
 const dayKey = (t) => new Date(t + 2 * 3600e3).toISOString().slice(0, 10); // يوم بتوقيت مصر (تقريباً)
 
 // ---------- المستخدم الحالي ----------
-async function need(c, roles) {
+async function need(c, roles, opts = {}) {
   const r = await F.get(c.env, `users/${c.uid}`);
   if (!r) throw new HttpError(403, 'no_profile');
   if (!roles.includes(r.role)) throw new HttpError(403, 'forbidden');
   if (r.status !== 'active') throw new HttpError(403, 'account_not_active');
+  // التحقق بخطوتين للأدمن: لو مفعّل، لازم جلسة 2FA سارية (ما عدا شاشات الإعداد نفسها)
+  if (!opts.skip2fa && r.role === 'admin' && r.totp_enabled) {
+    const tk = (c.request?.headers?.get('x-2fa') || '').trim();
+    const s = tk ? await F.get(c.env, `admin_2fa/${tk}`) : null;
+    if (!s || s.uid !== c.uid || Number(s.exp || 0) < now()) throw new HttpError(403, 'totp_required');
+  }
   return userOut(r);
 }
 async function viewer(c) { // أي مستخدم مفعّل (أو أدمن) للقراءة
@@ -67,11 +89,31 @@ const ACTIVE = ['heading_pickup', 'picked_up', 'in_transit'];
 const NEXT = { paid: 'heading_pickup', heading_pickup: 'picked_up', picked_up: 'in_transit', in_transit: 'delivered' };
 // إرسال الإشعارات في الخلفية: ما بيبطّأش الرد، وأي فشل فيه ما بيكسّرش العملية الأساسية
 const bg = (c, p) => { const safe = Promise.resolve(p).catch(() => {}); if (c.waitUntil) c.waitUntil(safe); return safe; };
+// ---------- الكوبونات ----------
+const normCode = (v) => String(v ?? '').trim().toUpperCase().replace(/\s+/g, '');
+const collectedOf = (o) => (o.amountDue ?? o.price); // المبلغ اللي العميل بيدفعه فعلاً (بعد الخصم)
+const couponOut = (r) => r && ({
+  id: r.id, code: r.code, type: r.type, value: r.value, maxDiscount: r.max_discount || 0, minPrice: r.min_price || 0,
+  maxUses: r.max_uses || 0, perUser: r.per_user || 0, active: r.active === true, expiresAt: r.expires_at || 0,
+  usedCount: r.used_count || 0, createdAt: r.created_at, updatedAt: r.updated_at,
+});
+/** بيتحقق من الكوبون لمستخدم معيّن ويرجّع قيمة الخصم. بيرمي HttpError برمز واضح لو مش ساري. */
+async function applyCoupon(env, code, price, uid) {
+  const coupon = await F.get(env, `coupons/${code}`);
+  if (!coupon) throw new HttpError(400, 'coupon_not_found');
+  const discount = couponDiscount(coupon, price);
+  if (coupon.per_user > 0 && discount > 0) {
+    const use = await F.get(env, `coupons/${code}/uses/${uid}`);
+    if ((use?.n || 0) >= coupon.per_user) throw new HttpError(400, 'coupon_user_limit');
+  }
+  return { code, discount, coupon };
+}
+
 // استرجاع واحد بس لكل طلب (معرّف المستند = رقم الطلب، و create بيفشل لو موجود = منع التكرار)
-const refundInsert = (env, o, reason) => F.create(`refunds/${o.id}`, { id: o.id, order_id: o.id, customer_id: o.customerId, amount: o.price, reason, status: 'pending', created_at: now() });
-const afterRefundRequest = (c, o) => {
-  toAdmins(c, 'refund_due', { no: orderNo(o.id), amount: o.price }, '/#/admin/refunds');
-  bg(c, notify(c.env, [o.customerId], 'refund_pending', { no: orderNo(o.id), amount: o.price }, { url: `/#/order/${o.id}` }));
+const refundInsert = (env, o, reason, amount = collectedOf(o)) => F.create(`refunds/${o.id}`, { id: o.id, order_id: o.id, customer_id: o.customerId, amount, reason, status: 'pending', created_at: now() });
+const afterRefundRequest = (c, o, amount = collectedOf(o)) => {
+  toAdmins(c, 'refund_due', { no: orderNo(o.id), amount }, '/#/admin/refunds');
+  bg(c, notify(c.env, [o.customerId], 'refund_pending', { no: orderNo(o.id), amount }, { url: `/#/order/${o.id}` }));
 };
 /** طلب مدفوع مقدماً ماحدش قبله لحد ميعاده + المهلة: بيتلغي ويتسجّل استرجاع للعميل (بدون Cron: بيتنفذ عند القراءة) */
 async function expireOrder(env, o) {
@@ -81,8 +123,9 @@ async function expireOrder(env, o) {
       refundInsert(env, o, 'no_driver'),
     ]);
   } catch (e) { if (e.code === 'conflict') return false; throw e; }
-  await notify(env, [o.customerId], 'refund_pending', { no: orderNo(o.id), amount: o.price }, { url: `/#/order/${o.id}` });
-  await notify(env, await adminIds(env), 'refund_due', { no: orderNo(o.id), amount: o.price }, { url: '/#/admin/refunds' });
+  const amt = collectedOf(o);
+  await notify(env, [o.customerId], 'refund_pending', { no: orderNo(o.id), amount: amt }, { url: `/#/order/${o.id}` });
+  await notify(env, await adminIds(env), 'refund_due', { no: orderNo(o.id), amount: amt }, { url: '/#/admin/refunds' });
   return true;
 }
 let lastSweep = 0;
@@ -95,6 +138,22 @@ async function sweepExpired(env) {
   for (const r of rows) await expireOrder(env, hydrateOrder(r)).catch((e) => console.error('expire_failed', e?.message));
 }
 const toAdmins = (c, type, vars, url) => bg(c, (async () => notify(c.env, await adminIds(c.env), type, vars, { url }))());
+
+// مكافأة الإحالة: بتتصرف مرة واحدة عند أول طلب مكتمل للمُحال (عميل أو سواق).
+// منفصلة عن عملية تأكيد الطلب (best-effort) عشان ما تعطّلش المال الأساسي، ومحمية بـ guard على حالة الإحالة (مفيش صرف مزدوج).
+async function rewardReferral(c, uid, orderId) {
+  if (!uid) return;
+  const s = await loadSettings(c.env);
+  const bR = Math.max(0, Math.floor(Number(s.referralBonusReferrer) || 0));
+  const bD = Math.max(0, Math.floor(Number(s.referralBonusReferred) || 0));
+  if (!s.referralEnabled || (bR <= 0 && bD <= 0)) return;
+  const ref = await F.get(c.env, `referrals/${uid}`);
+  if (!ref || ref.status !== 'pending') return;
+  const writes = [F.patch(`referrals/${uid}`, { status: 'rewarded', rewarded_at: now(), order_id: orderId, bonus_referrer: bR, bonus_referred: bD }, ref._ut)];
+  if (bR > 0 && ref.referrer) { writes.push(walletCredit(ref.referrer, bR), walletTx({ uid: ref.referrer, type: 'referral', amount: bR, orderId })); }
+  if (bD > 0) { writes.push(walletCredit(uid, bD), walletTx({ uid, type: 'referral_bonus', amount: bD, orderId })); }
+  await F.run(c.env, writes);
+}
 
 // =====================================================================
 const ROUTES = {
@@ -109,11 +168,33 @@ const ROUTES = {
   async me({ env, uid }) {
     const r = await F.get(env, `users/${uid}`);
     const profile = userOut(r) || null;
-    if (profile && profile.role === 'driver') { // مستوى السواق وتقدّمه وعمولته الحالية
+    if (profile) {
       const s = await loadSettings(env);
-      profile.trust = { ...trustOf(r), commissionPct: effectiveCommissionPct(s, s.commissionPct, r) };
+      profile.edit = editLock(r, s); // حالة تعديل بيانات الحساب (المدة + الميعاد الجاي) — المستخدم لازم يكون عارف
+      if (profile.role === 'driver') profile.trust = { ...trustOf(r), commissionPct: effectiveCommissionPct(s, s.commissionPct, r) };
     }
     return { profile };
+  },
+
+  // ---------- حساب المستخدم: تعديل الاسم/المنطقة/لغة الإشعارات والعناوين المحفوظة ----------
+  // ملاحظة: الموبايل والرقم القومي والدور والحالة محمية — بتتغير من الأدمن/التحقق فقط.
+  // التعديل محدود بمدة (افتراضي 15 يوم) والأدمن بيتحكم فيها؛ وبيتخطّى للمستخدم اللي الأدمن فتح قفله.
+  async 'account/update'(c) {
+    await need(c, ['customer', 'driver', 'admin']);
+    const r = await F.get(c.env, `users/${c.uid}`), s = await loadSettings(c.env);
+    if (editLock(r, s).locked) throw new HttpError(429, 'profile_edit_locked');
+    const patch = {};
+    if (c.body.name !== undefined) patch.name = str(c.body.name, 2, 80);
+    if (c.body.area !== undefined) patch.area = str(c.body.area, 0, 60);
+    if (c.body.lang !== undefined) patch.lang = c.body.lang === 'en' ? 'en' : 'ar';
+    if (c.body.addresses !== undefined) patch.addresses = JSON.stringify(parseAddresses(c.body.addresses));
+    if (!Object.keys(patch).length) throw new HttpError(400, 'nothing_to_update');
+    patch.profile_edited_at = now(); // بداية مدة القفل الجديدة
+    try { await F.run(c.env, [F.patch(`users/${c.uid}`, patch, r._ut)]); }
+    catch (e) { if (e.code === 'conflict') throw new HttpError(409, 'conflict'); throw e; }
+    const row = { ...r, ...patch }, profile = userOut(row);
+    if (profile.role === 'driver') profile.trust = { ...trustOf(row), commissionPct: effectiveCommissionPct(s, s.commissionPct, row) };
+    return { ok: true, profile, edit: editLock(row, s) };
   },
 
   // ---------- التسجيل: فحص القائمة السوداء + منع التكرار (مستندات uniq بـ create = مضمونة ضد السباق) ----------
@@ -136,14 +217,28 @@ const ROUTES = {
     if ((await F.getMany(env, 'uniq', [`phone_${phone}`, `nid_${nid}`])).some(Boolean)) throw new HttpError(409, 'duplicate');
     const s = await loadSettings(env);
     const status = role === 'customer' && s.autoApproveCustomers ? 'active' : 'pending';
+    // كود الإحالة: مشتق من uid (8 حروف) — يتشاركه المستخدم مع غيره.
+    const refCode = String(uid).replace(/[^A-Za-z0-9]/g, '').slice(0, 8).toUpperCase();
+    // كود إحالة جاي من المُحال (اختياري): نتحقق منه ونربطه.
+    let referrer = null;
+    const wanted = String(body.referral ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
+    if (wanted) {
+      const hit = (await F.query(env, 'users', { eq: { referral_code: wanted }, limit: 1 }))[0];
+      if (hit && hit.uid !== uid) referrer = hit;
+    }
     const writes = [
       F.create(`users/${uid}`, {
         uid, role, status, status_reason: null, name, phone, email: token.email ?? null, national_id: nid, area, lang, id_ref: refs.id, license_ref: refs.license ?? null,
         vehicle_reg_ref: refs.vehicleReg ?? null, vehicle_photo_ref: refs.vehiclePhoto ?? null, vehicle_type: vehicleType, phone_verified: !!token.phone_number,
         rating_sum: 0, rating_count: 0, completed_orders: 0, cancel_count: 0, reviewed_by: null, reviewed_at: null, created_at: now(),
+        referral_code: refCode, referred_by: referrer ? referrer.uid : null,
       }),
       F.create(`uniq/phone_${phone}`, { uid }), F.create(`uniq/nid_${nid}`, { uid }),
     ];
+    if (referrer) writes.push(F.create(`referrals/${uid}`, {
+      id: uid, uid, role, referrer: referrer.uid, referrer_role: referrer.role, status: 'pending',
+      created_at: now(), rewarded_at: null, order_id: null, bonus_referrer: 0, bonus_referred: 0,
+    }));
     if (driver) writes.push(F.create(`wallets/${uid}`, { uid, balance: 0, total_earned: 0, updated_at: now() }));
     try { await F.run(env, writes); } catch (e) { if (e.code === 'conflict') throw new HttpError(409, 'duplicate'); throw e; }
     return { ok: true, status };
@@ -155,11 +250,21 @@ const ROUTES = {
     const s = await loadSettings(c.env);
     const a = point(c.body.pickup, false), b = point(c.body.dropoff, false);
     const d = await distanceKm(a, b, s);
+    let out;
     if (c.body.service === 'passengers') {
       if (!s.passengersEnabled) throw new HttpError(403, 'service_disabled');
-      return { distanceKm: d.km, source: d.source, ...calcPassengerPrice(s, Math.max(d.km, 0.5), c.body.vehicleClass) };
+      out = { distanceKm: d.km, source: d.source, ...calcPassengerPrice(s, Math.max(d.km, 0.5), c.body.vehicleClass) };
+    } else {
+      out = { distanceKm: d.km, source: d.source, ...calcPrice(s, Math.max(d.km, 0.5), c.body.category, c.body.size) };
     }
-    return { distanceKm: d.km, source: d.source, ...calcPrice(s, Math.max(d.km, 0.5), c.body.category, c.body.size) };
+    const code = normCode(c.body.coupon); // الكوبون اختياري: بنرجّع الخصم أو سبب رفضه (من غير ما نمنع عرض السعر)
+    if (code) {
+      try {
+        const { discount } = await applyCoupon(c.env, code, out.price, c.uid);
+        out = { ...out, couponCode: code, discount, amountDue: out.price - discount };
+      } catch (e) { out = { ...out, couponError: e.code || 'coupon_invalid' }; }
+    }
+    return out;
   },
 
   // ---------- الملفات ----------
@@ -274,19 +379,26 @@ const ROUTES = {
     }
     const when = new Date(b.scheduledAt);
     if (isNaN(when) || when.getTime() < Date.now() - 3600e3) throw new HttpError(400, 'bad_date');
+    const code = normCode(b.coupon); // كود خصم اختياري: السيرفر هو اللي بيحسب الخصم (مش العميل)
+    const discount = code ? (await applyCoupon(c.env, code, price, c.uid)).discount : 0;
+    const amountDue = price - discount;
     const id = newId(), t = now();
     const prepay = trip || b.prepay === true, first = prepay ? 'awaiting_payment' : 'open'; // الركاب دايماً دفع مقدم؛ البضاعة باختيار العميل
     const data = {
       customerName: u.name, customerPhone: u.phone, ...spec,
       description: str(b.description ?? '', 0, 500), photos, pickup, dropoff, distanceKm: d.km, distanceSource: d.source,
-      priceOriginal: price, instant: prepay ? true : b.instant !== false, payMode: prepay ? 'before' : 'after', commissionPct: s.commissionPct, log: [{ ...L(first, c.uid), at: t }],
+      priceOriginal: price, couponCode: code || null, discount, amountDue, instant: prepay ? true : b.instant !== false, payMode: prepay ? 'before' : 'after', commissionPct: s.commissionPct, log: [{ ...L(first, c.uid), at: t }],
     };
     await F.run(c.env, [
       F.create(`orders/${id}`, { id, customer_id: c.uid, driver_id: null, status: first, escrow_status: 'none', price, commission: null, driver_net: null, customer_refund: null, scheduled_at: when.getTime(), created_at: t, updated_at: t, version: 1, data: JSON.stringify(data) }),
       F.inc(`daily/${dayKey(t)}`, { n: 1 }, { day: dayKey(t) }), // عدّاد يومي للإحصائيات (من غير ما نقرا كل الطلبات)
+      ...(code ? [ // استهلاك الكوبون (إجمالي + لكل مستخدم) في نفس الـ commit بتاع الطلب
+        F.inc(`coupons/${code}`, { used_count: 1 }, { updated_at: t }),
+        F.inc(`coupons/${code}/uses/${c.uid}`, { n: 1 }, { uid: c.uid, code, updated_at: t }),
+      ] : []),
     ]);
     if (!prepay) bg(c, dispatchNewOrder(c.env, { id, ...spec, pickup, dropoff, price }, s)); // المدفوع مقدماً بيتبعت للسواقين بعد تأكيد الدفع
-    return { id, price, prepay };
+    return { id, price, prepay, discount, amountDue };
   },
 
   // ---------- السواق يقبل (أول واحد يكسب: شرط النسخة بيفشّل التاني) ----------
@@ -345,9 +457,10 @@ const ROUTES = {
     const d = await F.get(c.env, `users/${f.driver_id}`);
     if (!d || d.role !== 'driver' || d.status !== 'active') throw new HttpError(409, 'driver_unavailable');
     const others = (await F.query(c.env, 'offers', { eq: { order_id: o.id }, limit: 100 })).filter((r) => r.status === 'pending' && r._id !== f._id);
+    const amountDue = Math.max(0, f.price - Math.min(o.discount || 0, f.price)); // لو فيه كوبون: الخصم يفضل مطبّق على السعر المتفق عليه
     await F.run(c.env, [
       F.patch(`offers/${f._id}`, { status: 'accepted', updated_at: now() }, f._ut), // شرط: العرض لسه معلّق
-      ...orderUpdate(c.env, o, { status: 'accepted', driverId: d.uid, driverName: d.name, driverPhone: d.phone, driverVehicle: d.vehicle_type, acceptedAt: now(), price: f.price, priceNegotiated: true }, L('accepted', c.uid, { note: 'offer', price: f.price })),
+      ...orderUpdate(c.env, o, { status: 'accepted', driverId: d.uid, driverName: d.name, driverPhone: d.phone, driverVehicle: d.vehicle_type, acceptedAt: now(), price: f.price, amountDue, priceNegotiated: true }, L('accepted', c.uid, { note: 'offer', price: f.price })),
       ...others.map((r) => F.patch(`offers/${r._id}`, { status: 'rejected', updated_at: now() })),
     ]);
     bg(c, notify(c.env, [d.uid], 'offer_accepted', { price: f.price, no: orderNo(o.id) }, { url: `/#/order/${o.id}` }));
@@ -450,6 +563,8 @@ const ROUTES = {
       F.inc(`users/${o.driverId}`, { completed_orders: 1 }), F.inc(`users/${o.customerId}`, { completed_orders: 1 }),
     ]);
     bg(c, notify(c.env, [o.driverId], 'completed', { net, no: orderNo(o.id) }, { url: '/#/driver/wallet' }));
+    bg(c, rewardReferral(c, o.customerId, o.id)); // مكافأة إحالة المُحال (مرة واحدة، لو مفعّلة)
+    bg(c, rewardReferral(c, o.driverId, o.id));
     return { ok: true, net, commission };
   },
 
@@ -468,16 +583,16 @@ const ROUTES = {
     if (asCustomer && held && ['paid', 'heading_pickup'].includes(o.status)) {
       const heading = o.status === 'heading_pickup';
       const dp = heading ? s.cancelHeadingDriverPct : s.cancelPaidDriverPct, pp = heading ? s.cancelHeadingPlatformPct : s.cancelPaidPlatformPct;
-      const { driver, platform, refund: back } = cancelSplit(o.price, dp, pp);
+      const { driver, platform, refund: back } = cancelSplit(collectedOf(o), dp, pp);
       const stmts = [
         ...orderUpdate(c.env, o, { status: 'cancelled', escrowStatus: 'settled', cancelledBy: 'customer', cancelReason: reason, commission: platform, driverNet: driver, customerRefund: back, cancelFee: { driverPct: dp, platformPct: pp } }, L('cancelled', c.uid, { note: 'cancel_after_accept', reason })),
         cancelCount(),
       ];
       if (driver > 0) stmts.push(walletCredit(o.driverId, driver), walletTx({ uid: o.driverId, type: 'cancel_compensation', orderId: o.id, amount: driver, gross: o.price, commission: platform }));
-      if (back > 0) stmts.push(refundInsert(c.env, { ...o, price: back }, 'cancelled_after_accept'));
+      if (back > 0) stmts.push(refundInsert(c.env, o, 'cancelled_after_accept', back));
       await F.run(c.env, stmts);
       bg(c, notify(c.env, [o.driverId], driver > 0 ? 'cancel_comp' : 'cancel_plain', { no: orderNo(o.id), amount: driver }, { url: '/#/driver/wallet' }));
-      if (back > 0) afterRefundRequest(c, { ...o, price: back });
+      if (back > 0) afterRefundRequest(c, o, back);
       return { ok: true, fee: driver + platform, driver, platform, refund: back };
     }
 
@@ -528,6 +643,26 @@ const ROUTES = {
       F.query(c.env, 'withdrawals', { eq: { uid: c.uid }, limit: 100 }),
     ]);
     return { wallet: { balance: w?.balance || 0, totalEarned: w?.total_earned || 0 }, tx: tx.map(txOut), withdrawals: wd.sort(byDesc('created_at')).slice(0, 40).map(withdrawalOut) };
+  },
+
+  // تقرير مالي أسبوعي للسواق (آخر 8 أسابيع، الأسبوع يبدأ الاثنين) — قراءة واحدة على حركات المحفظة
+  async 'wallet/weekly'(c) {
+    await need(c, ['driver']);
+    const rows = await F.query(c.env, `wallets/${c.uid}/tx`, { order: ['at', 'desc'], limit: 300 });
+    const EARN = ['earning', 'dispute_earning', 'cancel_compensation'];
+    const ms = (v) => (!v ? NaN : v.toDate ? v.toDate().getTime() : v instanceof Date ? v.getTime() : new Date(v).getTime());
+    const weeks = new Map();
+    for (const r of rows.map(txOut)) {
+      const d = new Date(ms(r.at)); if (isNaN(d.getTime())) continue;
+      const ws = new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7)).getTime(); // بداية الأسبوع (اثنين)
+      const w = weeks.get(ws) || { start: ws, earned: 0, withdrawn: 0, refunded: 0, trips: 0, gross: 0, commission: 0 };
+      if (EARN.includes(r.type)) { w.earned += r.amount; w.trips += 1; w.gross += r.gross || 0; w.commission += r.commission || 0; }
+      else if (r.type === 'withdrawal') w.withdrawn += -r.amount;
+      else if (r.type === 'withdrawal_refund') w.refunded += r.amount;
+      weeks.set(ws, w);
+    }
+    const list = [...weeks.values()].sort((a, b) => b.start - a.start).slice(0, 8).map((w) => ({ ...w, net: w.earned - w.withdrawn }));
+    return { weeks: list };
   },
 
   // بيخصم من المحفظة فوراً ويحجز المبلغ لحد قرار الأدمن. شرط النسخة على المحفظة بيمنع السحب المزدوج.
@@ -582,6 +717,159 @@ const ROUTES = {
       n('orders', 'payment_review'), n('users', 'pending'), n('withdrawals', 'pending'), n('disputes', 'open'), n('refunds', 'pending'), n('reports', 'open'), n('sos_events', 'open'),
     ]);
     return { badges: { payments, users, withdrawals, disputes, refunds, reports: rep + sos } };
+  },
+
+  // ---------- سجل عمليات الأدمن (أحدث 200 عملية) — للأمان والمساءلة ----------
+  async 'admin/audit'(c) {
+    await need(c, ['admin']);
+    const rows = await F.query(c.env, 'audit', { order: ['at', 'desc'], limit: 200 });
+    const jp = (s) => { try { return JSON.parse(s || '{}'); } catch { return {}; } };
+    return { entries: rows.map((r) => ({ id: r.id, action: r.action, adminUid: r.admin_uid, adminName: r.admin_name, targetType: r.target_type, targetId: r.target_id, note: r.note, meta: jp(r.meta), at: r.at })) };
+  },
+
+  // ---------- المراقبة: استهلاك Firestore اليومي (تقديري) + الأخطاء الأخيرة ----------
+  async 'admin/metrics'(c) {
+    await need(c, ['admin']);
+    const rows = await F.query(c.env, 'metrics', { order: ['day', 'desc'], limit: 30 });
+    const limit = Number(c.env.METRICS_READ_ALERT) > 0 ? Number(c.env.METRICS_READ_ALERT) : 40000;
+    return {
+      limit,
+      days: rows.filter((r) => r.day).map((r) => ({ day: r.day, reads: Number(r.reads || 0), writes: Number(r.writes || 0), errors: Number(r.errors || 0) })),
+    };
+  },
+
+  async 'admin/errors'(c) {
+    await need(c, ['admin']);
+    const rows = await F.query(c.env, 'errors', { order: ['at', 'desc'], limit: 100 });
+    return {
+      errors: rows.map((r) => ({ id: r.id, source: r.source, route: r.route, uid: r.uid, status: r.status, message: r.message, stack: r.stack, url: r.url, at: r.at })),
+    };
+  },
+
+  // ---------- سجل الدخول: آخر عمليات دخول الأدمن/المستخدم — للأمان ----------
+  async 'auth/login'(c) {
+    await need(c, ['customer', 'driver', 'admin']);
+    const limit = await rateLimit(c.env, 'login_log', c.uid, 3600e3, 30, 'too_many_requests');
+    const ua = String(c.request?.headers?.get('user-agent') || '').slice(0, 300);
+    const id = newId();
+    await F.run(c.env, [
+      limit,
+      F.create(`login_log/${id}`, { id, uid: c.uid, at: now(), ua }),
+    ]);
+    return { ok: true };
+  },
+
+  // ---------- سجل الدخول (عرض للأدمن) ----------
+  async 'admin/logins'(c) {
+    await need(c, ['admin']);
+    const rows = await F.query(c.env, 'login_log', { order: ['at', 'desc'], limit: 200 });
+    const uids = [...new Set(rows.map((r) => r.uid))];
+    const us = await F.getMany(c.env, 'users', uids, ['uid', 'name', 'role', 'email']);
+    const byId = Object.fromEntries(us.filter(Boolean).map((u) => [u.uid, u]));
+    return { entries: rows.map((r) => ({ id: r.id, uid: r.uid, name: byId[r.uid]?.name || null, role: byId[r.uid]?.role || null, email: byId[r.uid]?.email || null, ua: r.ua || '', at: r.at })) };
+  },
+
+  // ---------- التحقق بخطوتين للأدمن (TOTP) ----------
+  async 'admin/2fa/status'(c) {
+    await need(c, ['admin'], { skip2fa: true });
+    const u = await F.get(c.env, `users/${c.uid}`);
+    const tk = (c.request?.headers?.get('x-2fa') || '').trim();
+    const s = tk ? await F.get(c.env, `admin_2fa/${tk}`) : null;
+    return { enabled: !!u?.totp_enabled, verified: !!(s && s.uid === c.uid && Number(s.exp || 0) > now()) };
+  },
+  async 'admin/2fa/setup'(c) {
+    await need(c, ['admin'], { skip2fa: true });
+    const u = await F.get(c.env, `users/${c.uid}`);
+    const secret = randomBase32(32);
+    await F.run(c.env, [F.patch(`users/${c.uid}`, { totp_secret: secret, totp_enabled: false, totp_setup_at: now(), updated_at: now() }, u?._ut)]);
+    return { secret, otpauth: otpauthURL(secret, u?.email || c.uid) };
+  },
+  async 'admin/2fa/enable'(c) {
+    const admin = await need(c, ['admin'], { skip2fa: true });
+    const u = await F.get(c.env, `users/${c.uid}`);
+    if (!u?.totp_secret) throw new HttpError(400, 'totp_no_setup');
+    if (!(await verifyTotp(u.totp_secret, c.body.code))) throw new HttpError(400, 'totp_bad_code');
+    await F.run(c.env, [
+      F.patch(`users/${c.uid}`, { totp_enabled: true, totp_enabled_at: now(), updated_at: now() }, u._ut),
+      auditLog(admin, 'admin.2fa.enable', { targetType: 'user', targetId: c.uid }),
+    ]);
+    return { ok: true, enabled: true };
+  },
+  async 'admin/2fa/disable'(c) {
+    const admin = await need(c, ['admin'], { skip2fa: true });
+    const u = await F.get(c.env, `users/${c.uid}`);
+    if (!u?.totp_enabled) throw new HttpError(400, 'totp_not_enabled');
+    if (!(await verifyTotp(u.totp_secret, c.body.code))) throw new HttpError(400, 'totp_bad_code');
+    await F.run(c.env, [
+      F.patch(`users/${c.uid}`, { totp_enabled: false, totp_secret: null, totp_disabled_at: now(), updated_at: now() }, u._ut),
+      auditLog(admin, 'admin.2fa.disable', { targetType: 'user', targetId: c.uid }),
+    ]);
+    return { ok: true, enabled: false };
+  },
+  async 'admin/2fa/verify'(c) {
+    await need(c, ['admin'], { skip2fa: true });
+    const u = await F.get(c.env, `users/${c.uid}`);
+    if (!u?.totp_enabled) throw new HttpError(400, 'totp_not_enabled');
+    if (!(await verifyTotp(u.totp_secret, c.body.code))) throw new HttpError(400, 'totp_bad_code');
+    const token = newId() + newId();
+    const exp = now() + 12 * 3600e3;
+    await F.run(c.env, [F.set(`admin_2fa/${token}`, { token, uid: c.uid, exp, at: now() })]);
+    return { token, exp };
+  },
+
+  // ---------- نسخة احتياطية: تصدير البيانات (JSON) — للأدمن فقط. يدوي (التلقائي محتاج Blaze) ----------
+  async 'admin/export'(c) {
+    await need(c, ['admin']);
+    const E = c.env;
+    const CAPS = { orders: 5000, users: 5000, offers: 5000, wallets: 2000, withdrawals: 5000, refunds: 5000, disputes: 5000, coupons: 2000, referrals: 5000, blacklist: 2000, reports: 2000, sos_events: 2000, audit: 2000 };
+    const only = str(c.body?.col ?? '', 0, 40);
+    const cols = only && CAPS[only] ? [only] : Object.keys(CAPS);
+    const clean = (r) => { const o = { ...r }; delete o._id; delete o._ut; delete o._v; return o; };
+    const collections = {};
+    for (const col of cols) { const rows = await F.query(E, col, { limit: CAPS[col] }); collections[col] = rows.map(clean); }
+    const walletTx = {};
+    if (!only || only === 'wallets') {
+      for (const w of (collections.wallets || []).slice(0, 300)) {
+        const uid = w.uid ?? w.id;
+        const rows = await F.query(E, `wallets/${uid}/tx`, { limit: 500 });
+        if (rows.length) walletTx[uid] = rows.map((r) => ({ id: r.id, type: r.type, amount: r.amount, orderId: r.order_id, gross: r.gross, commission: r.commission, withdrawalId: r.withdrawal_id, at: r.at }));
+      }
+    }
+    const settingsDoc = (await F.get(E, 'settings/pricing'))?.v ?? null;
+    return {
+      at: now(), version: 1,
+      counts: Object.fromEntries(Object.entries(collections).map(([k, v]) => [k, v.length])),
+      collections, walletTx, settings: settingsDoc,
+    };
+  },
+
+  // ---------- الإحالة والحوافز: قائمة الإحالات + ملخص ----------
+  async 'admin/referrals'(c) {
+    await need(c, ['admin']);
+    const E = c.env, s = await loadSettings(E);
+    const [rows, pending, agg] = await Promise.all([
+      F.query(E, 'referrals', { order: ['created_at', 'desc'], limit: 200 }),
+      F.count(E, 'referrals', { eq: { status: 'pending' } }),
+      F.aggregate(E, 'referrals', { eq: { status: 'rewarded' } }, { r: ['sum', 'bonus_referrer'], d: ['sum', 'bonus_referred'] }),
+    ]);
+    const uids = [...new Set(rows.flatMap((r) => [r.uid, r.referrer]).filter(Boolean))];
+    const us = await F.getMany(E, 'users', uids);
+    const nameOf = Object.fromEntries(us.filter(Boolean).map((u) => [u.uid, u.name]));
+    return {
+      config: { enabled: s.referralEnabled, bonusReferrer: s.referralBonusReferrer, bonusReferred: s.referralBonusReferred },
+      pending, rewarded: rows.filter((r) => r.status === 'rewarded').length,
+      paid: { referrer: Number(agg.r || 0), referred: Number(agg.d || 0) },
+      rows: rows.map((r) => ({ id: r.id, uid: r.uid, userName: nameOf[r.uid] || r.uid, referredBy: r.referrer, referrerName: nameOf[r.referrer] || r.referrer, referrerRole: r.referrer_role, role: r.role, status: r.status, createdAt: r.created_at, rewardedAt: r.rewarded_at, orderId: r.order_id, bonusReferrer: r.bonus_referrer, bonusReferred: r.bonus_referred })),
+    };
+  },
+
+  // بلاغ خطأ من الواجهة (window.onerror / unhandledrejection). محدود المعدّل عشان مايتحوّلش لإغراق.
+  async 'client/error'(c) {
+    const limit = await rateLimit(c.env, 'client_error', c.uid, 60000, 10, 'too_many_reports');
+    await F.run(c.env, [limit]);
+    const msg = str(c.body.message ?? '', 1, 500);
+    await recordError(c.env, { source: 'client', route: str(c.body.route ?? '', 0, 120), uid: c.uid, status: 500, message: msg, stack: str(c.body.stack ?? '', 0, 2000), url: str(c.body.url ?? '', 0, 300) });
+    return { ok: true };
   },
 
   // إحصائيات على كل الطلبات بتجميع Firestore (count/sum) من غير قراءة المستندات. اليومي من عدّادات daily.
@@ -656,9 +944,24 @@ const ROUTES = {
         if (value) writes.push(F.set(`blacklist/${type}_${value}`, { k: `${type}_${value}`, type, value, reason, at: now() }));
       }
     }
+    writes.push(auditLog(admin, 'user.status', { targetType: 'user', targetId: target.uid, note: reason, meta: { from: target.status, to: status, blacklist: !!c.body.blacklist } }));
     await F.run(c.env, writes);
     if (status === 'active' && target.status !== 'active') bg(c, notify(c.env, [target.uid], 'account_active', {}, { url: '/' }));
     if (['rejected', 'banned'].includes(status)) bg(c, notify(c.env, [target.uid], 'account_rejected', {}, { url: '/' }));
+    return { ok: true };
+  },
+
+  // تحكم الأدمن في قفل تعديل بيانات الحساب لمستخدم: فتح فوري أو مدة مخصّصة له (null = يرجعه للمدة العامة)
+  async 'admin/profile-edit'(c) {
+    const admin = await need(c, ['admin']);
+    const target = await F.get(c.env, `users/${uidOf(c.body.uid)}`);
+    if (!target) throw new HttpError(404, 'user_not_found');
+    if (target.role === 'admin') throw new HttpError(403, 'forbidden');
+    const patch = {};
+    if (c.body.unlock === true) patch.profile_edited_at = 0;
+    if (c.body.days !== undefined) patch.profile_edit_days = c.body.days === null || c.body.days === '' ? null : Math.floor(int(c.body.days, 0, 365));
+    if (!Object.keys(patch).length) throw new HttpError(400, 'nothing_to_update');
+    await F.run(c.env, [F.patch(`users/${target.uid}`, patch), auditLog(admin, 'user.profile_edit', { targetType: 'user', targetId: target.uid, meta: { unlock: c.body.unlock === true, days: patch.profile_edit_days } })]);
     return { ok: true };
   },
 
@@ -671,7 +974,8 @@ const ROUTES = {
     if (c.body.action === 'confirm') { patch = { status: pre ? 'open' : 'paid', escrowStatus: 'held', paidAt: now(), paymentConfirmedBy: admin.uid }; logStatus = patch.status; }
     else if (c.body.action === 'reject') { patch = { status: pre ? 'awaiting_payment' : 'accepted', paymentRejectReason: str(c.body.note ?? '', 0, 200), paymentProof: null, paymentRef: null }; logStatus = 'payment_rejected'; }
     else throw new HttpError(400, 'bad_action');
-    await F.run(c.env, orderUpdate(c.env, o, patch, L(logStatus, admin.uid, pre && c.body.action === 'confirm' ? { note: 'prepaid_confirmed' } : {})));
+    await F.run(c.env, [orderUpdate(c.env, o, patch, L(logStatus, admin.uid, pre && c.body.action === 'confirm' ? { note: 'prepaid_confirmed' } : {})),
+      auditLog(admin, c.body.action === 'confirm' ? 'payment.confirm' : 'payment.reject', { targetType: 'order', targetId: o.id, note: String(c.body.note ?? ''), meta: { price: o.price, prepaid: pre } })]);
     const url = `/#/order/${o.id}`;
     if (c.body.action === 'confirm') {
       if (pre) {
@@ -690,7 +994,9 @@ const ROUTES = {
     const o = await loadOrder(c.env, docId(c.body.orderId));
     if (!['open', 'accepted', 'awaiting_payment'].includes(o.status) || o.escrowStatus === 'held') throw new HttpError(409, 'bad_state'); // بعد الدفع السعر ثابت
     const price = int(c.body.price, 1, 10000000, 'bad_price');
-    await F.run(c.env, orderUpdate(c.env, o, { price, priceOverridden: true, priceNote: str(c.body.note ?? '', 0, 200) }, L(o.status, admin.uid, { note: 'price_override', price })));
+    const amountDue = Math.max(0, price - (o.discount || 0)); // لو فيه كوبون، الخصم يفضل ثابت والمبلغ المطلوب يتحدّث
+    await F.run(c.env, [...orderUpdate(c.env, o, { price, amountDue, priceOverridden: true, priceNote: str(c.body.note ?? '', 0, 200) }, L(o.status, admin.uid, { note: 'price_override', price })),
+      auditLog(admin, 'order.price', { targetType: 'order', targetId: o.id, note: str(c.body.note ?? '', 0, 200), meta: { from: o.price, to: price, discount: o.discount || 0 } })]);
     return { ok: true };
   },
 
@@ -709,8 +1015,8 @@ const ROUTES = {
     if (w.status !== 'pending') throw new HttpError(409, 'bad_state');
     const note = str(c.body.note ?? '', 0, 200);
     const mark = (s) => F.patch(`withdrawals/${w.id}`, { status: s, note, decided_by: admin.uid, decided_at: now() }, w._ut); // شرط: لسه معلّق
-    if (c.body.action === 'paid') await F.run(c.env, [mark('paid')]);
-    else if (c.body.action === 'reject') await F.run(c.env, [mark('rejected'), walletCredit(w.uid, w.amount), walletTx({ uid: w.uid, type: 'withdrawal_refund', amount: w.amount, withdrawalId: w.id })]);
+    if (c.body.action === 'paid') await F.run(c.env, [mark('paid'), auditLog(admin, 'withdrawal.paid', { targetType: 'withdrawal', targetId: w.id, note, meta: { uid: w.uid, amount: w.amount } })]);
+    else if (c.body.action === 'reject') await F.run(c.env, [mark('rejected'), walletCredit(w.uid, w.amount), walletTx({ uid: w.uid, type: 'withdrawal_refund', amount: w.amount, withdrawalId: w.id }), auditLog(admin, 'withdrawal.reject', { targetType: 'withdrawal', targetId: w.id, note, meta: { uid: w.uid, amount: w.amount } })]);
     else throw new HttpError(400, 'bad_action');
     bg(c, notify(c.env, [w.uid], c.body.action === 'paid' ? 'withdrawal_paid' : 'withdrawal_rejected', { amount: w.amount }, { url: '/#/driver/wallet' }));
     return { ok: true };
@@ -743,8 +1049,9 @@ const ROUTES = {
     const pct = c.body.decision === 'refund' ? 100 : c.body.decision === 'release' ? 0 : c.body.decision === 'split' ? int(c.body.customerPct, 1, 99) : null;
     if (pct === null) throw new HttpError(400, 'bad_decision');
     const note = str(c.body.note ?? '', 0, 500);
-    const customerRefund = Math.round((o.price * pct) / 100);
-    const driverGross = o.price - customerRefund;
+    const collected = collectedOf(o); // المبلغ اللي اتحصّل فعلاً (بعد خصم الكوبون لو موجود)
+    const customerRefund = Math.round((collected * pct) / 100);
+    const driverGross = collected - customerRefund;
     const pct_ = effectiveCommissionPct(await loadSettings(c.env), o.commissionPct, await F.get(c.env, `users/${o.driverId}`));
     const { commission, net } = driverGross > 0 ? split(driverGross, pct_) : { commission: 0, net: 0 };
     const writes = [
@@ -752,15 +1059,16 @@ const ROUTES = {
       ...orderUpdate(c.env, o, { status: 'resolved', escrowStatus: 'settled', commission, driverNet: net, customerRefund, resolution: c.body.decision }, L('resolved', admin.uid)),
     ];
     if (net > 0) writes.push(walletCredit(o.driverId, net), walletTx({ uid: o.driverId, type: 'dispute_earning', orderId: o.id, amount: net, gross: driverGross, commission }));
+    writes.push(auditLog(admin, 'dispute.resolve', { targetType: 'order', targetId: o.id, note, meta: { decision: c.body.decision, customerRefund, driverNet: net } }));
     await F.run(c.env, writes);
     return { ok: true, customerRefund, driverNet: net };
   },
 
   async 'admin/dispute-refund'(c) { // الأدمن يأكد إنه رد المبلغ للعميل يدوياً (InstaPay)
-    await need(c, ['admin']);
+    const admin = await need(c, ['admin']);
     const d = await F.get(c.env, `disputes/${docId(c.body.id)}`);
     if (!d || d.status !== 'resolved') throw new HttpError(409, 'bad_state');
-    await F.run(c.env, [F.patch(`disputes/${d.id}`, { refund_paid: true, refund_paid_at: now() }, d._ut)]);
+    await F.run(c.env, [F.patch(`disputes/${d.id}`, { refund_paid: true, refund_paid_at: now() }, d._ut), auditLog(admin, 'dispute.refund_paid', { targetType: 'dispute', targetId: d.id, meta: { orderId: d.order_id, amount: d.customer_refund } })]);
     return { ok: true };
   },
 
@@ -832,7 +1140,8 @@ const ROUTES = {
     if (!r) throw new HttpError(404, 'not_found');
     if (r.status !== 'open') throw new HttpError(409, 'bad_state');
     if (!['resolve', 'dismiss'].includes(c.body.action)) throw new HttpError(400, 'bad_action');
-    await F.run(c.env, [F.patch(`reports/${r.id}`, { status: c.body.action === 'resolve' ? 'resolved' : 'dismissed', admin_note: str(c.body.note ?? '', 0, 500), handled_by: admin.uid, handled_at: now() }, r._ut)]);
+    await F.run(c.env, [F.patch(`reports/${r.id}`, { status: c.body.action === 'resolve' ? 'resolved' : 'dismissed', admin_note: str(c.body.note ?? '', 0, 500), handled_by: admin.uid, handled_at: now() }, r._ut),
+      auditLog(admin, 'report.handle', { targetType: 'order', targetId: r.order_id, note: str(c.body.note ?? '', 0, 200), meta: { action: c.body.action } })]);
     bg(c, notify(c.env, [r.reporter_id], 'report_handled', { no: orderNo(r.order_id) }, { url: `/#/order/${r.order_id}` }));
     return { ok: true };
   },
@@ -840,7 +1149,8 @@ const ROUTES = {
     const admin = await need(c, ['admin']);
     const e = await F.get(c.env, `sos_events/${docId(c.body.id)}`);
     if (!e || e.status !== 'open') throw new HttpError(409, 'bad_state');
-    await F.run(c.env, [F.patch(`sos_events/${e.id}`, { status: 'handled', note: str(c.body.note ?? '', 0, 500), handled_by: admin.uid, handled_at: now() }, e._ut)]);
+    await F.run(c.env, [F.patch(`sos_events/${e.id}`, { status: 'handled', note: str(c.body.note ?? '', 0, 500), handled_by: admin.uid, handled_at: now() }, e._ut),
+      auditLog(admin, 'sos.handle', { targetType: 'order', targetId: e.order_id, note: str(c.body.note ?? '', 0, 200) })]);
     return { ok: true };
   },
 
@@ -862,6 +1172,7 @@ const ROUTES = {
     await F.run(c.env, [
       F.patch(`refunds/${f._id}`, { status: 'paid', note: str(c.body.note ?? '', 0, 200), paid_at: now(), paid_by: admin.uid }, f._ut), // شرط: لسه معلّق
       ...orderUpdate(c.env, o, o.escrowStatus === 'refund_pending' ? { escrowStatus: 'refunded' } : {}, L(o.status, admin.uid, { note: 'refund_paid' })), // لو الطلب فيه رسوم إلغاء (settled) بنسيبه زي ما هو عشان الإيراد يفضل محسوب
+      auditLog(admin, 'refund.paid', { targetType: 'order', targetId: f.order_id, note: str(c.body.note ?? '', 0, 200), meta: { amount: f.amount, customerId: f.customer_id } }),
     ]);
     bg(c, notify(c.env, [f.customer_id], 'refund_paid', { no: orderNo(f.order_id), amount: f.amount }, { url: `/#/order/${f.order_id}` }));
     return { ok: true };
@@ -893,9 +1204,9 @@ const ROUTES = {
   },
 
   async 'admin/settings/save'(c) {
-    await need(c, ['admin']);
+    const admin = await need(c, ['admin']);
     const clean = sanitizeSettings(c.body);
-    await F.run(c.env, [F.set('settings/pricing', { k: 'pricing', v: JSON.stringify(clean) })]);
+    await F.run(c.env, [F.set('settings/pricing', { k: 'pricing', v: JSON.stringify(clean) }), auditLog(admin, 'settings.save', { meta: { perKm: clean.perKm, commissionPct: clean.commissionPct, offersEnabled: clean.offersEnabled, profileEditEnabled: clean.profileEditEnabled, profileEditCooldownDays: clean.profileEditCooldownDays } })]);
     clearSettingsCache();
     return { settings: await loadSettings(c.env) };
   },
@@ -905,18 +1216,59 @@ const ROUTES = {
     return { items: (await F.query(c.env, 'blacklist', { order: ['at', 'desc'], limit: 500 })).map((r) => ({ id: r.k, type: r.type, value: r.value, reason: r.reason, at: r.at })) };
   },
   async 'admin/blacklist/add'(c) {
-    await need(c, ['admin']);
+    const admin = await need(c, ['admin']);
     const type = c.body.type, value = String(c.body.value ?? '').replace(/\D/g, '');
     if (!['phone', 'nid'].includes(type) || (type === 'phone' && !/^01[0125]\d{8}$/.test(value)) || (type === 'nid' && !/^\d{14}$/.test(value))) throw new HttpError(400, 'bad_input');
-    await F.run(c.env, [F.set(`blacklist/${type}_${value}`, { k: `${type}_${value}`, type, value, reason: str(c.body.reason ?? '', 0, 200), at: now() })]);
+    await F.run(c.env, [F.set(`blacklist/${type}_${value}`, { k: `${type}_${value}`, type, value, reason: str(c.body.reason ?? '', 0, 200), at: now() }), auditLog(admin, 'blacklist.add', { targetType: type, targetId: value, note: str(c.body.reason ?? '', 0, 200) })]);
     return { ok: true };
   },
   async 'admin/blacklist/remove'(c) {
-    await need(c, ['admin']);
+    const admin = await need(c, ['admin']);
     const k = str(c.body.id, 3, 40);
     if (!/^(phone|nid)_\d+$/.test(k)) throw new HttpError(400, 'bad_input');
-    await F.run(c.env, [F.del(`blacklist/${k}`)]);
+    await F.run(c.env, [F.del(`blacklist/${k}`), auditLog(admin, 'blacklist.remove', { targetType: k.split('_')[0], targetId: k.split('_').slice(1).join('_') })]);
     return { ok: true };
+  },
+
+  // ---------- كوبونات الخصم (يتحكم فيها الأدمن) ----------
+  async 'admin/coupons'(c) {
+    await need(c, ['admin']);
+    const rows = await F.query(c.env, 'coupons', { order: ['created_at', 'desc'], limit: 200 });
+    return { coupons: rows.map(couponOut) };
+  },
+  async 'admin/coupon'(c) {
+    const admin = await need(c, ['admin']);
+    const b = c.body;
+    if (b.action === 'delete') {
+      const id = normCode(b.id);
+      const cur = await F.get(c.env, `coupons/${id}`);
+      if (!cur) throw new HttpError(404, 'not_found');
+      await F.run(c.env, [F.del(`coupons/${id}`), auditLog(admin, 'coupon.delete', { targetType: 'coupon', targetId: id, meta: { code: id } })]);
+      return { ok: true };
+    }
+    const isNew = !b.id;
+    const id = normCode(isNew ? b.code : b.id);
+    if (!/^[A-Z0-9_-]{3,20}$/.test(id)) throw new HttpError(400, 'bad_code');
+    const cur = await F.get(c.env, `coupons/${id}`);
+    if (isNew && cur) throw new HttpError(409, 'coupon_exists');
+    if (!isNew && !cur) throw new HttpError(404, 'not_found');
+    const type = b.type === 'amount' ? 'amount' : 'percent';
+    const value = int(b.value, 1, type === 'percent' ? 100 : 1000000, 'bad_value');
+    const fields = {
+      code: id, type, value,
+      max_discount: Math.floor(int(b.maxDiscount ?? 0, 0, 1000000)),
+      min_price: Math.floor(int(b.minPrice ?? 0, 0, 10000000)),
+      max_uses: Math.floor(int(b.maxUses ?? 0, 0, 1000000)),
+      per_user: Math.floor(int(b.perUser ?? 0, 0, 1000000)),
+      active: b.active !== false,
+      expires_at: b.expiresAt ? Math.floor(int(b.expiresAt, 0, 9007199254740991, 'bad_date')) : 0,
+      updated_at: now(),
+    };
+    await F.run(c.env, [
+      isNew ? F.create(`coupons/${id}`, { id, ...fields, used_count: 0, created_at: now() }) : F.patch(`coupons/${id}`, fields, cur._ut),
+      auditLog(admin, isNew ? 'coupon.create' : 'coupon.update', { targetType: 'coupon', targetId: id, meta: { type, value, active: fields.active, maxUses: fields.max_uses, perUser: fields.per_user } }),
+    ]);
+    return { ok: true, id };
   },
 };
 
@@ -934,8 +1286,10 @@ async function health(env) {
 }
 
 export async function onRequest({ request, env, params, waitUntil }) {
+  let route = '', uid = null;
+  const bg2 = (p) => { if (waitUntil) { try { waitUntil(p); } catch { /* waitUntil مش متاح */ } } };
   try {
-    const route = [].concat(params.route || []).join('/');
+    route = [].concat(params.route || []).join('/');
     if (request.method === 'GET' && route === 'health') return json(await health(env));
     if (!env.FIREBASE_SERVICE_ACCOUNT) throw new HttpError(500, 'missing_service_account');
     const bearer = (request.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
@@ -943,17 +1297,30 @@ export async function onRequest({ request, env, params, waitUntil }) {
     if (request.method !== 'POST' && !isFileGet) throw new HttpError(405, 'method_not_allowed');
     if (!bearer) throw new HttpError(401, 'unauthenticated');
     const token = await verifyIdToken(bearer, env.FIREBASE_PROJECT_ID);
+    uid = token.uid;
+    // حدّ مركزي لكل مستخدم على كل المسارات الحسّاسة (حماية موحّدة من الإساءة). مسارات الاستطلاع/القراءة مستثناة لتوفير الكوتا.
+    if (env.API_RATE_DISABLED !== '1' && !isFileGet && !RL_SKIP.has(route)) {
+      const max = Number(env.API_RATE_PER_MIN) > 0 ? Number(env.API_RATE_PER_MIN) : 240;
+      await F.run(env, [await rateLimit(env, 'api', token.uid, 60000, max, 'too_many_requests')]);
+    }
     if (isFileGet) {
       const role = (await F.get(env, `users/${token.uid}`))?.role;
-      return await readFile(env, { uid: token.uid, role }, route.slice(6));
+      const res = await readFile(env, { uid: token.uid, role }, route.slice(6));
+      bg2(flushMetrics(env));
+      return res;
     }
     const handler = Object.hasOwn(ROUTES, route) ? ROUTES[route] : null;
     if (!handler) throw new HttpError(404, 'not_found');
     const body = await request.json().catch(() => ({}));
-    return json(await handler({ env, uid: token.uid, token, body, request, waitUntil }));
+    const out = await handler({ env, uid: token.uid, token, body, request, waitUntil });
+    bg2(flushMetrics(env));
+    return json(out);
   } catch (e) {
-    if (e instanceof HttpError) return json({ error: e.code }, e.status);
+    if (e instanceof HttpError) { bg2(flushMetrics(env)); return json({ error: e.code }, e.status); }
     console.error(e);
+    bg2(recordError(env, { source: 'server', route, uid, status: 500, message: e?.message || String(e), stack: e?.stack }));
+    bg2(sentryCapture(env, e, { route, uid }));
+    bg2(flushMetrics(env));
     return json({ error: 'server_error' }, 500);
   }
 }

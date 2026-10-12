@@ -3,9 +3,10 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/fireba
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut,
   sendPasswordResetEmail, deleteUser, RecaptchaVerifier, linkWithPhoneNumber,
+  EmailAuthProvider, reauthenticateWithCredential, updatePassword,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 import { firebaseConfig } from './config.js';
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, sendPasswordResetEmail, deleteUser, RecaptchaVerifier, linkWithPhoneNumber };
+export { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, sendPasswordResetEmail, deleteUser, RecaptchaVerifier, linkWithPhoneNumber, EmailAuthProvider, reauthenticateWithCredential, updatePassword };
