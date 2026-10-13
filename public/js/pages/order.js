@@ -3,7 +3,7 @@ import { state } from '../state.js';
 import { t } from '../i18n.js';
 import { $, $$, html, raw, render, toast, errMsg, busy, spinner, stamp, orderNo, fmtMoney, fmtNum, fmtDate, label, ratingText, trustBadge, confirmDialog, promptDialog, openModal, starsInput } from '../ui.js';
 import { getPos } from '../geo.js';
-import { createMap, pinIcon } from '../map.js';
+import { createMap, pinIcon, drawRoute, gmapsLink, distKm } from '../map.js';
 import { uploadImage, hydrate, imgTag } from '../storage.js';
 
 const ACTIVE = ['heading_pickup', 'picked_up', 'in_transit'];
@@ -30,25 +30,31 @@ export function renderOrder(el, id) {
   const home = role === 'admin' ? '/admin/orders' : role === 'driver' ? '/driver/jobs' : '/customer';
   render(el, html`<div class="page-head"><h1 id="title">${t('order.title')} ${orderNo(id)}</h1><div class="row"><span id="rlink"></span><a class="btn ghost sm" href="#${home}">${t('common.back')}</a></div></div>
     <div class="order-layout"><div class="stack"><div class="stack" id="left">${spinner()}</div><div id="chat"></div></div>
-    <div class="map-col"><div id="map" class="map tall"></div><p class="hint" id="liveHint"></p></div></div>`);
+    <div class="map-col"><div id="map" class="map tall"></div><div id="routeInfo" class="route-info"></div><p class="hint" id="liveHint"></p></div></div>`);
 
   const left = $('#left', el), hint = $('#liveHint', el);
   let fleet = []; // سواقين الشركة (لو الحساب شركة): بنختار منهم مين هيستلم الشحنة
   if (role === 'driver' && state.profile.accountType === 'company') api('fleet/list').then((r) => { fleet = r.drivers; if (order) paint(order); }).catch(() => {});
   let offerSort = 'price', map = null, order = null, truck = null, poller = null, lastVersion = null, watchId = null, lastSent = 0, getStars = () => 0;
 
+  let ab = null; // [نقطة الاستلام، نقطة التسليم]
   const truckTo = (lat, lng) => {
     if (!map) return;
-    if (!truck) truck = L.marker([lat, lng], { icon: pinIcon('truck') }).addTo(map); else truck.setLatLng([lat, lng]);
+    if (!truck) { truck = L.marker([lat, lng], { icon: pinIcon('truck'), zIndexOffset: 1000 }).addTo(map); if (ab) map.fitBounds([ab[0], ab[1], [lat, lng]], { padding: [50, 50] }); } else truck.setLatLng([lat, lng]);
   };
   function drawMap(o) {
     if (map) return;
     map = createMap($('#map', el), { center: [o.pickup.lat, o.pickup.lng], zoom: 12 });
-    const a = [o.pickup.lat, o.pickup.lng], b = [o.dropoff.lat, o.dropoff.lng];
-    L.marker(a, { icon: pinIcon('a') }).addTo(map).bindTooltip(t('order.pickup'));
-    L.marker(b, { icon: pinIcon('b') }).addTo(map).bindTooltip(t('order.dropoff'));
-    L.polyline([a, b], { color: '#c99400', weight: 3, dashArray: '8 8' }).addTo(map);
-    map.fitBounds([a, b], { padding: [40, 40] });
+    const a = [o.pickup.lat, o.pickup.lng], b = [o.dropoff.lat, o.dropoff.lng]; ab = [a, b];
+    L.marker(a, { icon: pinIcon('a') }).addTo(map).bindTooltip(t('order.pickup'), { permanent: true, direction: 'top', offset: [0, -30], className: 'pin-tip' });
+    L.marker(b, { icon: pinIcon('b') }).addTo(map).bindTooltip(t('order.dropoff'), { permanent: true, direction: 'top', offset: [0, -30], className: 'pin-tip' });
+    map.fitBounds([a, b], { padding: [50, 50] });
+    const info = $('#routeInfo', el);
+    const paint = (r) => render(info, html`<div class="legend"><span><i class="dot dot-a"></i>${t('order.pickup')}</span><span><i class="dot dot-b"></i>${t('order.dropoff')}</span><span>🚚 ${t('map.driver')}</span></div>
+      ${r ? html`<div class="route-chip"><b>${r.km.toFixed(1)} ${t('map.km')}</b> · ${t('map.about')} <b>${r.min} ${t('map.min')}</b></div>` : ''}
+      <div class="row wrap map-btns"><a class="btn ghost sm" target="_blank" rel="noopener" href="${gmapsLink(a[0], a[1])}">${t('map.navPickup')}</a><a class="btn ghost sm" target="_blank" rel="noopener" href="${gmapsLink(b[0], b[1])}">${t('map.navDropoff')}</a></div>`);
+    paint(null);
+    drawRoute(map, a, b).then(paint); // المسار الفعلي على الطرق + المسافة والزمن
   }
 
   // ---------- تتبع مباشر ----------
@@ -67,7 +73,9 @@ export function renderOrder(el, id) {
   function showLocation(o, loc) {
     if (role === 'driver' || !ACTIVE.includes(o.status)) return;
     if (!loc) { hint.textContent = t('order.waitingLoc'); return; }
-    truckTo(loc.lat, loc.lng); hint.textContent = `${t('order.lastSeen')}: ${fmtDate(loc.at)}`;
+    truckTo(loc.lat, loc.lng);
+    const tgt = ab && (['paid', 'heading_pickup'].includes(o.status) ? ab[0] : ab[1]), left = tgt ? distKm([loc.lat, loc.lng], tgt) : null; // المسافة المتبقية للوجهة الحالية (خط مستقيم تقريبي)
+    hint.textContent = `${t('order.lastSeen')}: ${fmtDate(loc.at)}${left != null ? ` · ${t('map.driverLeft', { km: left.toFixed(1) })}` : ''}`;
   }
 
   // ---------- عرض ----------
@@ -128,7 +136,8 @@ export function renderOrder(el, id) {
             <div class="small">${t('order.payTo')}: <b dir="ltr">${ip.handle}</b> — ${ip.name}</div></div>
           <label class="f" style="margin-top:.8rem">${t('order.proof')}<input type="file" id="proof" accept="image/*"></label>
           <label class="f" style="margin-top:.5rem">${t('order.payRef')}<input id="payref" maxlength="40"></label>
-          <div class="row" style="margin-top:.8rem"><button class="btn primary grow" data-act="pay">${t('order.sendProof')}</button><button class="btn ghost sm" data-act="cancel">${t('order.cancel')}</button></div></div>`;
+          <div class="row" style="margin-top:.8rem"><button class="btn primary grow" data-act="pay">${t('order.sendProof')}</button><button class="btn ghost sm" data-act="cancel">${t('order.cancel')}</button></div>
+          ${state.settings.testPayments ? html`<div class="action warn" style="margin-top:.8rem"><p class="small">${t('order.testBanner')}</p><button class="btn ok block" data-act="payTest">${t('order.payTest')}</button></div>` : ''}</div>`;
       }
       if (s === 'payment_review') return html`<div class="action info">${t('order.reviewing')}</div>`;
       if (HELD.includes(s) && s !== 'delivered') return html`<div class="action info"><p>${t('order.held')}</p><div class="row">${dispute}${['paid', 'heading_pickup'].includes(s) && o.escrowStatus === 'held' ? html`<button class="btn ghost sm" data-act="cancel">${t('order.cancelFee')}</button>` : ''}</div></div>`;
@@ -189,6 +198,7 @@ export function renderOrder(el, id) {
       ${o.discount ? html`${kv(t('coupon.discount'), html`<span style="color:var(--nile)">− ${fmtMoney(o.discount)}</span>${o.couponCode ? html` <span class="muted small">(${o.couponCode})</span>` : ''}`)}${kv(t('coupon.due'), html`<b>${fmtMoney(dueOf(o))}</b>`)}` : ''}
       ${o.description ? kv(t('order.notes'), o.description) : ''}
       ${showDriver ? kv(t('order.driver'), html`${o.driverName} — ${tel(o.driverPhone)} <span class="muted small">(${t('vehicle.' + o.driverVehicle) === 'vehicle.' + o.driverVehicle ? o.driverVehicle : t('vehicle.' + o.driverVehicle)})</span>${o.driverTrust ? html`<div style="margin-top:.2rem">${trustBadge(o.driverTrust)}</div>` : ''}`) : ''}
+      ${o.paymentMethod === 'test' ? kv(t('order.payMethod'), t('order.testPay')) : ''}
       ${o.handler ? kv(t('fleet.handler'), html`${o.handler.name} — ${tel(o.handler.phone)} <span class="muted small" dir="ltr">(${o.handler.plate})</span>${o.handler.companyName && role !== 'customer' ? html` <span class="muted small">· ${o.handler.companyName}</span>` : ''}`) : ''}
       ${showCustomer ? kv(t('order.customer'), html`${o.customerName}${showCustPhone ? html` — ${tel(o.customerPhone)}` : ''}`) : ''}
     </dl></div>
@@ -311,6 +321,7 @@ export function renderOrder(el, id) {
       await call('orders/cancel', { reason }, 'order.cancelledToast');
       if (role === 'driver') location.hash = '#/driver/jobs';
     },
+    async payTest() { await call('orders/pay-test', {}, 'order.payTestDone'); },
     async pay() {
       const ref = await uploadImage(requireFile('proof'), 'payment');
       await call('orders/pay', { proofRef: ref, reference: $('#payref', left).value }, 'order.proofSent');

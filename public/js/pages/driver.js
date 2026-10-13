@@ -4,6 +4,7 @@ import { state } from '../state.js';
 import { t } from '../i18n.js';
 import { $, html, render, toast, errMsg, busy, spinner, waybill, stamp, orderNo, fmtMoney, fmtNum, fmtDate, ratingText, label, openModal, trustBadge, printNode, confirmDialog } from '../ui.js';
 import { uploadImage } from '../storage.js';
+import { attachDocCheck } from '../docCheck.js';
 import { getPos } from '../geo.js';
 import { chime, unlockAudio } from '../sound.js';
 import { pushSupport, enablePush } from '../push.js';
@@ -151,6 +152,7 @@ function fleet(body) {
     } catch (e) { render($('#flist', body), html`<div class="empty">${errMsg(e)}</div>`); }
   };
   const f = $('#ff', body), err = $('#ferr', body);
+  attachDocCheck(f, { idFile: 'id', licenseFile: 'license' });
   f.addEventListener('submit', (e) => {
     e.preventDefault(); err.textContent = '';
     if (!(f.idFile.files[0] && f.licenseFile.files[0])) { err.textContent = t('err.bad_file'); return; }

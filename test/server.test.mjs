@@ -117,8 +117,8 @@ check('السواق ليه محفظة', wallet('drv1').balance === 0);
 check('الحساب pending', U('cust1').status === 'pending');
 const stolen = (await ok('رفع', call('cust1', 'files/upload', { kind: 'id', data: JPEG }))).ref;
 await bad('تكرار الموبايل/الرقم القومي', call('cust9', 'register', { ...people.cust1, idRef: await up('cust9', 'id') }), 409, 'duplicate');
-await bad('التسجيل بملف مش بتاعه', call('cust8', 'register', { ...people.cust1, phone: '01066666666', nationalId: '29901011234567', idRef: stolen }), 400, 'bad_file');
-await bad('رقم قومي غلط', call('cust7', 'register', { ...people.cust1, phone: '01077777777', nationalId: '123', idRef: await up('cust7', 'id') }), 400, 'bad_national_id');
+await bad('التسجيل بملف مش بتاعه', call('cust8', 'register', { ...people.drv1, phone: '01066666666', nationalId: '29901011234567', idRef: stolen, licenseRef: await up('cust8', 'license'), vehicleRegRef: await up('cust8', 'vehicle'), vehiclePhotoRef: await up('cust8', 'vehiclePhoto') }), 400, 'bad_file');
+await bad('رقم قومي غلط (سواق)', call('cust7', 'register', { ...people.drv1, phone: '01077777777', nationalId: '123', idRef: await up('cust7', 'id') }), 400, 'bad_national_id');
 await bad('حساب لسه معلّق', call('cust1', 'quote', { pickup: CAIRO, dropoff: GIZA, category: 'goods', size: 'small' }), 403, 'account_not_active');
 await bad('حساب معلّق ما يعدّلش بياناته', call('cust1', 'account/update', { name: 'محاولة' }), 403, 'account_not_active');
 await bad('عميل يستخدم API الأدمن', call('cust1', 'admin/user', { uid: 'drv1', status: 'active' }), 403);
@@ -329,7 +329,7 @@ check('الصور اتخزنت في Firestore (مستند لكل صورة)', FS.
 // ------------------ القائمة السوداء ------------------
 await ok('أدمن يحظر + قائمة سوداء', call('admin1', 'admin/user', { uid: 'cust1', status: 'banned', reason: 'نصب', blacklist: true }));
 await bad('تسجيل بنفس البيانات ممنوع', call('cust9', 'register', { ...people.cust1, idRef: await up('cust9', 'id') }), 403, 'blacklisted');
-const bl = await ok('عرض القائمة السوداء', call('admin1', 'admin/blacklist')); check('رقم وبطاقة في القائمة', bl.items.length === 2);
+const bl = await ok('عرض القائمة السوداء', call('admin1', 'admin/blacklist')); check('رقم الموبايل في القائمة (العميل مالوش رقم قومي)', bl.items.length === 1 && bl.items[0].type === 'phone');
 await ok('إضافة يدوية', call('admin1', 'admin/blacklist/add', { type: 'phone', value: '01099999999', reason: 'test' }));
 await bad('إضافة رقم غلط', call('admin1', 'admin/blacklist/add', { type: 'phone', value: '123' }), 400);
 await ok('حذف', call('admin1', 'admin/blacklist/remove', { id: 'phone_01099999999' }));
@@ -1218,6 +1218,36 @@ console.log('\n— الإلغاء برسوم والبلاغات والطوارئ
   await ok('إيقاف سواق', call('comp1', 'fleet/remove', { id: fb.id }));
   check('الموقوف مش في القائمة بس سجله محفوظ', (await call('comp1', 'fleet/list')).drivers.length === 1 && (await call('admin1', 'admin/fleet', { uid: 'comp1' })).drivers.length === 2);
   check('الشحنة لسه مربوطة بسواقها بعد أي تغيير', (await call('admin1', 'orders/get', { orderId: o.id })).order.handler.nationalId === '28001011777703');
+  FS.put('settings/pricing', { v: JSON.stringify({ autoApproveCustomers: false }) });
+}
+
+// ------------------ الدفع التجريبي + عميل من غير رقم قومي ------------------
+{
+  FS.put('settings/pricing', { v: JSON.stringify({}) }); // الافتراضي: تجريبي شغال + العميل بيتفعّل تلقائياً
+  await ok('عميل من غير رقم قومي', call('ptCu', 'register', { role: 'customer', name: 'عميل بدون رقم', phone: '01088880001', idRef: await up('ptCu', 'id') }));
+  check('العميل متفعّل ومن غير رقم قومي', U('ptCu').status === 'active' && !U('ptCu').national_id);
+  await ok('عميل تاني من غير رقم قومي', call('ptCu2', 'register', { role: 'customer', name: 'عميل بدون رقم 2', phone: '01088880002', idRef: await up('ptCu2', 'id') }));
+  await bad('سواق لازم رقم قومي', call('ptDr', 'register', { role: 'driver', name: 'سواق بدون رقم', phone: '01288880003', vehicleType: 'pickup', idRef: await up('ptDr', 'id') }), 400, 'bad_national_id');
+
+  const o = await ok('طلب جديد', call('ptCu', 'orders/create', { ...base, photos: [await up('ptCu', 'cargo')] }));
+  await ok('السواق يقبل', call('drv1', 'orders/accept', { orderId: o.id }));
+  await bad('سواق ما يستخدمش الدفع التجريبي', call('drv1', 'orders/pay-test', { orderId: o.id }), 403);
+  await bad('عميل تاني ما يدفعش لطلب غيره', call('ptCu2', 'orders/pay-test', { orderId: o.id }), 403, 'forbidden');
+  FS.put('settings/pricing', { v: JSON.stringify({ testPayments: false }) });
+  await bad('الدفع التجريبي مقفول', call('ptCu', 'orders/pay-test', { orderId: o.id }), 403, 'test_payments_off');
+  FS.put('settings/pricing', { v: JSON.stringify({}) });
+  await ok('دفع تجريبي', call('ptCu', 'orders/pay-test', { orderId: o.id }));
+  const row = FS.get(`orders/${o.id}`); const d = JSON.parse(row.data || '{}');
+  check('الطلب اتحجز فلوسه بعد الدفع التجريبي', (row.status ?? d.status) === 'paid' && (row.escrow_status ?? d.escrowStatus) === 'held');
+  await bad('ما ينفعش يدفع مرتين', call('ptCu', 'orders/pay-test', { orderId: o.id }), 409, 'bad_state');
+  const w0 = wallet('drv1').balance;
+  await ok('في الطريق', call('drv1', 'orders/status', { orderId: o.id, next: 'heading_pickup' }));
+  const ph = await up('drv1', 'handover');
+  await ok('استلام', call('drv1', 'orders/status', { orderId: o.id, next: 'picked_up', photoRef: ph, loc: CAIRO }));
+  await ok('في الطريق للتسليم', call('drv1', 'orders/status', { orderId: o.id, next: 'in_transit' }));
+  await ok('تسليم', call('drv1', 'orders/status', { orderId: o.id, next: 'delivered', photoRef: await up('drv1', 'handover'), loc: GIZA }));
+  const cf = await ok('العميل يأكد الاستلام', call('ptCu', 'orders/confirm', { orderId: o.id }));
+  check('المحفظة اتزودت بالصافي والمنصة خدت عمولتها', cf.net > 0 && cf.commission > 0 && wallet('drv1').balance === w0 + cf.net);
   FS.put('settings/pricing', { v: JSON.stringify({ autoApproveCustomers: false }) });
 }
 

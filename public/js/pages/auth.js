@@ -1,3 +1,4 @@
+import { attachDocCheck } from '../docCheck.js';
 import { auth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, deleteUser, RecaptchaVerifier, linkWithPhoneNumber, GoogleAuthProvider, signInWithPopup, signInWithRedirect } from '../firebase.js';
 import { api, poll } from '../api.js';
 import { gpoll } from '../sync.js';
@@ -90,14 +91,14 @@ export function renderRegister(el, query) {
       <label class="f">${t('auth.name')}<input name="name" autocomplete="name" required minlength="2"></label>
       <div class="grid-2">
         <label class="f">${t('auth.phone')}<input name="phone" inputmode="tel" autocomplete="tel" placeholder="01xxxxxxxxx" required></label>
-        <label class="f">${t('auth.nationalId')}<input name="nationalId" inputmode="numeric" maxlength="14" placeholder="14 ${t('auth.digits')}" required></label>
+        <label class="f" id="nidBox" hidden>${t('auth.nationalId')}<input name="nationalId" inputmode="numeric" maxlength="14" placeholder="14 ${t('auth.digits')}"></label>
       </div>
       <label class="f">${t('auth.area')}<input name="area" placeholder="${t('auth.areaHint')}"></label>
       <label class="f">${t('auth.referral')}<input name="referral" value="${refPre}" dir="ltr" maxlength="12" placeholder="${t('auth.referralHint')}"></label>
       ${needsAccount ? html`<div class="grid-2">
         <label class="f">${t('auth.email')}<input type="email" name="email" autocomplete="email" required></label>
         <label class="f">${t('auth.password')}<input type="password" name="password" autocomplete="new-password" minlength="6" required></label></div>` : ''}
-      ${file('idFile', 'auth.idPhoto')}
+      <div id="idBox" hidden>${file('idFile', 'auth.idPhoto', false)}</div>
       <div id="driverOnly" class="stack" hidden>
         <label class="f">${t('auth.vehicleType')}<select name="vehicleType">${VEHICLES.map((v) => html`<option value="${v}">${t('vehicle.' + v)}</option>`)}</select></label>
         <label class="row"><input type="checkbox" name="isCompany"> <span>${t('auth.asCompany')}</span></label>
@@ -120,8 +121,9 @@ export function renderRegister(el, query) {
   const f = $('#f', el), err = $('#err', el);
   if (needsAccount) $('#gbtn', el).addEventListener('click', () => googleSignIn($('#gbtn', el), err));
   const isCo = () => role === 'driver' && f.isCompany.checked;
-  const paint = () => { el.querySelectorAll('[data-role]').forEach((b) => b.classList.toggle('on', b.dataset.role === role)); $('#driverOnly', el).hidden = role !== 'driver'; $('#companyOnly', el).hidden = !isCo(); $('#indivDocs', el).hidden = isCo(); };
+  const paint = () => { el.querySelectorAll('[data-role]').forEach((b) => b.classList.toggle('on', b.dataset.role === role)); $('#driverOnly', el).hidden = role !== 'driver'; $('#nidBox', el).hidden = role !== 'driver'; $('#idBox', el).hidden = role !== 'driver'; $('#companyOnly', el).hidden = !isCo(); $('#indivDocs', el).hidden = isCo(); };
   f.isCompany.addEventListener('change', paint);
+  attachDocCheck(f, { idFile: 'id', licenseFile: 'license', vehicleRegFile: 'vehicle', commercialRegFile: 'company', taxCardFile: 'company' });
   el.addEventListener('click', (e) => { const b = e.target.closest('[data-role]'); if (b) { role = b.dataset.role; paint(); } });
   paint();
 
@@ -130,18 +132,18 @@ export function renderRegister(el, query) {
     if (!f.terms.checked) { err.textContent = t('err.terms'); return; }
     if (isCo()) { if (f.companyName.value.trim().length < 2 || !(f.commercialRegFile.files[0] && f.taxCardFile.files[0])) { err.textContent = t('err.companyDocs'); return; } }
     else if (role === 'driver' && !(f.licenseFile.files[0] && f.vehicleRegFile.files[0] && f.vehiclePhotoFile.files[0])) { err.textContent = t('err.driverDocs'); return; }
-    if (!f.idFile.files[0]) { err.textContent = t('err.bad_file'); return; }
+    if (role === 'driver' && !f.idFile.files[0]) { err.textContent = t('err.bad_file'); return; }
     busy($('#submit', el), async () => {
       const say = (k) => { $('#progress', el).textContent = t(k); };
       state.registering = true; let created = false;
       try {
         if (!auth.currentUser) { await createUserWithEmailAndPassword(auth, f.email.value.trim(), f.password.value); created = true; }
         say('auth.uploading');
-        const body = { role, name: f.name.value, phone: f.phone.value, nationalId: f.nationalId.value, area: f.area.value, lang: getLang() };
+        const body = { role, name: f.name.value, phone: f.phone.value, area: f.area.value, lang: getLang() };
         const ref = String(f.referral.value || '').trim(); if (ref) body.referral = ref; // كود إحالة (اختياري)
-        body.idRef = await uploadImage(f.idFile.files[0], 'id');
         if (role === 'driver') {
-          body.vehicleType = f.vehicleType.value;
+          body.nationalId = f.nationalId.value; body.vehicleType = f.vehicleType.value;
+          body.idRef = await uploadImage(f.idFile.files[0], 'id');
           if (isCo()) { // شركة شحن: مستنداتها بدل مستندات السواق الفرد
             body.accountType = 'company'; body.companyName = f.companyName.value.trim();
             body.commercialRegRef = await uploadImage(f.commercialRegFile.files[0], 'company');

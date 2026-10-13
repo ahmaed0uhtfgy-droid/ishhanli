@@ -1,8 +1,9 @@
 import { auth } from './firebase.js';
 import { api } from './api.js';
+import { checkSource } from './docCheck.js';
 
 // حجم/جودة الصورة حسب النوع: المستندات محتاجة وضوح، وصور الشحنة أخف عشان قاعدة D1 المجانية حدها 500MB
-const PROFILE = { id: [1280, 0.7], license: [1280, 0.7], vehicle: [1280, 0.7], payment: [1280, 0.7], vehiclePhoto: [1024, 0.62], cargo: [1024, 0.62], handover: [1024, 0.62], evidence: [1024, 0.62] };
+const PROFILE = { id: [1280, 0.7], license: [1280, 0.7], vehicle: [1280, 0.7], company: [1280, 0.7], payment: [1280, 0.7], vehiclePhoto: [1024, 0.62], cargo: [1024, 0.62], handover: [1024, 0.62], evidence: [1024, 0.62] };
 
 export async function compress(file, maxDim, quality) {
   const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => null);
@@ -18,6 +19,8 @@ export async function uploadImage(file, kind) {
   if (!file || !file.type?.startsWith('image/')) throw Object.assign(new Error('bad_image'), { code: 'bad_image' });
   const [dim, q] = PROFILE[kind] || [1024, 0.62];
   let { dataUrl, canvas } = await compress(file, dim, q);
+  const v = await checkSource(canvas, canvas.width, canvas.height, kind); // فحص المستندات (بطاقة/رخصة/سجل) قبل الرفع
+  if (!v.ok) throw Object.assign(new Error('img_' + v.reason), { code: 'img_' + v.reason });
   for (const qq of [0.5, 0.4, 0.3]) { if (dataUrl.length <= 900000) break; dataUrl = canvas.toDataURL('image/jpeg', qq); }
   if (dataUrl.length > 950000) throw Object.assign(new Error('bad_image'), { code: 'bad_image' });
   return (await api('files/upload', { kind, data: dataUrl })).ref;

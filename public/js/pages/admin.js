@@ -123,7 +123,7 @@ function joins(body, badges) {
       <div class="row"><h3 class="grow">${u.accountType === 'company' ? (u.companyName || u.name) : u.name}</h3><span class="stamp s-pending">${t(roleKey(u))}</span></div>
       <dl class="kv"><dt>${t('auth.name')}</dt><dd>${u.name}</dd><dt>${t('auth.phone')}</dt><dd dir="ltr">${u.phone}</dd><dt>${t('auth.nationalId')}</dt><dd dir="ltr">${u.nationalId}</dd>
         ${u.role === 'driver' && u.vehicleType ? html`<dt>${t('auth.vehicleType')}</dt><dd>${t('vehicle.' + u.vehicleType)}</dd>` : ''}<dt>${t('admin.joinedAt')}</dt><dd>${fmtDate(u.createdAt)}</dd></dl>
-      ${u.role === 'driver' ? imgs([u.idRef, u.licenseRef, u.vehicleRegRef, u.vehiclePhotoRef, u.commercialRegRef, u.taxCardRef]) : imgs([u.idRef])}
+      ${imgs([u.idRef, u.licenseRef, u.vehicleRegRef, u.vehiclePhotoRef, u.commercialRegRef, u.taxCardRef].filter(Boolean))}
       <div class="row"><button class="btn ok" data-d="active" data-id="${u.id}">${t('admin.approve')}</button><button class="btn danger" data-d="rejected" data-id="${u.id}">${t('admin.reject')}</button><button class="btn ghost sm" data-open="${u.id}">${t('admin.review')}</button></div></div>`)}</div>` : html`<div class="empty">${t('admin.noJoins')}</div>`);
     hydrate(body);
   }, { dedupe: true, onError });
@@ -381,6 +381,7 @@ function settings(body) {
       <div class="grid-3">${num('offerMinPct', 'offerMin', 1, 10)}${num('offerMaxPct', 'offerMax', 1, 100)}${num('dispatchRadiusKm', 'dispatchRadius', 1, 1)}</div>
       <div class="grid-3">${num('dispatchMaxDrivers', 'dispatchMax', 1, 1)}${num('prepaidGraceMin', 'prepaidGrace', 1, 0)}</div>
       <label class="row"><input type="checkbox" name="offersEnabled" ${S.offersEnabled !== false ? 'checked' : ''}> <span>${t('admin.s.offersEnabled')}</span></label>
+      <label class="row"><input type="checkbox" name="testPayments" ${S.testPayments ? 'checked' : ''}> <span>${t('admin.s.testPayments')}</span></label>
       <label class="row"><input type="checkbox" name="autoApproveCustomers" ${S.autoApproveCustomers ? 'checked' : ''}> <span>${t('admin.s.autoApprove')}</span></label></div>
     <div class="card stack"><h3>${t('admin.instapay')}</h3><div class="grid-2"><label class="f">${t('admin.s.handle')}<input name="instapay.handle" dir="ltr" value="${S.instapay?.handle || ''}"></label><label class="f">${t('admin.s.holder')}<input name="instapay.name" value="${S.instapay?.name || ''}"></label></div></div>
     <div class="card stack"><h3>${t('admin.profileEdit')}</h3><p class="hint">${t('admin.profileEditHint')}</p>
@@ -413,7 +414,7 @@ function settings(body) {
         const n = (k) => Number(f.elements[k].value);
         const r = await api('admin/settings/save', {
           perKm: n('perKm'), minPrice: n('minPrice'), commissionPct: n('commissionPct'), roadFactor: n('roadFactor'), geofenceMeters: n('geofenceMeters'),
-          maxCancellations: n('maxCancellations'), minWithdraw: n('minWithdraw'), autoApproveCustomers: f.elements.autoApproveCustomers.checked,
+          maxCancellations: n('maxCancellations'), minWithdraw: n('minWithdraw'), autoApproveCustomers: f.elements.autoApproveCustomers.checked, testPayments: f.elements.testPayments.checked,
           offersEnabled: f.elements.offersEnabled.checked, offerMinPct: n('offerMinPct'), offerMaxPct: n('offerMaxPct'), dispatchRadiusKm: n('dispatchRadiusKm'), dispatchMaxDrivers: n('dispatchMaxDrivers'), prepaidGraceMin: n('prepaidGraceMin'),
           cancelPaidDriverPct: n('cancelPaidDriverPct'), cancelPaidPlatformPct: n('cancelPaidPlatformPct'), cancelHeadingDriverPct: n('cancelHeadingDriverPct'), cancelHeadingPlatformPct: n('cancelHeadingPlatformPct'),
           newDriver: { orders: n('newDriver.orders'), commissionPct: n('newDriver.commissionPct') },

@@ -204,10 +204,10 @@ const ROUTES = {
     const role = body.role;
     if (!['customer', 'driver'].includes(role)) throw new HttpError(400, 'bad_role');
     const phone = phoneOf(body.phone);
-    const nid = String(body.nationalId ?? '').replace(/\D/g, '');
-    if (!/^[23]\d{13}$/.test(nid)) throw new HttpError(400, 'bad_national_id');
+    const nid = role === 'driver' ? String(body.nationalId ?? '').replace(/\D/g, '') : ''; // الرقم القومي للسواق/الشركة بس — العميل مش بيكتبه
+    if (role === 'driver' && !/^[23]\d{13}$/.test(nid)) throw new HttpError(400, 'bad_national_id');
     const name = str(body.name, 2, 80), area = str(body.area ?? '', 0, 60), lang = body.lang === 'en' ? 'en' : 'ar';
-    const refs = { id: fileRef(body.idRef) }, driver = role === 'driver';
+    const driver = role === 'driver', refs = driver ? { id: fileRef(body.idRef) } : {}; // صورة البطاقة للسواق/الشركة بس
     const company = driver && body.accountType === 'company'; // شركة شحن: بتتعامل كسواق، لكن بمستندات الشركة، وسواقينها بيتسجّلوا لاحقاً
     let vehicleType = null, companyName = null;
     if (driver) {
@@ -219,8 +219,9 @@ const ROUTES = {
       } else { refs.license = fileRef(body.licenseRef); refs.vehicleReg = fileRef(body.vehicleRegRef); refs.vehiclePhoto = fileRef(body.vehiclePhotoRef); }
     }
     await ownFiles(env, uid, Object.values(refs));
-    if ((await F.getMany(env, 'blacklist', [`phone_${phone}`, `nid_${nid}`])).some(Boolean)) throw new HttpError(403, 'blacklisted');
-    if ((await F.getMany(env, 'uniq', [`phone_${phone}`, `nid_${nid}`])).some(Boolean)) throw new HttpError(409, 'duplicate');
+    const ids = [`phone_${phone}`, ...(nid ? [`nid_${nid}`] : [])];
+    if ((await F.getMany(env, 'blacklist', ids)).some(Boolean)) throw new HttpError(403, 'blacklisted');
+    if ((await F.getMany(env, 'uniq', ids)).some(Boolean)) throw new HttpError(409, 'duplicate');
     const s = await loadSettings(env);
     const status = role === 'customer' && s.autoApproveCustomers ? 'active' : 'pending';
     // كود الإحالة: مشتق من uid (8 حروف) — يتشاركه المستخدم مع غيره.
@@ -234,13 +235,13 @@ const ROUTES = {
     }
     const writes = [
       F.create(`users/${uid}`, {
-        uid, role, status, status_reason: null, name, phone, email: token.email ?? null, national_id: nid, area, lang, id_ref: refs.id, license_ref: refs.license ?? null,
+        uid, role, status, status_reason: null, name, phone, email: token.email ?? null, national_id: nid || null, area, lang, id_ref: refs.id ?? null, license_ref: refs.license ?? null,
         vehicle_reg_ref: refs.vehicleReg ?? null, vehicle_photo_ref: refs.vehiclePhoto ?? null, vehicle_type: vehicleType, phone_verified: !!token.phone_number,
         account_type: company ? 'company' : 'individual', company_name: companyName, commercial_reg_ref: refs.company ?? null, tax_card_ref: refs.tax ?? null,
         rating_sum: 0, rating_count: 0, completed_orders: 0, cancel_count: 0, reviewed_by: null, reviewed_at: null, created_at: now(),
         referral_code: refCode, referred_by: referrer ? referrer.uid : null,
       }),
-      F.create(`uniq/phone_${phone}`, { uid }), F.create(`uniq/nid_${nid}`, { uid }),
+      F.create(`uniq/phone_${phone}`, { uid }), ...(nid ? [F.create(`uniq/nid_${nid}`, { uid })] : []),
     ];
     if (referrer) writes.push(F.create(`referrals/${uid}`, {
       id: uid, uid, role, referrer: referrer.uid, referrer_role: referrer.role, status: 'pending',
@@ -569,6 +570,27 @@ const ROUTES = {
     const proof = fileRef(c.body.proofRef); await ownFiles(c.env, c.uid, [proof]);
     await F.run(c.env, orderUpdate(c.env, o, { status: 'payment_review', paymentProof: proof, paymentRef: str(c.body.reference ?? '', 0, 40), paymentSubmittedAt: now(), paymentRejectReason: null }, L('payment_review', c.uid)));
     toAdmins(c, 'proof', { no: orderNo(o.id) }, '/#/admin/payments');
+    return { ok: true };
+  },
+
+  // وضع الدفع التجريبي: بيتخطى الدفع الحقيقي بس بيعدّي بنفس مسار الضمان (escrow محجوز → تسليم → العميل يأكد → تحويل للسواق ناقص العمولة).
+  // الأدمن يقفله من الإعدادات. بوابة دفع حقيقية بعدين تستخدم نفس نقطة الدخول دي بعد تأكيد الدفع من البوابة.
+  async 'orders/pay-test'(c) {
+    await need(c, ['customer']);
+    const s = await loadSettings(c.env);
+    if (!s.testPayments) throw new HttpError(403, 'test_payments_off');
+    const o = await loadOrder(c.env, docId(c.body.orderId));
+    if (o.customerId !== c.uid) throw new HttpError(403, 'forbidden');
+    if (o.status !== (o.payMode === 'before' ? 'awaiting_payment' : 'accepted')) throw new HttpError(409, 'bad_state');
+    const pre = o.payMode === 'before', status = pre ? 'open' : 'paid', url = `/#/order/${o.id}`;
+    await F.run(c.env, orderUpdate(c.env, o, { status, escrowStatus: 'held', paidAt: now(), paymentMethod: 'test', paymentConfirmedBy: 'test_mode' }, L(status, c.uid, { note: 'test_payment' })));
+    if (pre) {
+      bg(c, notify(c.env, [o.customerId], 'prepaid_open', { no: orderNo(o.id) }, { url }));
+      bg(c, dispatchNewOrder(c.env, { id: o.id, service: o.service, size: o.size, vehicleClass: o.vehicleClass, passengers: o.passengers, pickup: o.pickup, dropoff: o.dropoff, price: o.price }, s));
+    } else {
+      bg(c, notify(c.env, [o.driverId], 'paid_driver', { no: orderNo(o.id) }, { url }));
+      bg(c, notify(c.env, [o.customerId], 'paid_customer', { no: orderNo(o.id) }, { url }));
+    }
     return { ok: true };
   },
 

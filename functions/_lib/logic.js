@@ -11,6 +11,7 @@ export const DEFAULTS = {
   geofenceMeters: 300,     // أقصى بُعد للسواق عن نقطة الاستلام/التسليم عند تغيير الحالة (0 = تعطيل)
   maxCancellations: 5,     // تجميد الحساب تلقائياً بعد الوصول للعدد ده
   minWithdraw: 100,        // أقل مبلغ سحب
+  testPayments: true, // وضع الدفع التجريبي: العميل يقدر يتخطى الدفع الحقيقي (للتجربة). الأدمن يقفله من الإعدادات قبل الإطلاق.
   autoApproveCustomers: true, // العميل بيتفعّل تلقائياً (الأدمن يقدر يقفلها من الإعدادات)؛ السواق دايماً مراجعة يدوية
   // إلغاء العميل بعد قبول سواق على طلب مدفوع: نسبة تعويض للسواق + نسبة للمنصة، والباقي يرجع للعميل (% من سعر الطلب)
   cancelPaidDriverPct: 10, cancelPaidPlatformPct: 5,          // السواق قبل ولسه ما بدأش الطريق
@@ -76,6 +77,7 @@ export async function loadSettings(env) {
     geofenceMeters: num(d.geofenceMeters, D.geofenceMeters, 0, 100000),
     maxCancellations: num(d.maxCancellations, D.maxCancellations, 1, 1000),
     minWithdraw: num(d.minWithdraw, D.minWithdraw, 1),
+    testPayments: typeof d.testPayments === 'boolean' ? d.testPayments : D.testPayments,
     autoApproveCustomers: typeof d.autoApproveCustomers === 'boolean' ? d.autoApproveCustomers : D.autoApproveCustomers,
     prepaidGraceMin: Math.floor(num(d.prepaidGraceMin, D.prepaidGraceMin, 0, 1440)),
     ...(() => { // نسب الإلغاء: كل مرحلة مجموعها لا يتعدى 100%
@@ -152,6 +154,7 @@ export function sanitizeSettings(b) {
   return {
     perKm: n(b.perKm, 0, 10000), minPrice: n(b.minPrice, 0, 1e6), commissionPct: n(b.commissionPct, 0, 100), roadFactor: n(b.roadFactor, 1, 3),
     geofenceMeters: n(b.geofenceMeters, 0, 100000), maxCancellations: Math.floor(n(b.maxCancellations, 1, 1000)), minWithdraw: Math.floor(n(b.minWithdraw, 1, 1e7)),
+    testPayments: b.testPayments === true,
     autoApproveCustomers: b.autoApproveCustomers === true,
     prepaidGraceMin: Math.floor(n(b.prepaidGraceMin ?? 30, 0, 1440)),
     ...(() => {

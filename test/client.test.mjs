@@ -124,3 +124,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   assert.equal(lines[3], "'+cmd,0"); assert.equal(lines[4], 'عادي,');
 }
 console.log('✅ poll tests passed');
+
+// فحص صور المستندات على الجهاز (دوال نقية)
+const { analyzePixels, judge } = await import('../public/js/docCheck.js');
+const mk = (w, h, f) => { const d = new Uint8ClampedArray(w * h * 4); for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const [r, g, b] = f(x, y), p = (y * w + x) * 4; d[p] = r; d[p + 1] = g; d[p + 2] = b; d[p + 3] = 255; } return analyzePixels(d, w, h); };
+assert.equal(judge(mk(120, 90, () => [20, 20, 20])), 'dark', 'صورة سودا');
+assert.equal(judge(mk(120, 90, () => [250, 250, 250])), 'bright', 'صورة مبهورة');
+assert.equal(judge(mk(120, 90, () => [130, 130, 130])), 'blank', 'لون واحد');
+assert.equal(judge(mk(120, 90, (x) => [x * 2, x * 2, x * 2])), 'blank', 'تدرّج ناعم من غير تفاصيل');
+assert.equal(judge(mk(120, 90, (x, y) => (Math.floor(y / 4) % 2 ? [240, 240, 240] : [40, 40, 40]))), null, 'سطور زي كتابة المستند: مقبولة');
+assert.equal(judge(mk(120, 90, (x, y) => (Math.floor(y / 4) % 2 ? [235, 175, 140] : [140, 85, 60]))), 'selfie', 'لون بشرة طاغي');
+console.log('✅ docCheck tests passed');

@@ -89,7 +89,7 @@ a.waybill:hover { box-shadow: 0 0 0 2px var(--line), var(--shadow); }
 /* ---------- تفاصيل الطلب ---------- */
 .order-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: start; }
 @media (max-width: 900px) { .order-layout { grid-template-columns: 1fr; } .order-layout .map-col { order: -1; } }
-.map { height: 380px; border-radius: 12px; border: 2px solid var(--asphalt); z-index: 1; } .map.tall { height: 520px; } @media (max-width: 900px) { .map, .map.tall { height: 300px; } }
+.map { height: 440px; border-radius: 12px; border: 2px solid var(--asphalt); z-index: 1; } .map.tall { height: 560px; } @media (max-width: 900px) { .map, .map.tall { height: 300px; } }
 .map-col { position: sticky; top: 76px; } @media (max-width: 900px) { .map-col { position: static; } }
 .steps { display: flex; list-style: none; padding: 0; margin: 0 0 1rem; overflow-x: auto; gap: 0; }
 .steps li { flex: 1; min-width: 74px; text-align: center; font-size: .75rem; color: var(--slate); position: relative; padding-top: 22px; }
@@ -113,7 +113,17 @@ th { background: var(--mist); font-weight: 600; white-space: nowrap; } tr:last-c
 
 /* ---------- Pin الخريطة ---------- */
 .pin span { display: block; width: 26px; height: 26px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); border: 3px solid var(--asphalt); background: var(--line); box-shadow: 0 2px 4px rgba(0, 0, 0, .3); }
-.pin-b span { background: var(--asphalt); } .pin-truck span { background: var(--nile); border-radius: 6px; transform: none; border-color: #fff; width: 28px; height: 28px; }
+.pin { position: relative; } .pin span { width: 28px; height: 28px; }
+.pin b { position: absolute; top: 3px; inset-inline-start: 0; width: 30px; text-align: center; color: #fff; font: 700 .85rem/1.2 system-ui, sans-serif; text-shadow: 0 1px 2px rgba(0, 0, 0, .4); }
+.pin-a span { background: #1f9d55; } .pin-b span { background: #d64545; }
+.pin-truck span { background: #fff; border-radius: 50%; transform: none; border: 3px solid var(--nile); width: 34px; height: 34px; display: grid; place-items: center; font-size: 1.3rem; position: relative; z-index: 1; }
+.pin-truck .pulse { position: absolute; inset: -4px; border-radius: 50%; background: rgba(26, 111, 209, .35); animation: pulse 1.8s ease-out infinite; }
+@keyframes pulse { 0% { transform: scale(.6); opacity: .9; } 100% { transform: scale(1.6); opacity: 0; } }
+.pin-tip { background: #fff; border: 2px solid var(--asphalt); border-radius: 6px; font-weight: 700; padding: 2px 8px; box-shadow: 0 2px 6px rgba(0, 0, 0, .25); } .pin-tip::before { display: none; }
+.route-info { display: grid; gap: .5rem; margin-top: .6rem; }
+.legend { display: flex; flex-wrap: wrap; gap: .9rem; font-size: .85rem; } .legend .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-inline-end: .35rem; vertical-align: -1px; } .dot-a { background: #1f9d55; } .dot-b { background: #d64545; }
+.route-chip { background: #eaf2fd; border: 1px solid #b9d3f5; border-radius: 8px; padding: .45rem .7rem; font-size: .95rem; }
+.map-btns { gap: .5rem; flex-wrap: wrap; }
 
 /* ---------- Modal / Toast ---------- */
 .modal-bg { position: fixed; inset: 0; background: rgba(30, 42, 58, .6); display: grid; place-items: center; z-index: 2000; padding: 1rem; overflow-y: auto; }
