@@ -30,15 +30,16 @@ function overview(body) {
   return gpoll(['orders', 'users', 'refunds'], () => api('admin/stats'), 120000, (s) => {
     const days = [...Array(14)].map((_, i) => { const d = new Date(); d.setDate(d.getDate() - (13 - i)); return d.toLocaleDateString('en-CA'); }); // YYYY-MM-DD
     const per = Object.fromEntries(s.perDay.map((x) => [x.d, x.n]));
-    const perDay = days.map((d) => per[d] || 0), mx = Math.max(1, ...perDay), T = s.totals;
+    const perDay = days.map((d) => per[d] || 0), mx = Math.max(1, ...perDay), T = s.totals, money = (n) => (n == null ? '—' : fmtMoney(n));
     render(body, html`<div class="stack">
+      ${(s.warnings || []).length ? html`<div class="action warn"><b>${t('admin.indexMissing')}</b><p class="hint">${t('admin.indexMissingHint')}</p>${s.warnings.map((w) => { const url = (w.detail.match(/https?:\/\/\S+/) || [])[0]; return html`<p class="small" dir="ltr" style="word-break:break-all">${w.what}: ${url ? html`<a href="${url}" target="_blank" rel="noopener">${url}</a>` : w.detail}</p>`; })}</div>` : ''}
       <div class="tiles">
         <div class="tile"><b>${T.total}</b><span>${t('admin.ordersTotal')}</span></div>
         <div class="tile"><b>${T.active}</b><span>${t('admin.ordersActive')}</span></div>
-        <div class="tile"><b>${fmtMoney(T.revenue)}</b><span>${t('admin.revenue')}</span></div>
-        <div class="tile"><b>${fmtMoney(T.commission)}</b><span>${t('admin.commissions')}</span></div>
-        <div class="tile"><b>${fmtMoney(T.held)}</b><span>${t('admin.escrowHeld')}</span></div>
-        <div class="tile"><b>${fmtMoney(s.refundsDue)}</b><span>${t('admin.refundsDue')}</span></div>
+        <div class="tile"><b>${money(T.revenue)}</b><span>${t('admin.revenue')}</span></div>
+        <div class="tile"><b>${money(T.commission)}</b><span>${t('admin.commissions')}</span></div>
+        <div class="tile"><b>${money(T.held)}</b><span>${t('admin.escrowHeld')}</span></div>
+        <div class="tile"><b>${money(s.refundsDue)}</b><span>${t('admin.refundsDue')}</span></div>
         <div class="tile"><b>${s.activeDrivers}</b><span>${t('admin.activeDrivers')}</span></div>
         <div class="tile"><b>${s.activeCustomers}</b><span>${t('admin.activeCustomers')}</span></div>
       </div>

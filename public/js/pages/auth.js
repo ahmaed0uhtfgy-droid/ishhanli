@@ -15,7 +15,7 @@ async function googleSignIn(btn, errEl) {
     const provider = new GoogleAuthProvider(); provider.setCustomParameters({ prompt: 'select_account' });
     try {
       await signInWithPopup(auth, provider);
-      api('auth/login').catch(() => {});
+      api('me').then((r) => r.profile && api('auth/login')).catch(() => {}); // حساب جوجل الجديد ملوش ملف لسه: مفيش تسجيل دخول
     } catch (er) {
       if (er?.code === 'auth/popup-blocked') { await signInWithRedirect(auth, provider); return; }
       if (er?.code === 'auth/popup-closed-by-user' || er?.code === 'auth/cancelled-popup-request') return; // المستخدم قفل النافذة: مش خطأ
