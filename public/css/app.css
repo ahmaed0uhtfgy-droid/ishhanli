@@ -200,3 +200,6 @@ details.card > summary { cursor: pointer; list-style: none; } details.card > sum
 }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+.nav a.nav-admin { border: 2px solid var(--yellow, #f5b800); border-radius: 8px; padding-inline: .7rem; font-weight: 700; }
+.nav a.nav-admin.on { background: var(--yellow, #f5b800); color: #1e2a3a; }

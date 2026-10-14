@@ -381,8 +381,11 @@ function settings(body) {
       <div class="grid-3">${num('offerMinPct', 'offerMin', 1, 10)}${num('offerMaxPct', 'offerMax', 1, 100)}${num('dispatchRadiusKm', 'dispatchRadius', 1, 1)}</div>
       <div class="grid-3">${num('dispatchMaxDrivers', 'dispatchMax', 1, 1)}${num('prepaidGraceMin', 'prepaidGrace', 1, 0)}</div>
       <label class="row"><input type="checkbox" name="offersEnabled" ${S.offersEnabled !== false ? 'checked' : ''}> <span>${t('admin.s.offersEnabled')}</span></label>
-      <label class="row"><input type="checkbox" name="testPayments" ${S.testPayments ? 'checked' : ''}> <span>${t('admin.s.testPayments')}</span></label>
+      <label class="row"><input type="checkbox" name="testPayments" ${S.testPayments ? 'checked' : ''}> <span>${t('admin.s.testPayments')}</span></label>${S.testPaymentsAllowed ? '' : html`<p class="hint">${t('admin.s.testNeedsEnv')}</p>`}
       <label class="row"><input type="checkbox" name="autoApproveCustomers" ${S.autoApproveCustomers ? 'checked' : ''}> <span>${t('admin.s.autoApprove')}</span></label></div>
+    <div class="card stack"><h3>${t('admin.company.title')}</h3><p class="hint">${t('admin.company.hint')}</p>
+      ${['name', 'phone', 'whatsapp', 'email', 'address', 'hours', 'facebook', 'instagram', 'tiktok', 'youtube'].map((k) => html`<label class="f">${t('admin.company.' + k)}<input name="company.${k}" maxlength="160" ${['phone', 'whatsapp', 'email', 'facebook', 'instagram', 'tiktok', 'youtube'].includes(k) ? 'dir="ltr"' : ''} value="${S.company?.[k] || ''}"></label>`)}
+      <label class="f">${t('admin.company.about')}<textarea name="company.about" rows="4" maxlength="800">${S.company?.about || ''}</textarea></label></div>
     <div class="card stack"><h3>${t('admin.instapay')}</h3><div class="grid-2"><label class="f">${t('admin.s.handle')}<input name="instapay.handle" dir="ltr" value="${S.instapay?.handle || ''}"></label><label class="f">${t('admin.s.holder')}<input name="instapay.name" value="${S.instapay?.name || ''}"></label></div></div>
     <div class="card stack"><h3>${t('admin.profileEdit')}</h3><p class="hint">${t('admin.profileEditHint')}</p>
       <label class="row"><input type="checkbox" name="profileEditEnabled" ${S.profileEditEnabled !== false ? 'checked' : ''}> <span>${t('admin.s.profileEditEnabled')}</span></label>
@@ -419,6 +422,7 @@ function settings(body) {
           cancelPaidDriverPct: n('cancelPaidDriverPct'), cancelPaidPlatformPct: n('cancelPaidPlatformPct'), cancelHeadingDriverPct: n('cancelHeadingDriverPct'), cancelHeadingPlatformPct: n('cancelHeadingPlatformPct'),
           newDriver: { orders: n('newDriver.orders'), commissionPct: n('newDriver.commissionPct') },
           instapay: { handle: f.elements['instapay.handle'].value.trim(), name: f.elements['instapay.name'].value.trim() },
+          company: Object.fromEntries(['name', 'about', 'phone', 'whatsapp', 'email', 'address', 'hours', 'facebook', 'instagram', 'tiktok', 'youtube'].map((k) => [k, f.elements['company.' + k].value.trim()])),
           categories: readKv('categories'), sizes: readKv('sizes'),
           passengersEnabled: f.elements.passengersEnabled.checked, passengerClasses: readKv('passengerClasses'),
           levelDiscountPct: { trusted: n('levelDiscountPct.trusted'), pro: n('levelDiscountPct.pro'), elite: n('levelDiscountPct.elite') },

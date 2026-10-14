@@ -3,7 +3,11 @@ import { F } from './db.js';
 import { trustOf } from './trust.js';
 
 // القيم الافتراضية (أرقام تجريبية — الأدمن بيعدّلها من لوحة التحكم ولا تحتاج تعديل كود)
+// بيانات الشركة اللي بتظهر في الصفحة الرئيسية العامة (الأدمن يعدّلها من الإعدادات)
+export const COMPANY_KEYS = ['name', 'about', 'phone', 'whatsapp', 'email', 'address', 'hours', 'facebook', 'instagram', 'tiktok', 'youtube'];
+const COMPANY_DEFAULT = { name: 'اشحنلي', about: '', phone: '', whatsapp: '', email: '', address: '', hours: '', facebook: '', instagram: '', tiktok: '', youtube: '' };
 export const DEFAULTS = {
+  company: COMPANY_DEFAULT,
   perKm: 10,               // جنيه لكل كيلومتر
   minPrice: 150,           // حد أدنى للسعر
   commissionPct: 12,       // عمولة الموقع %
@@ -89,6 +93,7 @@ export async function loadSettings(env) {
     dispatchRadiusKm: num(d.dispatchRadiusKm, D.dispatchRadiusKm, 1, 500), dispatchMaxDrivers: Math.floor(num(d.dispatchMaxDrivers, D.dispatchMaxDrivers, 1, 20)),
     newDriver: { orders: num(d.newDriver?.orders, D.newDriver.orders, 0, 1000), commissionPct: num(d.newDriver?.commissionPct, D.newDriver.commissionPct, 0, 100) },
     instapay: { handle: d.instapay?.handle || D.instapay.handle, name: d.instapay?.name || D.instapay.name },
+    company: Object.fromEntries(COMPANY_KEYS.map((k) => [k, typeof d.company?.[k] === 'string' ? d.company[k] : COMPANY_DEFAULT[k]])),
     categories: d.categories && Object.keys(d.categories).length ? d.categories : D.categories,
     sizes: d.sizes && Object.keys(d.sizes).length ? d.sizes : D.sizes,
     passengersEnabled: d.passengersEnabled === true,
@@ -165,6 +170,7 @@ export function sanitizeSettings(b) {
     dispatchRadiusKm: n(b.dispatchRadiusKm, 1, 500), dispatchMaxDrivers: Math.floor(n(b.dispatchMaxDrivers, 1, 20)),
     newDriver: { orders: Math.floor(n(b.newDriver?.orders, 0, 1000)), commissionPct: n(b.newDriver?.commissionPct, 0, 100) },
     instapay: { handle: String(b.instapay?.handle || '').slice(0, 80), name: String(b.instapay?.name || '').slice(0, 80) },
+    company: Object.fromEntries(COMPANY_KEYS.map((k) => [k, String(b.company?.[k] ?? COMPANY_DEFAULT[k]).trim().slice(0, k === 'about' ? 800 : 160)])),
     categories: table(b.categories), sizes: table(b.sizes),
     passengersEnabled: b.passengersEnabled === true, passengerClasses: table(b.passengerClasses ?? DEFAULTS.passengerClasses, true),
     levelDiscountPct: { trusted: n(b.levelDiscountPct?.trusted ?? 0, 0, 50), pro: n(b.levelDiscountPct?.pro ?? 0, 0, 50), elite: n(b.levelDiscountPct?.elite ?? 0, 0, 50) },

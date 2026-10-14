@@ -26,7 +26,7 @@ const stepLabel = (s, o) => { const k = 'pstep.' + s; return isP(o) && t(k) !== 
 const LV = { new: 0, trusted: 1, pro: 2, elite: 3 };
 
 export function renderOrder(el, id) {
-  const role = state.profile.role, uid = state.user.uid;
+  let role = state.profile.role; const uid = state.user.uid; // الأدمن على طلب هو عمله بيتعامل كعميل
   const home = role === 'admin' ? '/admin/orders' : role === 'driver' ? '/driver/jobs' : '/customer';
   render(el, html`<div class="page-head"><h1 id="title">${t('order.title')} ${orderNo(id)}</h1><div class="row"><span id="rlink"></span><a class="btn ghost sm" href="#${home}">${t('common.back')}</a></div></div>
     <div class="order-layout"><div class="stack"><div class="stack" id="left">${spinner()}</div><div id="chat"></div></div>
@@ -137,7 +137,7 @@ export function renderOrder(el, id) {
           <label class="f" style="margin-top:.8rem">${t('order.proof')}<input type="file" id="proof" accept="image/*"></label>
           <label class="f" style="margin-top:.5rem">${t('order.payRef')}<input id="payref" maxlength="40"></label>
           <div class="row" style="margin-top:.8rem"><button class="btn primary grow" data-act="pay">${t('order.sendProof')}</button><button class="btn ghost sm" data-act="cancel">${t('order.cancel')}</button></div>
-          ${state.settings.testPayments ? html`<div class="action warn" style="margin-top:.8rem"><p class="small">${t('order.testBanner')}</p><button class="btn ok block" data-act="payTest">${t('order.payTest')}</button></div>` : ''}</div>`;
+          ${state.settings.testPayments && state.settings.testPaymentsAllowed ? html`<div class="action warn" style="margin-top:.8rem"><p class="small">${t('order.testBanner')}</p><button class="btn ok block" data-act="payTest">${t('order.payTest')}</button></div>` : ''}</div>`;
       }
       if (s === 'payment_review') return html`<div class="action info">${t('order.reviewing')}</div>`;
       if (HELD.includes(s) && s !== 'delivered') return html`<div class="action info"><p>${t('order.held')}</p><div class="row">${dispute}${['paid', 'heading_pickup'].includes(s) && o.escrowStatus === 'held' ? html`<button class="btn ghost sm" data-act="cancel">${t('order.cancelFee')}</button>` : ''}</div></div>`;
@@ -278,6 +278,7 @@ export function renderOrder(el, id) {
   }
 
   function paint(o) {
+    role = state.profile.role === 'admin' && o.customerId === uid ? 'customer' : state.profile.role; // الأدمن على طلب هو عمله بيتعامل كعميل
     render($('#title', el), html`${t('order.title')} ${orderNo(o.id)} ${stamp(o.status, o.service)}`);
     render($('#rlink', el), RECEIPT_STATUS.includes(o.status) ? html`<a class="btn ghost sm" href="#/receipt/${o.id}">${t('receipt.open')}</a>` : '');
     render(left, html`${stepsHtml(o)}<div id="actions">${actionsHtml(o)}${handlerHtml(o)}</div>${safetyHtml(o)}${detailsHtml(o)}`);

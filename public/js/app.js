@@ -18,7 +18,7 @@ import { initErrorReporting } from './report.js';
 
 let view = $('#view');
 const landing = $('#landing'), topbar = $('#topbar');
-const HOME = { customer: '/customer', driver: '/driver', admin: '/admin' };
+const HOME = { customer: '/customer', driver: '/driver', admin: '/customer' }; // الأدمن بيدخل كمستخدم عادي، وزرار «لوحة التحكم» في الشريط يوديه للأدمن
 const LOGO = '<svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#f5b800"/><path d="M6 24 26 8" stroke="#1e2a3a" stroke-width="4" stroke-dasharray="5 4" stroke-linecap="round"/></svg>';
 let cleanup = null;
 
@@ -58,12 +58,12 @@ function renderTopbar() {
   const p = state.profile, here = location.hash.split('?')[0] || '#/';
   const roleLinks = !p ? [] : p.role === 'customer' ? [['/customer', 'nav.myOrders'], ['/customer/new', 'nav.newOrder']]
     : p.role === 'driver' ? [['/driver', 'nav.available'], ['/driver/jobs', 'nav.jobs'], ['/driver/wallet', 'nav.wallet']]
-      : p.role === 'admin' ? [['/admin', 'nav.admin']] : [];
-  const links = p ? [...roleLinks, ['/account', 'nav.account']] : [];
+      : p.role === 'admin' ? [['/customer', 'nav.myOrders'], ['/customer/new', 'nav.newOrder'], ['/admin', 'nav.admin']] : [];
+  const links = [...roleLinks, ...(p ? [['/account', 'nav.account']] : []), ['/about', 'nav.about']];
   const showBell = p && (p.status === 'active' || p.role === 'admin') && pushSupport() === 'default';
   render(topbar, html`<div class="wrap">
     <a class="brand" href="#/">${raw(LOGO)}<span>${t('brand')}</span></a>
-    <nav class="nav" aria-label="main">${links.map(([href, k]) => html`<a href="#${href}" class="${here === '#' + href || (href === '/admin' && here.startsWith('#/admin')) ? 'on' : ''}">${t(k)}</a>`)}</nav>
+    <nav class="nav" aria-label="main">${links.map(([href, k]) => html`<a href="#${href}" class="${here === '#' + href || (href === '/admin' && here.startsWith('#/admin')) ? 'on' : ''}${href === '/admin' ? ' nav-admin' : ''}">${t(k)}</a>`)}</nav>
     <span class="grow"></span>
     ${p ? html`<span class="who">${p.name}</span>` : ''}
     ${showBell ? html`<button class="btn ghost sm" id="bell" type="button">${t('push.enable')}</button>` : ''}
@@ -90,6 +90,26 @@ async function loadSettings() {
 }
 window.addEventListener('app:settings', loadSettings);
 
+// بيانات الشركة في الصفحة الرئيسية العامة (من غير تسجيل دخول): بتتجاب من /api/about وبتتعرض للحقول المملوءة بس
+let company = null;
+async function fillCompany() {
+  const box = document.getElementById('companyInfo'); if (!box) return;
+  if (!company) { try { company = (await (await fetch('/api/about')).json()).company || {}; } catch { company = {}; } }
+  const c = company, about = document.getElementById('aboutText');
+  if (about && c.about) { about.removeAttribute('data-i18n'); about.textContent = c.about; } // نبذة الأدمن بتحل محل الافتراضي
+  const digits = (s) => String(s || '').replace(/[^0-9+]/g, ''), https = (s) => (/^https:\/\/\S+$/i.test(String(s || '').trim()) ? String(s).trim() : '');
+  const rows = [
+    c.phone && [t('landing.cPhone'), html`<a href="tel:${digits(c.phone)}" dir="ltr">${c.phone}</a>`],
+    c.whatsapp && [t('landing.cWhats'), html`<a href="https://wa.me/${digits(c.whatsapp).replace('+', '')}" target="_blank" rel="noopener" dir="ltr">${c.whatsapp}</a>`],
+    c.email && [t('landing.cEmail'), html`<a href="mailto:${c.email}" dir="ltr">${c.email}</a>`],
+    c.address && [t('landing.cAddress'), c.address],
+    c.hours && [t('landing.cHours'), c.hours],
+  ].filter(Boolean);
+  const social = [['Facebook', c.facebook], ['Instagram', c.instagram], ['TikTok', c.tiktok], ['YouTube', c.youtube]].filter(([, u]) => https(u));
+  render(box, rows.length || social.length ? html`<dl class="kv">${rows.map(([k, v]) => html`<dt>${k}</dt><dd>${v}</dd>`)}
+    ${social.length ? html`<dt>${t('landing.cFollow')}</dt><dd class="row wrap" style="gap:.75rem">${social.map(([n, u]) => html`<a href="${https(u)}" target="_blank" rel="noopener">${n}</a>`)}</dd>` : ''}</dl>` : html`<p class="hint">${t('landing.contactSoon')}</p>`);
+}
+
 // الملف الشخصي من السيرفر (Polling). بيتحدّث عند الدخول وبعد التسجيل وعند تغيّر حالة الحساب.
 async function loadProfile() {
   try { state.profile = (await api('me')).profile; state.profileError = false; }
@@ -106,8 +126,9 @@ function route() {
   // عنصر <main> جديد في كل تنقّل: بيمسح أي event listeners قديمة تلقائياً
   const show = () => { const v = document.createElement('main'); v.id = 'view'; v.className = 'wrap'; view.replaceWith(v); view = v; landing.hidden = true; window.scrollTo(0, 0); };
 
+  if (a === 'about') { landing.hidden = false; view.hidden = true; fillCompany(); requestAnimationFrame(() => document.getElementById('about')?.scrollIntoView()); return; } // صفحة تعريفية لكل الناس (زائر أو مسجّل)
   if (!state.user) { // زائر
-    if (!a) { landing.hidden = false; view.hidden = true; return; }
+    if (!a) { landing.hidden = false; view.hidden = true; fillCompany(); return; }
     show();
     if (a === 'login') return void (cleanup = renderLogin(view));
     if (a === 'register') return void (cleanup = renderRegister(view, query));
@@ -132,7 +153,7 @@ function route() {
   if (a === 'account') cleanup = renderAccount(view);
   else if (a === 'order' && b) cleanup = renderOrder(view, b);
   else if (a === 'receipt' && b) cleanup = renderReceipt(view, b);
-  else if (a === 'customer' && p.role === 'customer') cleanup = b === 'new' ? renderNewOrder(view) : renderCustomerHome(view);
+  else if (a === 'customer' && (p.role === 'customer' || p.role === 'admin')) cleanup = b === 'new' ? renderNewOrder(view) : renderCustomerHome(view);
   else if (a === 'driver' && p.role === 'driver') cleanup = renderDriver(view, b || 'available');
   else if (a === 'admin' && p.role === 'admin') cleanup = renderAdminGated(view, b || 'overview');
   else if (a === 'terms' || a === 'privacy') cleanup = renderLegal(view, a);

@@ -65,16 +65,20 @@ const dayKey = (t) => new Date(t + 2 * 3600e3).toISOString().slice(0, 10); // ي
 async function need(c, roles, opts = {}) {
   const r = await F.get(c.env, `users/${c.uid}`);
   if (!r) throw new HttpError(403, 'no_profile');
-  if (!roles.includes(r.role)) throw new HttpError(403, 'forbidden');
+  // الأدمن بيستخدم المنصة كمستخدم عادي (عميل) كمان: مسارات العميل بس — مش مسارات السواق ولا صلاحيات الأدمن
+  const asCustomer = r.role === 'admin' && roles.includes('customer') && !roles.includes('admin');
+  if (!roles.includes(r.role) && !asCustomer) throw new HttpError(403, 'forbidden');
   if (r.status !== 'active' && r.role !== 'admin') throw new HttpError(403, 'account_not_active'); // الأدمن مستثنى زي viewer() — الدور بيحمي المسارات
-  // التحقق بخطوتين للأدمن: لو مفعّل، لازم جلسة 2FA سارية (ما عدا شاشات الإعداد نفسها)
-  if (!opts.skip2fa && r.role === 'admin' && r.totp_enabled) {
+  // التحقق بخطوتين للأدمن: لو مفعّل، لازم جلسة 2FA سارية (ما عدا شاشات الإعداد نفسها، واستخدامه كعميل)
+  if (!opts.skip2fa && !asCustomer && r.role === 'admin' && r.totp_enabled) {
     const tk = (c.request?.headers?.get('x-2fa') || '').trim();
     const s = tk ? await F.get(c.env, `admin_2fa/${tk}`) : null;
     if (!s || s.uid !== c.uid || Number(s.exp || 0) < now()) throw new HttpError(403, 'totp_required');
   }
   return userOut(r);
 }
+// حدّ محاولات التحقق بخطوتين (كود 6 أرقام): 8 محاولات كل 10 دقايق للمستخدم — بدونها التخمين محدود بالحد العام بس
+async function totpGate(c) { if (c.env.API_RATE_DISABLED === '1') return; await F.run(c.env, [await rateLimit(c.env, 'totp', c.uid, 600e3, 8, 'too_many_attempts')]); }
 async function needCompany(c) { const u = await need(c, ['driver']); if (u.accountType !== 'company') throw new HttpError(403, 'company_only'); return u; }
 async function viewer(c) { // أي مستخدم مفعّل (أو أدمن) للقراءة
   const u = userOut(await F.get(c.env, `users/${c.uid}`));
@@ -165,7 +169,7 @@ const ROUTES = {
     const r = await F.get(env, STAMP_PATH);
     return { stamp: Object.fromEntries(STAMP_KINDS.map((k) => [k, r?.[k] || 0])) };
   },
-  async settings({ env }) { return { settings: await loadSettings(env) }; },
+  async settings({ env }) { return { settings: { ...(await loadSettings(env)), testPaymentsAllowed: env.ALLOW_TEST_PAYMENTS === '1' } }; }, // الدفع التجريبي لازم يتفعّل كمان من متغيّر Cloudflare (fail-closed)
   async me({ env, uid }) {
     const r = await F.get(env, `users/${uid}`);
     const profile = userOut(r) || null;
@@ -332,7 +336,8 @@ const ROUTES = {
     const u = await viewer(c);
     bg(c, sweepExpired(c.env)); // إنهاء الطلبات المدفوعة مقدماً اللي ماحدش قبلها (واسترجاعها)
     let rows;
-    if (u.role === 'customer') rows = (await F.query(c.env, 'orders', { eq: { customer_id: c.uid }, limit: 100 })).sort(byDesc('created_at'));
+    const mine = u.role === 'customer' || (u.role === 'admin' && c.body.scope === 'mine'); // الأدمن كعميل: طلباته هو بس
+    if (mine) rows = (await F.query(c.env, 'orders', { eq: { customer_id: c.uid }, limit: 100 })).sort(byDesc('created_at'));
     else if (u.role === 'driver') {
       rows = c.body.scope === 'mine'
         ? (await F.query(c.env, 'orders', { eq: { driver_id: c.uid }, limit: 100 })).sort(byDesc('updated_at'))
@@ -343,9 +348,9 @@ const ROUTES = {
         : await F.query(c.env, 'orders', { order: ['created_at', 'desc'], limit: lim });
     }
     const out = rows.map((r) => orderOut(hydrateOrder(r), u, { brief: true }));
-    const q = u.role === 'admin' ? String(c.body.q ?? '').trim().replace(/^#/, '').slice(0, 40).toLowerCase() : ''; // بحث الأدمن: رقم الطلب / اسم أو موبايل العميل أو السواق
+    const q = u.role === 'admin' && !mine ? String(c.body.q ?? '').trim().replace(/^#/, '').slice(0, 40).toLowerCase() : ''; // بحث الأدمن: رقم الطلب / اسم أو موبايل العميل أو السواق
     if (q) { const has = (v) => String(v ?? '').toLowerCase().includes(q); return { orders: out.filter((o) => has(o.id.slice(0, 6)) || has(o.customerName) || has(o.customerPhone) || has(o.driverName) || has(o.driverPhone)) }; }
-    if (u.role === 'customer') { // عدد العروض المعلّقة على كل طلب مفتوح
+    if (mine) { // عدد العروض المعلّقة على كل طلب مفتوح
       const open = out.filter((o) => o.status === 'open').map((o) => o.id);
       if (open.length) {
         const m = {};
@@ -578,7 +583,7 @@ const ROUTES = {
   async 'orders/pay-test'(c) {
     await need(c, ['customer']);
     const s = await loadSettings(c.env);
-    if (!s.testPayments) throw new HttpError(403, 'test_payments_off');
+    if (!s.testPayments || c.env.ALLOW_TEST_PAYMENTS !== '1') throw new HttpError(403, 'test_payments_off'); // مقفول إلا لو الإعداد شغّال + المتغيّر ALLOW_TEST_PAYMENTS=1 على Cloudflare
     const o = await loadOrder(c.env, docId(c.body.orderId));
     if (o.customerId !== c.uid) throw new HttpError(403, 'forbidden');
     if (o.status !== (o.payMode === 'before' ? 'awaiting_payment' : 'accepted')) throw new HttpError(409, 'bad_state');
@@ -865,6 +870,7 @@ const ROUTES = {
     const admin = await need(c, ['admin'], { skip2fa: true });
     const u = await F.get(c.env, `users/${c.uid}`);
     if (!u?.totp_secret) throw new HttpError(400, 'totp_no_setup');
+    await totpGate(c);
     if (!(await verifyTotp(u.totp_secret, c.body.code))) throw new HttpError(400, 'totp_bad_code');
     await F.run(c.env, [
       F.patch(`users/${c.uid}`, { totp_enabled: true, totp_enabled_at: now(), updated_at: now() }, u._ut),
@@ -876,6 +882,7 @@ const ROUTES = {
     const admin = await need(c, ['admin'], { skip2fa: true });
     const u = await F.get(c.env, `users/${c.uid}`);
     if (!u?.totp_enabled) throw new HttpError(400, 'totp_not_enabled');
+    await totpGate(c);
     if (!(await verifyTotp(u.totp_secret, c.body.code))) throw new HttpError(400, 'totp_bad_code');
     await F.run(c.env, [
       F.patch(`users/${c.uid}`, { totp_enabled: false, totp_secret: null, totp_disabled_at: now(), updated_at: now() }, u._ut),
@@ -887,6 +894,7 @@ const ROUTES = {
     await need(c, ['admin'], { skip2fa: true });
     const u = await F.get(c.env, `users/${c.uid}`);
     if (!u?.totp_enabled) throw new HttpError(400, 'totp_not_enabled');
+    await totpGate(c);
     if (!(await verifyTotp(u.totp_secret, c.body.code))) throw new HttpError(400, 'totp_bad_code');
     const token = newId() + newId();
     const exp = now() + 12 * 3600e3;
@@ -1373,6 +1381,9 @@ export async function onRequest({ request, env, params, waitUntil }) {
     route = [].concat(params.route || []).join('/');
     if (request.method === 'GET' && route === 'health') return json(await health(env));
     if (!env.FIREBASE_SERVICE_ACCOUNT) throw new HttpError(500, 'missing_service_account');
+    if (request.method === 'GET' && route === 'about') { // بيانات الشركة للصفحة الرئيسية العامة (من غير تسجيل دخول): الحقول دي بس
+      return new Response(JSON.stringify({ company: (await loadSettings(env)).company }), { headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=120' } });
+    }
     const bearer = (request.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
     const isFileGet = request.method === 'GET' && route.startsWith('files/');
     if (request.method !== 'POST' && !isFileGet) throw new HttpError(405, 'method_not_allowed');
@@ -1392,12 +1403,15 @@ export async function onRequest({ request, env, params, waitUntil }) {
     }
     const handler = Object.hasOwn(ROUTES, route) ? ROUTES[route] : null;
     if (!handler) throw new HttpError(404, 'not_found');
-    const body = await request.json().catch(() => ({}));
+    const rawBody = await request.text(); // سقف حجم الطلب (أكبر طلب مشروع = رفع صورة ~0.9MB)
+    if (rawBody.length > 1_600_000) throw new HttpError(413, 'too_large');
+    let body = {}; try { body = JSON.parse(rawBody || '{}'); } catch { /* جسم فاضي/غلط => {} */ }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) body = {};
     const out = await handler({ env, uid: token.uid, token, body, request, waitUntil });
     bg2(flushMetrics(env));
     return json(out);
   } catch (e) {
-    if (e instanceof HttpError) { bg2(flushMetrics(env)); return json(e.detail ? { error: e.code, detail: e.detail } : { error: e.code }, e.status); }
+    if (e instanceof HttpError) { bg2(flushMetrics(env)); return json(e.detail && route.startsWith('admin/') ? { error: e.code, detail: e.detail } : { error: e.code }, e.status); } // تفاصيل Firestore (رابط الفهرس) للأدمن بس
     console.error(e);
     bg2(recordError(env, { source: 'server', route, uid, status: 500, message: e?.message || String(e), stack: e?.stack }));
     bg2(sentryCapture(env, e, { route, uid }));

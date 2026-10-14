@@ -15,16 +15,18 @@ const fromB64u = (s) => {
 };
 
 export const JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com';
-let jwks = { keys: null, exp: 0 };
+let jwks = { keys: null, exp: 0, last: 0 };
 
 async function verifyKey(kid) {
-  if (!jwks.keys || Date.now() > jwks.exp || !jwks.keys[kid]) {
+  // kid مجهول ما يعيدش الجلب إلا مرة كل 60 ثانية: بدونها أي حد يقدر يبعت توكنات بـ kid عشوائي ويغرق السيرفر/جوجل بطلبات جلب
+  if (!jwks.keys || Date.now() > jwks.exp || (!jwks.keys[kid] && Date.now() - jwks.last > 60e3)) {
+    jwks.last = Date.now();
     const r = await fetch(JWKS_URL);
     if (!r.ok) throw new HttpError(500, 'jwks_fetch_failed');
     const { keys } = await r.json();
     const map = {};
     for (const k of keys) map[k.kid] = await crypto.subtle.importKey('jwk', k, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
-    jwks = { keys: map, exp: Date.now() + 3600e3 };
+    jwks = { keys: map, exp: Date.now() + 3600e3, last: jwks.last };
   }
   return jwks.keys[kid];
 }

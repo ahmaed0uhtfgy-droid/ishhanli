@@ -24,7 +24,7 @@ const FS = makeFirestore(PROJECT);
 const saPair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
 const saPem = '-----BEGIN PRIVATE KEY-----\n' + Buffer.from(await crypto.subtle.exportKey('pkcs8', saPair.privateKey)).toString('base64').match(/.{1,64}/g).join('\n') + '\n-----END PRIVATE KEY-----\n';
 const SA = JSON.stringify({ client_email: 'sa@demo.iam', private_key: saPem, project_id: PROJECT });
-const env = { FIREBASE_PROJECT_ID: PROJECT, FIREBASE_SERVICE_ACCOUNT: SA, SETTINGS_TTL_MS: '0', PUSH_DISABLED: '1', METRICS_DISABLED: '1', API_RATE_DISABLED: '1' }; // الإشعارات والعدّادات متوقفة هنا (envPush بيشغّل الإشعارات)
+const env = { FIREBASE_PROJECT_ID: PROJECT, FIREBASE_SERVICE_ACCOUNT: SA, SETTINGS_TTL_MS: '0', PUSH_DISABLED: '1', METRICS_DISABLED: '1', API_RATE_DISABLED: '1', ALLOW_TEST_PAYMENTS: '1' }; // الإشعارات والعدّادات متوقفة هنا (envPush بيشغّل الإشعارات)
 const envPush = { ...env, PUSH_DISABLED: '0' };
 // مساعدات فحص مباشر لمحتوى القاعدة
 const U = (uid) => FS.get(`users/${uid}`);
@@ -38,11 +38,12 @@ const cancelAll = (cust, statuses, exceptId) => FS.list('orders').filter((o) => 
 const setSched = (id, ms) => FS.patch(`orders/${id}`, { scheduled_at: ms });
 
 // ---- شبكة وهمية: مفاتيح Firebase + OSRM offline ----
+let jwksFetches = 0; // عدّاد جلب مفاتيح التوقيع (اختبار حماية الإغراق بـ kid عشوائي)
 const realFetch = globalThis.fetch;
 const fcm = [], deadTokens = new Set(); // سجل رسائل FCM اللي اتبعتت + أجهزة "ميتة" لاختبار التنضيف
 globalThis.fetch = async (url, init) => {
   url = String(url);
-  if (url === JWKS_URL) return Response.json({ keys: [jwk] });
+  if (url === JWKS_URL) { jwksFetches++; return Response.json({ keys: [jwk] }); }
   if (url.includes('router.project-osrm.org')) throw new Error('offline');
   if (url.startsWith('https://firestore.googleapis.com/')) { const r = await FS.handle(init?.method || 'GET', url, init?.body ? JSON.parse(init.body) : null); return new Response(JSON.stringify(r.body), { status: r.http }); }
   if (url.startsWith('https://oauth2.googleapis.com/token')) return Response.json({ access_token: 'fake-fcm-token', expires_in: 3600 });
@@ -1248,6 +1249,73 @@ console.log('\n— الإلغاء برسوم والبلاغات والطوارئ
   await ok('تسليم', call('drv1', 'orders/status', { orderId: o.id, next: 'delivered', photoRef: await up('drv1', 'handover'), loc: GIZA }));
   const cf = await ok('العميل يأكد الاستلام', call('ptCu', 'orders/confirm', { orderId: o.id }));
   check('المحفظة اتزودت بالصافي والمنصة خدت عمولتها', cf.net > 0 && cf.commission > 0 && wallet('drv1').balance === w0 + cf.net);
+  FS.put('settings/pricing', { v: JSON.stringify({ autoApproveCustomers: false }) });
+}
+
+// ------------------ الأدمن كمستخدم عادي (عميل) + زرار لوحة الأدمن ------------------
+{
+  const mine0 = (await ok('قايمة طلباتي (أدمن)', call('admin1', 'orders/list', { scope: 'mine' }))).orders;
+  check('الأدمن من غير طلبات خاصة بيه', mine0.length === 0);
+  const o = await ok('الأدمن ينشئ طلب كعميل', call('admin1', 'orders/create', { ...base, photos: [await up('admin1', 'cargo')] }));
+  const mine = (await ok('طلباتي بعد الإنشاء', call('admin1', 'orders/list', { scope: 'mine' }))).orders;
+  check('طلباتي = طلبات الأدمن هو بس', mine.length === 1 && mine[0].id === o.id);
+  const all = (await ok('قايمة الأدمن العامة', call('admin1', 'orders/list', {}))).orders;
+  check('القايمة العامة لسه بتعرض كل الطلبات', all.length > 1);
+  await bad('الأدمن مش سواق', call('admin1', 'orders/accept', { orderId: o.id }), 403, 'forbidden');
+  await bad('الأدمن مش سواق: المحفظة', call('admin1', 'wallet'), 403, 'forbidden');
+  await bad('العميل لسه ما يدخلش مسارات الأدمن', call('ptCu', 'admin/stats'), 403, 'forbidden');
+  await bad('السواق لسه ما يدخلش مسارات العميل', call('drv1', 'orders/create', { ...base, photos: [await up('drv1', 'cargo')] }), 403, 'forbidden');
+  await ok('الأدمن يلغي طلبه', call('admin1', 'orders/cancel', { orderId: o.id }));
+}
+
+// ------------------ الصفحة الرئيسية العامة: بيانات الشركة ------------------
+{
+  const about = async () => { const r = await onRequest({ request: new Request('https://x.test/api/about'), env, params: { route: ['about'] } }); return { status: r.status, ...(await r.json()) }; };
+  const a0 = await about();
+  check('/api/about عام من غير توكن وبيرجّع الحقول الافتراضية', a0.status === 200 && a0.company.name === 'اشحنلي' && a0.company.phone === '');
+  const cur = (await call('admin1', 'settings')).settings;
+  await bad('عميل يعدّل بيانات الشركة', call('cust1', 'admin/settings/save', { ...cur, company: { name: 'تجربة' } }), 403);
+  await ok('الأدمن يحفظ بيانات الشركة', call('admin1', 'admin/settings/save', { ...cur, company: { name: 'شركة النيل', about: 'نبذة تجريبية', phone: '01000000000', whatsapp: '+201000000000', email: 'info@example.com', address: 'القاهرة', hours: '9 ص - 5 م', facebook: 'https://facebook.com/x', instagram: '', tiktok: '', youtube: '' } }));
+  const a1 = await about();
+  check('بيانات الشركة اتحفظت وبتظهر للزوار', a1.company.name === 'شركة النيل' && a1.company.phone === '01000000000' && a1.company.facebook === 'https://facebook.com/x');
+  check('/api/about بيرجّع بيانات الشركة بس (من غير أسرار الإعدادات)', Object.keys(a1).sort().join() === 'company,status' && !JSON.stringify(a1).includes('commission'));
+  await ok('طول النبذة محدود', call('admin1', 'admin/settings/save', { ...cur, company: { name: 'ن', about: 'ا'.repeat(2000) } }));
+  check('النبذة اتقصّت لـ 800', (await about()).company.about.length === 800);
+  await ok('نرجّع الإعدادات', call('admin1', 'admin/settings/save', cur));
+}
+
+// ------------------ مراجعة أمنية: حمايات إضافية ------------------
+{
+  // 1) إغراق جلب مفاتيح التوقيع بـ kid عشوائي
+  const good = await idToken('cust1'), [, pl, sg] = good.split('.');
+  const before = jwksFetches;
+  for (let i = 0; i < 5; i++) {
+    const t = b64u(JSON.stringify({ alg: 'RS256', kid: 'zz' + i, typ: 'JWT' })) + '.' + pl + '.' + sg;
+    const r = await onRequest({ request: new Request('https://x.test/api/quote', { method: 'POST', headers: { Authorization: 'Bearer ' + t }, body: '{}' }), env, params: { route: ['quote'] } });
+    assert.equal(r.status, 401); pass++;
+  }
+  check('توكنات بـ kid عشوائي ما بتغرقش جلب المفاتيح (أقصى جلب واحد)', jwksFetches - before <= 1);
+
+  // 2) سقف حجم الطلب
+  const big = await onRequest({ request: new Request('https://x.test/api/quote', { method: 'POST', headers: { Authorization: 'Bearer ' + good }, body: JSON.stringify({ x: 'a'.repeat(2_000_000) }) }), env, params: { route: ['quote'] } });
+  check('طلب أكبر من السقف مرفوض 413', big.status === 413 && (await big.json()).error === 'too_large');
+  const nul = await onRequest({ request: new Request('https://x.test/api/quote', { method: 'POST', headers: { Authorization: 'Bearer ' + good }, body: 'null' }), env, params: { route: ['quote'] } });
+  check('جسم null/غلط ما بيوقعش السيرفر 500', nul.status !== 500);
+
+  // 3) الدفع التجريبي fail-closed: لازم الإعداد + متغيّر ALLOW_TEST_PAYMENTS
+  FS.put('settings/pricing', { v: JSON.stringify({}) });
+  const noEnv = { ...env, ALLOW_TEST_PAYMENTS: undefined };
+  check('الإعدادات بتقول إن الدفع التجريبي غير مسموح من غير المتغيّر', (await call('cust1', 'settings', {}, noEnv)).settings.testPaymentsAllowed === false && (await call('cust1', 'settings')).settings.testPaymentsAllowed === true);
+  const o = await ok('طلب للاختبار', call('ptCu', 'orders/create', { ...base, photos: [await up('ptCu', 'cargo')] }));
+  await ok('السواق يقبل', call('drv1', 'orders/accept', { orderId: o.id }));
+  await bad('الدفع التجريبي مقفول من غير ALLOW_TEST_PAYMENTS', call('ptCu', 'orders/pay-test', { orderId: o.id }, noEnv), 403, 'test_payments_off');
+  await ok('نلغي الطلب', call('ptCu', 'orders/cancel', { orderId: o.id }));
+
+  // 4) حدّ محاولات كود التحقق بخطوتين
+  const env2 = { ...env, API_RATE_DISABLED: '0' };
+  await ok('إعداد 2FA', call('admin1', 'admin/2fa/setup', {}, env2));
+  for (let i = 0; i < 8; i++) await bad(`كود غلط ${i + 1}`, call('admin1', 'admin/2fa/enable', { code: '000000' }, env2), 400, 'totp_bad_code');
+  await bad('المحاولة التاسعة تتحظر', call('admin1', 'admin/2fa/enable', { code: '000000' }, env2), 429, 'too_many_attempts');
   FS.put('settings/pricing', { v: JSON.stringify({ autoApproveCustomers: false }) });
 }
 
