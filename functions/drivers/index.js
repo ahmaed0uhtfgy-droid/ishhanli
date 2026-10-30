@@ -8,10 +8,11 @@ export async function onRequest({ request, env }) {
   const origin = new URL(request.url).origin;
   try {
     if (!env.FIREBASE_SERVICE_ACCOUNT) throw new Error('no_service_account');
-    if (!(await loadSettings(env)).publicProfiles) return Response.redirect(`${origin}/`, 302);
+    const s = await loadSettings(env);
+    if (!s.publicProfiles) return Response.redirect(`${origin}/`, 302);
     // مساواة فقط (بدون فهارس مركّبة)؛ الترتيب في الذاكرة. سقف 300 قراءة، وبنعرض أعلى 60 حسب الرحلات.
     const rows = await F.query(env, 'users', { eq: { role: 'driver', status: 'active' }, limit: 300 });
-    const drivers = rows.map((u) => ({ d: driverPublic(u), t: u.completed_orders || 0 }))
+    const drivers = rows.map((u) => ({ d: driverPublic(u, s), t: u.completed_orders || 0 }))
       .sort((a, b) => (b.t - a.t) || String(a.d.id).localeCompare(String(b.d.id))).slice(0, 60).map((x) => x.d);
     return driversIndexPage(drivers, origin);
   } catch (e) {

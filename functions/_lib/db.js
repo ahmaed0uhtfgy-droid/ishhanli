@@ -34,7 +34,24 @@ export async function rateLimit(env, kind, uid, windowMs, max, code = 'too_many_
   let recent = []; try { recent = JSON.parse(r?.t || '[]'); } catch { /* تالف => نبدأ من الأول */ }
   recent = recent.filter((x) => x > t - windowMs);
   if (recent.length >= max) throw new HttpError(429, code);
-  return F.set(path, { kind, uid, t: JSON.stringify([...recent, t].slice(-max)) });
+  const data = { kind, uid, t: JSON.stringify([...recent, t].slice(-max)) };
+  // شرط ذرّي: لو حد تاني سجّل محاولة بالتوازي بين قراءتنا وكتابتنا الـ commit بيفشل (409) بدل ما الاتنين يعدّوا
+  return r ? F.set(path, data, r._ut) : F.create(path, data);
+}
+
+/** نسخة للاستخدام المستقل: بتسجّل المحاولة في commit لوحدها وبتعيد المحاولة عند التعارض (طلبات متوازية شرعية)،
+ *  ولو فضل التعارض بعد كذا محاولة بتقفل (429) — الفشل هنا آمن. */
+export async function rateTake(env, kind, uid, windowMs, max, code = 'too_many_requests') {
+  // 40 محاولة بتأخير عشوائي متدرّج: ضغطة طلبات متوازية شرعية (20-40 طلب) بتعدّي من غير 429 غلط،
+  // وبرضه الحد صارم (مفيش تخطّي)، والفشل بعد كل المحاولات بيقفل (429).
+  for (let i = 0; i < 40; i++) {
+    try { await F.run(env, [await rateLimit(env, kind, uid, windowMs, max, code)]); return; }
+    catch (e) {
+      if (!(e instanceof HttpError) || e.status !== 409) throw e;
+      await new Promise((r) => setTimeout(r, 3 + Math.random() * 12 * Math.min(i + 1, 8)));
+    }
+  }
+  throw new HttpError(429, code);
 }
 
 // ---------- تحويل الصفوف ----------
@@ -43,7 +60,7 @@ export const userOut = (r) => r && ({
   id: r.uid, uid: r.uid, role: r.role, status: r.status, statusReason: r.status_reason, name: r.name, phone: r.phone, email: r.email,
   nationalId: r.national_id, area: r.area, lang: r.lang, idRef: r.id_ref, licenseRef: r.license_ref, vehicleRegRef: r.vehicle_reg_ref,
   vehiclePhotoRef: r.vehicle_photo_ref, vehicleType: r.vehicle_type, phoneVerified: !!r.phone_verified, ratingSum: r.rating_sum,
-  ratingCount: r.rating_count, completedOrders: r.completed_orders, cancelCount: r.cancel_count, addresses: parseArr(r.addresses),
+  ratingCount: r.rating_count, completedOrders: r.completed_orders, cancelCount: r.cancel_count, latePoints: r.late_points || 0, addresses: parseArr(r.addresses),
   profileEditedAt: r.profile_edited_at || 0, profileEditDays: r.profile_edit_days ?? null, createdAt: r.created_at,
   referralCode: r.referral_code || null, referredBy: r.referred_by || null, totpEnabled: !!r.totp_enabled,
   accountType: r.account_type || 'individual', companyName: r.company_name || null, commercialRegRef: r.commercial_reg_ref || null, taxCardRef: r.tax_card_ref || null,
@@ -99,7 +116,7 @@ export function orderOut(o, viewer, { brief = false } = {}) {
   const { _v, _ut, ...x } = o;
   x.version = _v;
   if (x.handler && viewer.role !== 'admin' && o.driverId !== viewer.uid) { // العميل يشوف اسم/موبايل/لوحة سواق الشركة بس — مش بطاقته ولا رخصته
-    const { name, phone, plate, vehicleType } = x.handler; x.handler = { name, phone, plate, vehicleType };
+    const { name, phone, plate, vehicleType, vehiclePhotoRef } = x.handler; x.handler = { name, phone, plate, vehicleType, vehiclePhotoRef };
   }
   if (viewer.role !== 'admin') delete x.handlerHistory;
   if (viewer.role === 'driver') {

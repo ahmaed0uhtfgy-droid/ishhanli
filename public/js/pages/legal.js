@@ -14,7 +14,7 @@ export function renderLegal(view, which) {
     <div class="card stack legal">
       <p class="small muted">${t('legal.updated')}</p>
       ${keys.map((k, i) => html`<section><h2>${i + 1}. ${t(`legal.${doc}.${k}.t`)}</h2><p>${t(`legal.${doc}.${k}.d`)}</p></section>`)}
-      <p class="small"><a href="#/terms">${t('legal.terms')}</a> · <a href="#/privacy">${t('legal.privacy')}</a></p>
+      <p class="small"><a href="#/rules">${t('footer.rules')}</a> · <a href="#/terms">${t('legal.terms')}</a> · <a href="#/privacy">${t('legal.privacy')}</a></p>
     </div>`);
   return () => {};
 }

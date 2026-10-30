@@ -1,5 +1,6 @@
 // اختبار شامل للسيرفر على Firestore وهمي (test/fake-firestore.mjs: نفس واجهة REST + نفس قيود الفهارس والشروط) — من غير إنترنت.  تشغيل: npm test
 import assert from 'node:assert/strict';
+import { DEFAULTS as __D } from '../functions/_lib/logic.js'; __D.maxActiveJobs = 50; // اختبارات الطلبات القديمة بتشغّل سواق واحد على طلبات كتير؛ حد «شحنة واحدة» متختبر في features.test.mjs
 import { webcrypto as crypto } from 'node:crypto';
 import { onRequest } from '../functions/api/[[route]].js';
 import { JWKS_URL } from '../functions/_lib/core.js';
@@ -58,6 +59,8 @@ globalThis.fetch = async (url, init) => {
 // ---- مساعدات ----
 let pass = 0;
 async function call(uid, route, body = {}, e = env) {
+  // افتراضي الاختبارات: السواق موافق على وصف الشحنة (الاختبار الصريح لـ must_agree بيبعت agree:false)
+  if ((route === 'orders/accept' || route === 'offers/create') && body.agree === undefined) body = { ...body, agree: true };
   const req = new Request(`https://x.test/api/${route}`, { method: 'POST', headers: { Authorization: 'Bearer ' + (await idToken(uid)) }, body: JSON.stringify(body) });
   const bgTasks = [];
   const res = await onRequest({ request: req, env: e, params: { route: route.split('/') }, waitUntil: (p) => bgTasks.push(p) });
@@ -185,7 +188,7 @@ await bad('خارج مصر', call('cust1', 'quote', { pickup: { lat: 48, lng: 2 
 
 // ------------------ دورة طلب كاملة ------------------
 const cargo = await up('cust1', 'cargo');
-const base = { pickup: CAIRO, dropoff: GIZA, category: 'goods', size: 'small', weightKg: 200, photos: [cargo], scheduledAt: new Date(Date.now() + 3600e3).toISOString() };
+const base = { pickup: CAIRO, dropoff: GIZA, category: 'goods', size: 'small', weightKg: 200, description: 'كراتين أدوات منزلية 4 قطع', photos: [cargo], scheduledAt: new Date(Date.now() + 3600e3).toISOString() };
 await bad('صورة شحنة بمرجع مش موجود', call('cust1', 'orders/create', { ...base, photos: ['fs:doesnotexist12345'] }), 400, 'bad_file');
 const { id: oid, price } = await ok('إنشاء طلب', call('cust1', 'orders/create', base));
 assert.equal(price, 150, 'الحد الأدنى للسعر');
@@ -487,11 +490,15 @@ console.log('\n— نظام الثقة —');
 {
   const T = (o) => trustOf({ status: 'active', phone_verified: 0, completed_orders: 0, rating_sum: 0, rating_count: 0, cancel_count: 0, ...o });
   check('سواق جديد', T({}).level === 'new' && T({}).next.level === 'trusted');
-  check('موثوق: 5 رحلات + 3 تقييمات بمتوسط 4', T({ completed_orders: 5, rating_count: 3, rating_sum: 12 }).level === 'trusted');
+  check('موثوق: 3 تقييمات بمتوسط 4 (الرحلات مش شرط)', T({ completed_orders: 5, rating_count: 3, rating_sum: 12 }).level === 'trusted' && T({ rating_count: 3, rating_sum: 12 }).level === 'trusted');
+  check('تقييم واحد 5 نجوم = لسه جديد (حد أدنى لعدد التقييمات)', T({ rating_count: 1, rating_sum: 5 }).level === 'new' && T({ rating_count: 2, rating_sum: 10 }).level === 'new');
   check('متوسط أقل من 4 = لسه جديد', T({ completed_orders: 9, rating_count: 5, rating_sum: 19 }).level === 'new');
   check('رحلات كتير من غير تقييمات كفاية = لسه جديد', T({ completed_orders: 50, rating_count: 2, rating_sum: 10 }).level === 'new');
+  check('المستوى التالي بالنجوم والتقييمات بس', JSON.stringify(T({}).next) === JSON.stringify({ level: 'trusted', ratings: 3, avg: 4 }) && JSON.stringify(T({ rating_count: 3, rating_sum: 12 }).next) === JSON.stringify({ level: 'pro', ratings: 10, avg: 4.5 }));
+  const CUSTOM = { trustRules: { trusted: { avg: 3, ratings: 1 }, pro: { avg: 4, ratings: 5 }, elite: { avg: 4.9, ratings: 50 } } };
+  check('الحدود من إعدادات الأدمن', trustOf({ status: 'active', rating_count: 1, rating_sum: 3 }, CUSTOM).level === 'trusted' && trustOf({ status: 'active', rating_count: 5, rating_sum: 20 }, CUSTOM).level === 'pro' && trustOf({ status: 'active', rating_count: 5, rating_sum: 20 }).level === 'trusted');
   check('محترف', T({ completed_orders: 25, rating_count: 10, rating_sum: 45 }).level === 'pro' && T({ completed_orders: 25, rating_count: 10, rating_sum: 45 }).next.level === 'elite');
-  check('نسبة إلغاء عالية بتنزّل المستوى', T({ completed_orders: 25, rating_count: 10, rating_sum: 45, cancel_count: 3 }).level === 'trusted');
+  check('نسبة الإلغاء مابتأثرش على المستوى (النجوم بس)', T({ completed_orders: 25, rating_count: 10, rating_sum: 45, cancel_count: 3 }).level === 'pro' && T({ completed_orders: 100, rating_count: 25, rating_sum: 121, cancel_count: 60 }).level === 'elite');
   const el = T({ completed_orders: 100, rating_count: 25, rating_sum: 121, cancel_count: 1 });
   check('نخبة + مفيش مستوى تالي', el.level === 'elite' && el.next === null);
   check('شارات: موثّق + الأعلى تقييماً', T({ completed_orders: 30, rating_count: 20, rating_sum: 97 }).badges.includes('top_rated') && T({}).badges.join() === 'verified');

@@ -2,7 +2,7 @@ import { api, poll } from '../api.js';
 import { gpoll } from '../sync.js';
 import { state } from '../state.js';
 import { t } from '../i18n.js';
-import { $, html, render, toast, errMsg, busy, spinner, waybill, stamp, orderNo, fmtMoney, fmtNum, fmtDate, ratingText, label, openModal, trustBadge, printNode, confirmDialog } from '../ui.js';
+import { $, html, render, toast, errMsg, busy, spinner, skeleton, waybill, stamp, orderNo, fmtMoney, fmtNum, fmtDate, ratingText, label, openModal, trustBadge, printNode, confirmDialog } from '../ui.js';
 import { uploadImage } from '../storage.js';
 import { attachDocCheck } from '../docCheck.js';
 import { getPos } from '../geo.js';
@@ -26,7 +26,7 @@ export function renderDriver(el, tab) {
   render(el, html`<div class="page-head"><h1>${t('driver.title')}</h1><span class="muted">${ratingText(state.profile)}</span></div>
     <div id="trust"></div>
     <div id="presence"></div>
-    <nav class="tabs" aria-label="driver">${tabs.map(([k, l]) => html`<a href="#/driver${k === 'available' ? '' : '/' + k}" class="${tab === k ? 'on' : ''}">${t(l)}</a>`)}</nav><div id="body">${spinner()}</div>`);
+    <nav class="tabs" aria-label="driver">${tabs.map(([k, l]) => html`<a href="#/driver${k === 'available' ? '' : '/' + k}" class="${tab === k ? 'on' : ''}">${t(l)}</a>`)}</nav><div id="body">${skeleton(3)}</div>`);
   const body = $('#body', el), stopPresence = presenceBar($('#presence', el));
   const paintTrust = (tr) => render($('#trust', el), tr ? trustCard(tr) : '');
   paintTrust(state.profile.trust);
@@ -38,12 +38,12 @@ export function renderDriver(el, tab) {
 // ---------- مستوى الثقة وتقدّم السواق ----------
 function trustCard(tr) {
   const s = tr.stats, n = tr.next;
-  const req = (name, cur, target, ok) => html`<div class="req ${ok ? 'ok' : ''}"><span>${name}</span><b>${cur} / ${target}</b></div>`;
+  const req = (name, value, ok) => html`<div class="req ${ok ? 'ok' : ''}"><span>${name}</span><b><bdi>${value}</bdi></b></div>`; // bdi: بيمنع قلب الأرقام والرموز في العربي
   return html`<details class="card flat" style="margin-bottom:1rem" ${tr.level === 'new' ? 'open' : ''}>
     <summary class="row"><b>${t('trust.title')}</b> ${trustBadge(tr)}<span class="muted small">${s.trips} ${t('admin.trips')} · ${s.ratingCount ? '★ ' + s.ratingAvg : '—'} · ${t('trust.cancelRate')} ${s.cancelPct}%</span></summary>
     <div style="margin-top:.6rem">${tr.commissionPct != null ? html`<p style="margin:0 0 .5rem">${t('trust.commission')}: <b>${tr.commissionPct}%</b></p><p class="hint">${t('trust.perks')}</p>` : ''}${n ? html`<p class="hint">${t('trust.next')}: <b>${t('trust.level.' + n.level)}</b></p>
-      ${req(t('trust.req.trips'), s.trips, n.trips, s.trips >= n.trips)}${req(t('trust.req.ratings'), s.ratingCount, n.ratings, s.ratingCount >= n.ratings)}
-      ${req(t('trust.req.avg'), s.ratingCount ? s.ratingAvg : '—', n.avg + '+', s.ratingCount > 0 && s.ratingAvg >= n.avg)}${req(t('trust.req.cancel'), s.cancelPct + '%', '≤ ' + n.maxCancelPct + '%', s.cancelPct <= n.maxCancelPct)}` : html`<p>${t('trust.top')}</p>`}</div></details>`;
+      ${req(t('trust.req.ratings'), t('trust.of', { cur: fmtNum(s.ratingCount, 0), target: fmtNum(n.ratings, 0) }), s.ratingCount >= n.ratings)}
+      ${req(t('trust.req.avg'), s.ratingCount ? t('trust.avgNeed', { cur: s.ratingAvg, target: n.avg }) : t('trust.noRatingNeed', { target: n.avg }), s.ratingCount > 0 && s.ratingAvg >= n.avg)}` : html`<p>${t('trust.top')}</p>`}</div></details>`;
 }
 
 // ---------- متاح لاستقبال الطلبات (زي أوبر) ----------
@@ -83,7 +83,7 @@ function newOrderAlert(o) {
     <div class="route"><div class="stop a"><span>${o.pickup?.address || t('order.pickup')}</span></div><i class="road"></i><div class="stop b"><span>${o.dropoff?.address || t('order.dropoff')}</span></div></div>
     <div class="row"><b style="font:700 1.7rem var(--font-display)">${fmtMoney(o.price)}</b><span class="muted grow">${fmtNum(o.distanceKm)} ${t('common.km')} · ${o.service === 'passengers' ? `${label(S.passengerClasses?.[o.vehicleClass], o.vehicleClass)} · ${o.passengers} ${t('order.passengersUnit')}` : `${label(S.sizes?.[o.size], o.size)} · ${fmtNum(o.weightKg, 0)} ${t('common.kg')}`}</span></div>
     <div class="row" style="margin-top:1rem"><button class="btn ghost" data-a="skip">${t('alert.skip')}</button><a class="btn ghost" href="#/order/${o.id}" data-a="view">${t('admin.open')}</a>
-    ${canInstant ? html`<button class="btn primary grow" data-a="accept">${t('order.accept')}</button>` : canOffer ? html`<a class="btn primary grow" href="#/order/${o.id}" data-a="view">${t('offer.propose')}</a>` : ''}</div></div>`);
+    ${canInstant && o.service !== 'passengers' ? html`<a class="btn primary grow" href="#/order/${o.id}" data-a="view">${t('manifest.reviewAgree')}</a>` : canInstant ? html`<button class="btn primary grow" data-a="accept">${t('order.accept')}</button>` : canOffer ? html`<a class="btn primary grow" href="#/order/${o.id}" data-a="view">${t('offer.propose')}</a>` : ''}</div></div>`);
   const done = () => { clearInterval(tick); alertOpen = false; };
   const tick = setInterval(() => {
     if (!el.isConnected) return done(); // اتقفلت بـ Esc أو بالضغط برا
@@ -131,7 +131,7 @@ function jobs(body) {
 }
 
 // ---------- سواقين الشركة: بيانات كاملة لكل سواق (بطاقة/رخصة/لوحة) — عشان لو الشحنة اتلفت أو اتسرقت يبقى معروف مين استلمها ----------
-const FLEET_VEHICLES = ['pickup', 'half_ton', 'truck', 'van', 'car', 'microbus', 'minibus'];
+const FLEET_VEHICLES = ['pickup', 'half_ton', 'truck', 'jumbo', 'van', 'car', 'microbus', 'minibus'];
 function fleet(body) {
   const file = (name, key, req = true) => html`<label class="f">${t(key)}<input type="file" name="${name}" accept="image/*" ${req ? 'required' : ''}></label>`;
   render(body, html`<div class="stack"><div class="card stack"><h3>${t('fleet.addTitle')}</h3><p class="hint">${t('fleet.addHint')}</p>

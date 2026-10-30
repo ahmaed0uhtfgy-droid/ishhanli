@@ -18,8 +18,8 @@ const maskName = (name) => {
 };
 
 /** يحوّل مستند users لكائن عام آمن (مفيش أي بيانات شخصية). */
-export function driverPublic(u) {
-  const tr = trustOf(u);
+export function driverPublic(u, s) {
+  const tr = trustOf(u, s);
   return {
     id: u.uid,
     name: maskName(u.name),
@@ -77,8 +77,8 @@ export async function loadPublicDriver(env, id) {
 }
 
 /** صفحة ملف سواق واحدة. */
-export function driverPage(env, u, origin) {
-  const d = driverPublic(u);
+export function driverPage(env, u, origin, s) {
+  const d = driverPublic(u, s);
   const url = `${origin}/drivers/${d.id}`;
   const title = `${d.name} — سواق ${d.vehicle || ''} على اشحنلي`.trim();
   const desc = `ملف عام للسواق ${d.name}: ${d.vehicle ? 'عربية ' + d.vehicle + '، ' : ''}التقييم ${d.rating || '—'}/5 من ${d.ratings} تقييم، و${d.trips} رحلة مكتملة على منصة اشحنلي.`;

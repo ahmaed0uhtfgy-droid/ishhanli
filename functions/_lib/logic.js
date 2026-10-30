@@ -1,6 +1,6 @@
 import { HttpError } from './core.js';
 import { F } from './db.js';
-import { trustOf } from './trust.js';
+import { trustOf, DEFAULT_TRUST } from './trust.js';
 
 // القيم الافتراضية (أرقام تجريبية — الأدمن بيعدّلها من لوحة التحكم ولا تحتاج تعديل كود)
 // بيانات الشركة اللي بتظهر في الصفحة الرئيسية العامة (الأدمن يعدّلها من الإعدادات)
@@ -14,6 +14,9 @@ export const DEFAULTS = {
   roadFactor: 1.3,         // معامل تقريب المسافة لو خدمة الطرق مش متاحة
   geofenceMeters: 300,     // أقصى بُعد للسواق عن نقطة الاستلام/التسليم عند تغيير الحالة (0 = تعطيل)
   maxCancellations: 5,     // تجميد الحساب تلقائياً بعد الوصول للعدد ده
+  valueGuardOn: false,     // حراسة القيمة (مقفولة افتراضياً): الشحنة اللي قيمتها المعلنة >= valueGuardFrom بتبقى «عالية»: كود تسليم إجباري + مفيش تحرير تلقائي (مفيش قيد على السواقين)
+  valueGuardFrom: 20000,   // حد القيمة المعلنة بالجنيه
+  latePointsLimit: 5,      // عدد نقاط التأخير اللي بعده السواق يظهر للأدمن للمراجعة (حظر أو مسح) — 0 = تعطيل. مفيش تجميد تلقائي ولا تأثير على الثقة/العمولة
   minWithdraw: 100,        // أقل مبلغ سحب
   testPayments: true, // وضع الدفع التجريبي: العميل يقدر يتخطى الدفع الحقيقي (للتجربة). الأدمن يقفله من الإعدادات قبل الإطلاق.
   autoApproveCustomers: true, // العميل بيتفعّل تلقائياً (الأدمن يقدر يقفلها من الإعدادات)؛ السواق دايماً مراجعة يدوية
@@ -22,6 +25,15 @@ export const DEFAULTS = {
   cancelHeadingDriverPct: 30, cancelHeadingPlatformPct: 10,   // السواق في الطريق للاستلام
   prepaidGraceMin: 30,     // طلب مدفوع مقدماً ماحدش قبله: بيتلغي ويتسجّل استرجاع تلقائي بعد ميعاده بالمدة دي (دقايق)
   offersEnabled: true,     // السواق يقدر يقترح سعر مختلف والعميل يقبل/يرفض
+  mismatchCompensation: 0,   // تعويض السواق (جنيه) لو راح يستلم ولقى الشحنة مش زي وصف العميل ورفض يستلمها؛ الباقي بيترد للعميل (0 = من غير تعويض)
+  mismatchMaxPer30d: 3,      // أقصى عدد بلاغات «مش زي الوصف» للسواق في 30 يوم (حماية من إساءة الاستخدام)
+  maxActiveJobs: 1,          // أقصى عدد طلبات شغّالة في نفس الوقت للسواق الفرد (الشركات: سواق واحد من الأسطول لكل طلب)
+  startCode: false,          // كود بداية الرحلة: العميل بيدّيه للسواق وقت التحميل (بيحتاج DELIVERY_CODE_SECRET)
+  avgSpeedKmh: 40,           // متوسط سرعة لتقدير مدة الرحلة
+  deliveryBufferMin: 60,     // وقت إضافي على مدة الرحلة قبل ما الطلب يتعلّم «متأخر»
+  stallMinutes: 30,          // لو السواق واقف بعد الاستلام المدة دي ننبّه العميل (0 = مقفول)
+  deliveryCode: false,     // كود تسليم: العميل بيدّي كود للمستلم والسواق يدخله عند التسليم (بيحتاج سر DELIVERY_CODE_SECRET في Cloudflare)
+  autoReleaseHours: 0,     // تحرير الفلوس تلقائياً للسواق بعد التسليم بالساعات لو العميل ما أكّدش ولا فتح نزاع (0 = مقفول)
   offerMinPct: 70,         // أقل عرض = % من السعر المقترح (وما ينزلش عن الحد الأدنى للسعر)
   offerMaxPct: 200,        // أعلى عرض = % من السعر المقترح
   dispatchRadiusKm: 25,    // نطاق إشعار السواقين المتاحين حول نقطة الاستلام
@@ -45,11 +57,21 @@ export const DEFAULTS = {
     microbus: { ar: 'ميكروباص (حتى 14 راكب)',  en: 'Minibus (up to 14)',     mult: 1.8, seats: 14 },
     minibus:  { ar: 'ميني باص (حتى 28 راكب)',  en: 'Midi bus (up to 28)',    mult: 2.6, seats: 28 },
   },
+  trustRules: DEFAULT_TRUST,                              // شروط مستوى الثقة بالنجوم: متوسط النجوم + أقل عدد تقييمات لكل مستوى
   levelDiscountPct: { trusted: 1, pro: 2, elite: 3 },   // خصم من عمولة الموقع (نقاط مئوية) حسب مستوى ثقة السواق
   sizes: {
     small:  { ar: 'صغير (ربع نقل / سيارة)', en: 'Small (pickup / car)',  mult: 1.0 },
     medium: { ar: 'متوسط (نص نقل)',          en: 'Medium (half-ton)',     mult: 1.4 },
     large:  { ar: 'كبير (نقل ثقيل)',         en: 'Large (heavy truck)',   mult: 2.0 },
+    xlarge: { ar: 'جامبو (حمولة كبيرة جداً)', en: 'Jumbo (extra large load)', mult: 3.0 },
+  },
+  companionAsk: true,      // سؤال العميل في الطلب: هترافق الشحنة ولا لأ؟ (الأدمن يقفله)
+  vehicleGuideOn: true,    // ترشيح العربية المناسبة (اختياري للعميل) حسب وزن الشحنة
+  vehicleGuide: {          // لكل عربية: أقصى وزن بالكجم (0 = متوقفة) والحجم المرتبط بيها (بيحدد السعر). مرتّبة من الأصغر للأكبر
+    pickup:   { maxKg: 800,   size: 'small' },
+    half_ton: { maxKg: 2000,  size: 'medium' },
+    truck:    { maxKg: 8000,  size: 'large' },
+    jumbo:    { maxKg: 50000, size: 'xlarge' },
   },
   // تعديل بيانات الحساب: مرة كل N يوم — الأدمن بيقلّلها/يزوّدها أو يعطّلها، ويقدر يفتح القفل لمستخدم معيّن
   profileEditEnabled: true,
@@ -80,6 +102,8 @@ export async function loadSettings(env) {
     commissionPct: num(d.commissionPct, D.commissionPct, 0, 100), roadFactor: num(d.roadFactor, D.roadFactor, 1, 3),
     geofenceMeters: num(d.geofenceMeters, D.geofenceMeters, 0, 100000),
     maxCancellations: num(d.maxCancellations, D.maxCancellations, 1, 1000),
+    latePointsLimit: Math.floor(num(d.latePointsLimit, D.latePointsLimit, 0, 1000)),
+    valueGuardOn: d.valueGuardOn === true, valueGuardFrom: Math.floor(num(d.valueGuardFrom, D.valueGuardFrom, 1, 1e9)),
     minWithdraw: num(d.minWithdraw, D.minWithdraw, 1),
     testPayments: typeof d.testPayments === 'boolean' ? d.testPayments : D.testPayments,
     autoApproveCustomers: typeof d.autoApproveCustomers === 'boolean' ? d.autoApproveCustomers : D.autoApproveCustomers,
@@ -89,15 +113,22 @@ export async function loadSettings(env) {
       const [pd, pp] = pair('cancelPaidDriverPct', 'cancelPaidPlatformPct'), [hd, hp] = pair('cancelHeadingDriverPct', 'cancelHeadingPlatformPct');
       return { cancelPaidDriverPct: pd, cancelPaidPlatformPct: pp, cancelHeadingDriverPct: hd, cancelHeadingPlatformPct: hp };
     })(),
+    mismatchCompensation: Math.floor(num(d.mismatchCompensation, D.mismatchCompensation, 0, 100000)), mismatchMaxPer30d: Math.floor(num(d.mismatchMaxPer30d, D.mismatchMaxPer30d, 1, 100)),
+    maxActiveJobs: Math.floor(num(d.maxActiveJobs, D.maxActiveJobs, 1, 50)), startCode: d.startCode === true, avgSpeedKmh: num(d.avgSpeedKmh, D.avgSpeedKmh, 10, 120),
+    deliveryBufferMin: Math.floor(num(d.deliveryBufferMin, D.deliveryBufferMin, 0, 1440)), stallMinutes: Math.floor(num(d.stallMinutes, D.stallMinutes, 0, 720)),
+    deliveryCode: d.deliveryCode === true, autoReleaseHours: Math.floor(num(d.autoReleaseHours, D.autoReleaseHours, 0, 720)),
     offersEnabled: d.offersEnabled !== false, offerMinPct: num(d.offerMinPct, D.offerMinPct, 10, 100), offerMaxPct: num(d.offerMaxPct, D.offerMaxPct, 100, 1000),
     dispatchRadiusKm: num(d.dispatchRadiusKm, D.dispatchRadiusKm, 1, 500), dispatchMaxDrivers: Math.floor(num(d.dispatchMaxDrivers, D.dispatchMaxDrivers, 1, 20)),
     newDriver: { orders: num(d.newDriver?.orders, D.newDriver.orders, 0, 1000), commissionPct: num(d.newDriver?.commissionPct, D.newDriver.commissionPct, 0, 100) },
     instapay: { handle: d.instapay?.handle || D.instapay.handle, name: d.instapay?.name || D.instapay.name },
     company: Object.fromEntries(COMPANY_KEYS.map((k) => [k, typeof d.company?.[k] === 'string' ? d.company[k] : COMPANY_DEFAULT[k]])),
     categories: d.categories && Object.keys(d.categories).length ? d.categories : D.categories,
-    sizes: d.sizes && Object.keys(d.sizes).length ? d.sizes : D.sizes,
+    sizes: (() => { const z = d.sizes && Object.keys(d.sizes).length ? d.sizes : D.sizes; return z.xlarge ? z : { ...z, xlarge: D.sizes.xlarge }; })(), // الجامبو حجم أساسي: لو مش متخزّن بيتضاف تلقائياً
+    companionAsk: d.companionAsk !== false, vehicleGuideOn: d.vehicleGuideOn !== false,
+    vehicleGuide: Object.fromEntries(VEHICLE_KEYS.map((k) => [k, { maxKg: Math.floor(num(d.vehicleGuide?.[k]?.maxKg, D.vehicleGuide[k].maxKg, 0, 100000)), size: typeof d.vehicleGuide?.[k]?.size === 'string' ? d.vehicleGuide[k].size : D.vehicleGuide[k].size }])),
     passengersEnabled: d.passengersEnabled === true,
     passengerClasses: d.passengerClasses && Object.keys(d.passengerClasses).length ? d.passengerClasses : D.passengerClasses,
+    trustRules: Object.fromEntries(['trusted', 'pro', 'elite'].map((k) => [k, { avg: num(d.trustRules?.[k]?.avg, D.trustRules[k].avg, 1, 5), ratings: Math.floor(num(d.trustRules?.[k]?.ratings, D.trustRules[k].ratings, 1, 100000)) }])),
     levelDiscountPct: { trusted: num(d.levelDiscountPct?.trusted, D.levelDiscountPct.trusted, 0, 50), pro: num(d.levelDiscountPct?.pro, D.levelDiscountPct.pro, 0, 50), elite: num(d.levelDiscountPct?.elite, D.levelDiscountPct.elite, 0, 50) },
     profileEditEnabled: d.profileEditEnabled !== false,
     profileEditCooldownDays: Math.floor(num(d.profileEditCooldownDays, D.profileEditCooldownDays, 0, 365)),
@@ -158,7 +189,7 @@ export function sanitizeSettings(b) {
   };
   return {
     perKm: n(b.perKm, 0, 10000), minPrice: n(b.minPrice, 0, 1e6), commissionPct: n(b.commissionPct, 0, 100), roadFactor: n(b.roadFactor, 1, 3),
-    geofenceMeters: n(b.geofenceMeters, 0, 100000), maxCancellations: Math.floor(n(b.maxCancellations, 1, 1000)), minWithdraw: Math.floor(n(b.minWithdraw, 1, 1e7)),
+    geofenceMeters: n(b.geofenceMeters, 0, 100000), maxCancellations: Math.floor(n(b.maxCancellations, 1, 1000)), latePointsLimit: Math.floor(n(b.latePointsLimit ?? 5, 0, 1000)), valueGuardOn: b.valueGuardOn === true, valueGuardFrom: Math.floor(n(b.valueGuardFrom ?? 20000, 1, 1e9)), minWithdraw: Math.floor(n(b.minWithdraw, 1, 1e7)),
     testPayments: b.testPayments === true,
     autoApproveCustomers: b.autoApproveCustomers === true,
     prepaidGraceMin: Math.floor(n(b.prepaidGraceMin ?? 30, 0, 1440)),
@@ -166,13 +197,34 @@ export function sanitizeSettings(b) {
       const one = (dk, pk, dd, pd) => { const dp = n(b[dk] ?? dd, 0, 100), pp = n(b[pk] ?? pd, 0, 100); if (dp + pp > 100) throw bad(); return { [dk]: dp, [pk]: pp }; };
       return { ...one('cancelPaidDriverPct', 'cancelPaidPlatformPct', 10, 5), ...one('cancelHeadingDriverPct', 'cancelHeadingPlatformPct', 30, 10) };
     })(),
+    mismatchCompensation: Math.floor(n(b.mismatchCompensation ?? 0, 0, 100000)), mismatchMaxPer30d: Math.floor(n(b.mismatchMaxPer30d ?? 3, 1, 100)),
+    maxActiveJobs: Math.floor(n(b.maxActiveJobs ?? 1, 1, 50)), startCode: b.startCode === true, avgSpeedKmh: n(b.avgSpeedKmh ?? 40, 10, 120),
+    deliveryBufferMin: Math.floor(n(b.deliveryBufferMin ?? 60, 0, 1440)), stallMinutes: Math.floor(n(b.stallMinutes ?? 30, 0, 720)),
+    deliveryCode: b.deliveryCode === true, autoReleaseHours: Math.floor(n(b.autoReleaseHours ?? 0, 0, 720)),
     offersEnabled: b.offersEnabled !== false, offerMinPct: n(b.offerMinPct, 10, 100), offerMaxPct: n(b.offerMaxPct, 100, 1000),
     dispatchRadiusKm: n(b.dispatchRadiusKm, 1, 500), dispatchMaxDrivers: Math.floor(n(b.dispatchMaxDrivers, 1, 20)),
     newDriver: { orders: Math.floor(n(b.newDriver?.orders, 0, 1000)), commissionPct: n(b.newDriver?.commissionPct, 0, 100) },
     instapay: { handle: String(b.instapay?.handle || '').slice(0, 80), name: String(b.instapay?.name || '').slice(0, 80) },
     company: Object.fromEntries(COMPANY_KEYS.map((k) => [k, String(b.company?.[k] ?? COMPANY_DEFAULT[k]).trim().slice(0, k === 'about' ? 800 : 160)])),
     categories: table(b.categories), sizes: table(b.sizes),
+    companionAsk: b.companionAsk !== false, vehicleGuideOn: b.vehicleGuideOn !== false,
+    vehicleGuide: (() => { // أقصى وزن لكل عربية (0 = متوقفة)، الأوزان المفعّلة لازم تتصاعد، والحجم لازم يكون موجود في جدول الأحجام
+      const g = b.vehicleGuide ?? DEFAULTS.vehicleGuide, sizes = table(b.sizes), r = {}; let last = 0;
+      for (const k of VEHICLE_KEYS) {
+        const kg = Math.floor(n(g?.[k]?.maxKg, 0, 100000)), size = String(g?.[k]?.size ?? '');
+        if (!sizes[size]) throw bad();
+        if (kg > 0) { if (kg <= last) throw bad(); last = kg; }
+        r[k] = { maxKg: kg, size };
+      }
+      return r;
+    })(),
     passengersEnabled: b.passengersEnabled === true, passengerClasses: table(b.passengerClasses ?? DEFAULTS.passengerClasses, true),
+    trustRules: (() => { // النجوم وعدد التقييمات لكل مستوى، ومرتّبين (النخبة >= المحترف >= الموثوق) عشان المستويات تفضل منطقية
+      const t = b.trustRules ?? DEFAULTS.trustRules, r = {};
+      for (const k of ['trusted', 'pro', 'elite']) r[k] = { avg: n(t?.[k]?.avg, 1, 5), ratings: Math.floor(n(t?.[k]?.ratings, 1, 100000)) };
+      if (!(r.trusted.avg <= r.pro.avg && r.pro.avg <= r.elite.avg && r.trusted.ratings <= r.pro.ratings && r.pro.ratings <= r.elite.ratings)) throw bad();
+      return r;
+    })(),
     levelDiscountPct: { trusted: n(b.levelDiscountPct?.trusted ?? 0, 0, 50), pro: n(b.levelDiscountPct?.pro ?? 0, 0, 50), elite: n(b.levelDiscountPct?.elite ?? 0, 0, 50) },
     profileEditEnabled: b.profileEditEnabled !== false, profileEditCooldownDays: Math.floor(n(b.profileEditCooldownDays ?? 15, 0, 365)),
     publicProfiles: b.publicProfiles === true,
@@ -183,7 +235,8 @@ export function sanitizeSettings(b) {
 }
 
 // العربية تخدم إيه؟ (بضاعة حسب الحجم، أو ركاب حسب فئة العربية). أي حجم/فئة مخصصة من الأدمن = مسموح.
-const CARGO_CAP = { car: ['small'], van: ['small'], microbus: ['small'], minibus: [], pickup: ['small'], half_ton: ['small', 'medium'], truck: ['small', 'medium', 'large'] };
+export const VEHICLE_KEYS = ['pickup', 'half_ton', 'truck', 'jumbo']; // عربيات البضاعة اللي بيرشّحها النظام (من الأصغر للأكبر)
+const CARGO_CAP = { car: ['small'], van: ['small'], microbus: ['small'], minibus: [], pickup: ['small'], half_ton: ['small', 'medium'], truck: ['small', 'medium', 'large', 'xlarge'], jumbo: ['small', 'medium', 'large', 'xlarge'] };
 const PAX_CAP = { car: ['car'], van: ['car', 'van'], microbus: ['car', 'van', 'microbus'], minibus: ['car', 'van', 'microbus', 'minibus'] };
 export function canServe(vehicleType, o) {
   if (o.service === 'passengers') {
@@ -191,7 +244,7 @@ export function canServe(vehicleType, o) {
     return !!cap && (!['car', 'van', 'microbus', 'minibus'].includes(o.vehicleClass) || cap.includes(o.vehicleClass));
   }
   const cap = CARGO_CAP[vehicleType];
-  return !cap || !['small', 'medium', 'large'].includes(o.size) || cap.includes(o.size);
+  return !cap || !['small', 'medium', 'large', 'xlarge'].includes(o.size) || cap.includes(o.size);
 }
 
 /** سعر رحلة الركاب = سعر الكيلومتر × المسافة × معامل فئة العربية (بحد أدنى) */
@@ -207,7 +260,7 @@ export function calcPassengerPrice(s, km, vehicleClass) {
  * driverRow = مستند users (بنفس أسماء الأعمدة snake_case).
  */
 export function effectiveCommissionPct(s, basePct, driverRow) {
-  let pct = Math.max(0, basePct - (s.levelDiscountPct[trustOf(driverRow || {}).level] || 0));
+  let pct = Math.max(0, basePct - (s.levelDiscountPct[trustOf(driverRow || {}, s).level] || 0));
   if ((driverRow?.completed_orders || 0) < s.newDriver.orders) pct = Math.min(pct, s.newDriver.commissionPct);
   return pct;
 }
@@ -232,4 +285,38 @@ export function couponDiscount(coupon, price, nowMs = Date.now()) {
   let d = coupon.type === 'percent' ? Math.round((price * Number(coupon.value || 0)) / 100) : Math.round(Number(coupon.value || 0));
   if (coupon.max_discount > 0) d = Math.min(d, coupon.max_discount);
   return Math.max(0, Math.min(d, price));
+}
+
+// ---------- تتبّع مواعيد الاستلام/التسليم (اختياري: العميل بيكتب «مدة التأخير المسموح» في الطلب) ----------
+// الميعاد الفعلي = اللي العميل وافق عليه بعد اقتراح السواق، وإلا اللي العميل كتبه أصلاً. من غير مدة (graceMin) مفيش تتبّع.
+export const dueOf = (o, kind) => (kind === 'pickup' ? (o.agreed?.pickupAt ?? o.scheduledAt ?? null) : (o.agreed?.deliveryAt ?? o.deliveryAt ?? null));
+/** أنهي مواعيد (استلام/تسليم) اتأخر فيها السواق ولسه ماتسألش العميل عنها. `t` = الوقت الحالي. بترجّع [] لو مفيش تتبّع أو مفيش تأخير. */
+export function lateKinds(o, t) {
+  if (o.graceMin == null || !o.driverId) return [];
+  // السواق ملزَم من أحدث وقت بين: قبوله، وتأكيد الدفع، وموافقة العميل على المواعيد — لو التزم بعد ما الميعاد فات أصلاً مش ذنبه
+  const commit = Math.max(o.acceptedAt || 0, o.paidAt || 0, o.agreed?.at || 0), out = [];
+  for (const kind of ['pickup', 'delivery']) {
+    if (o.lateMarks?.[kind]) continue; // اتسأل/اتحسم قبل كده: مرة واحدة لكل ميعاد
+    const due = dueOf(o, kind); if (!due) continue;
+    const limit = due + o.graceMin * 60000;
+    if (commit > limit) continue;
+    const actual = kind === 'pickup' ? o.pickedUpAt : o.deliveredAt; // لو حصل فعلاً بنحاسب على وقته الحقيقي
+    const waiting = kind === 'pickup' ? ['paid', 'heading_pickup'].includes(o.status) : ['paid', 'heading_pickup', 'picked_up', 'in_transit'].includes(o.status);
+    const at = actual || (waiting ? t : null);
+    if (at != null && at > limit) out.push(kind);
+  }
+  return out;
+}
+
+// ---------- حراسة القيمة (مفعّلة من الأدمن) ----------
+// فوق حد القيمة المعلنة الشحنة بتبقى «عالية»: كود التسليم إجباري للطلب ده + مفيش تحرير تلقائي. أي سواق يقدر يشوفها ويقبلها (مفيش قيد على السواقين).
+// المستوى بيتحسب مرة عند الإنشاء وبيتخزّن في الطلب، فتغيير الحد بعدها مابيأثرش على طلبات شغّالة.
+export const guardOf = (s, declaredValue) => (s.valueGuardOn === true && Number(declaredValue) >= s.valueGuardFrom ? 'high' : null);
+
+
+/** ترشيح العربية: أول عربية مفعّلة وزنها يكفي، ولو الوزن أكبر من الكل يترشّح أكبر عربية مفعّلة. null لو مفيش عربية مفعّلة. */
+export function recommendVehicle(guide, weightKg) {
+  const on = VEHICLE_KEYS.filter((k) => guide?.[k]?.maxKg > 0), kg = Number(weightKg);
+  if (!on.length) return null;
+  return (Number.isFinite(kg) && kg > 0 && on.find((k) => kg <= guide[k].maxKg)) || on[on.length - 1];
 }

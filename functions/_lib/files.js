@@ -1,7 +1,7 @@
 // تخزين الصور في Firestore (مستند لكل صورة: بيانات الوصول + المحتوى base64). الصور بتتضغط في المتصفح (~60-120KB)
 // فمفيش حاجة محتاجة Cloud Storage (اللي بقى محتاج وسيلة دفع). حد المستند في Firestore = 1MiB.
 import { HttpError, newId } from './core.js';
-import { F, now, rateLimit } from './db.js';
+import { F, now, rateTake } from './db.js';
 
 export const KINDS = ['id', 'license', 'vehicle', 'vehiclePhoto', 'company', 'cargo', 'handover', 'payment', 'evidence'];
 const SHARED = ['cargo', 'handover', 'vehiclePhoto', 'evidence']; // باقي الأنواع (بطاقة/رخصة/استمارة/إثبات دفع) للمالك والأدمن فقط
@@ -16,9 +16,9 @@ export async function saveFile(env, uid, profile, kind, dataUrl) {
   if (!m || m[1].length < 200 || m[1].length > MAX_B64 || !m[1].startsWith('/9j/')) throw new HttpError(400, 'bad_image'); // '/9j/' = توقيع JPEG
   if (!profile && !REG_KINDS.includes(kind)) throw new HttpError(403, 'no_profile');
   if (profile && profile.status !== 'active' && profile.role !== 'admin' && !REG_KINDS.includes(kind)) throw new HttpError(403, 'account_not_active');
-  const limit = await rateLimit(env, 'upload', uid, 3600e3, 30, 'too_many_uploads');
+  await rateTake(env, 'upload', uid, 3600e3, 30, 'too_many_uploads');
   const id = newId(), size = b64ToBytes(m[1]).length;
-  await F.run(env, [limit, F.create(`files/${id}`, { id, owner: uid, kind, mime: 'image/jpeg', size, created_at: now(), data: m[1] })]);
+  await F.run(env, [F.create(`files/${id}`, { id, owner: uid, kind, mime: 'image/jpeg', size, created_at: now(), data: m[1] })]);
   return 'fs:' + id;
 }
 

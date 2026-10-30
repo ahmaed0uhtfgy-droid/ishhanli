@@ -1,10 +1,11 @@
 import { api, poll } from '../api.js';
 import { state } from '../state.js';
 import { t } from '../i18n.js';
-import { $, $$, html, raw, render, toast, errMsg, busy, spinner, stamp, orderNo, fmtMoney, fmtNum, fmtDate, label, ratingText, trustBadge, confirmDialog, promptDialog, openModal, starsInput } from '../ui.js';
+import { $, $$, html, raw, render, toast, errMsg, busy, spinner, skeleton, stamp, orderNo, fmtMoney, fmtNum, fmtDate, label, ratingText, trustBadge, confirmDialog, promptDialog, openModal, starsInput, printNode } from '../ui.js';
 import { getPos } from '../geo.js';
 import { createMap, pinIcon, drawRoute, gmapsLink, distKm } from '../map.js';
 import { uploadImage, hydrate, imgTag } from '../storage.js';
+import { moneySteps } from '../money.js';
 
 const ACTIVE = ['heading_pickup', 'picked_up', 'in_transit'];
 const HELD = ['paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered'];
@@ -29,13 +30,13 @@ export function renderOrder(el, id) {
   let role = state.profile.role; const uid = state.user.uid; // الأدمن على طلب هو عمله بيتعامل كعميل
   const home = role === 'admin' ? '/admin/orders' : role === 'driver' ? '/driver/jobs' : '/customer';
   render(el, html`<div class="page-head"><h1 id="title">${t('order.title')} ${orderNo(id)}</h1><div class="row"><span id="rlink"></span><a class="btn ghost sm" href="#${home}">${t('common.back')}</a></div></div>
-    <div class="order-layout"><div class="stack"><div class="stack" id="left">${spinner()}</div><div id="chat"></div></div>
+    <div class="order-layout"><div class="stack"><div class="stack" id="left">${skeleton(3)}</div><div id="chat"></div></div>
     <div class="map-col"><div id="map" class="map tall"></div><div id="routeInfo" class="route-info"></div><p class="hint" id="liveHint"></p></div></div>`);
 
   const left = $('#left', el), hint = $('#liveHint', el);
   let fleet = []; // سواقين الشركة (لو الحساب شركة): بنختار منهم مين هيستلم الشحنة
   if (role === 'driver' && state.profile.accountType === 'company') api('fleet/list').then((r) => { fleet = r.drivers; if (order) paint(order); }).catch(() => {});
-  let offerSort = 'price', map = null, order = null, truck = null, poller = null, lastVersion = null, watchId = null, lastSent = 0, getStars = () => 0;
+  let tripTimer, codeInfo, offerSort = 'price', map = null, order = null, truck = null, poller = null, lastVersion = null, watchId = null, lastSent = 0, getStars = () => 0;
 
   let ab = null; // [نقطة الاستلام، نقطة التسليم]
   const truckTo = (lat, lng) => {
@@ -46,8 +47,8 @@ export function renderOrder(el, id) {
     if (map) return;
     map = createMap($('#map', el), { center: [o.pickup.lat, o.pickup.lng], zoom: 12 });
     const a = [o.pickup.lat, o.pickup.lng], b = [o.dropoff.lat, o.dropoff.lng]; ab = [a, b];
-    L.marker(a, { icon: pinIcon('a') }).addTo(map).bindTooltip(t('order.pickup'), { permanent: true, direction: 'top', offset: [0, -30], className: 'pin-tip' });
-    L.marker(b, { icon: pinIcon('b') }).addTo(map).bindTooltip(t('order.dropoff'), { permanent: true, direction: 'top', offset: [0, -30], className: 'pin-tip' });
+    L.marker(a, { icon: pinIcon('a') }).addTo(map).bindTooltip(t('order.pickup'), { permanent: true, direction: 'top', offset: [0, -42], className: 'pin-tip' });
+    L.marker(b, { icon: pinIcon('b') }).addTo(map).bindTooltip(t('order.dropoff'), { permanent: true, direction: 'top', offset: [0, -42], className: 'pin-tip' });
     map.fitBounds([a, b], { padding: [50, 50] });
     const info = $('#routeInfo', el);
     const paint = (r) => render(info, html`<div class="legend"><span><i class="dot dot-a"></i>${t('order.pickup')}</span><span><i class="dot dot-b"></i>${t('order.dropoff')}</span><span>🚚 ${t('map.driver')}</span></div>
@@ -98,11 +99,17 @@ export function renderOrder(el, id) {
         ${role === 'customer' ? html`<div class="row end"><button class="btn ghost sm" data-act="offerReject" data-id="${f.id}">${t('offer.reject')}</button><button class="btn ok sm" data-act="offerAccept" data-id="${f.id}">${t('offer.accept')}</button></div>` : ''}</div>`;
     })}</div>`;
   }
+  function manifestHtml(o) {
+    if (isP(o)) return '';
+    return html`<div class="manifest"><h4>${t('manifest.title')}</h4><p class="manifest-desc">${o.description || '—'}</p>
+      <div class="muted small">${t('manifest.items')}: <b>${fmtNum(o.itemsCount || 1, 0)}</b> · ${t('manifest.value')}: <b>${fmtMoney(o.declaredValue || 0)}</b></div>${photos(o.photos || [])}
+      <label class="row" style="gap:.5rem;margin-top:.6rem"><input type="checkbox" id="agree"> <span>${t('manifest.agree')}</span></label><p class="hint">${t('manifest.mismatchHint', { amount: fmtMoney(state.settings.mismatchCompensation || 0) })}</p></div>`;
+  }
   function driverOpenHtml(o) {
-    if (o.payMode === 'before') return html`<div class="action good"><p>${t('order.prepaidFixed', { price: fmtMoney(o.price) })}</p><button class="btn primary block" data-act="accept">${t('order.acceptPrepaid')}</button></div>`;
+    if (o.payMode === 'before') return html`<div class="action good"><p>${t('order.prepaidFixed', { price: fmtMoney(o.price) })}</p>${manifestHtml(o)}<button class="btn primary block" data-act="accept">${t('order.acceptPrepaid')}</button></div>`;
     const S = state.settings, canInstant = o.instant !== false, my = o.myOffer?.status === 'pending' ? o.myOffer : null;
     const lo = Math.max(Math.ceil(S.minPrice || 0), Math.ceil((o.price * (S.offerMinPct || 70)) / 100)), hi = Math.ceil((o.price * (S.offerMaxPct || 200)) / 100);
-    return html`<div class="action"><p>${t('order.driverOpenMsg')}</p>
+    return html`<div class="action"><p>${t('order.driverOpenMsg')}</p>${manifestHtml(o)}
       ${canInstant ? html`<button class="btn primary block" data-act="accept">${t('order.acceptAt', { price: fmtMoney(o.price) })}</button>` : html`<p class="hint">${t('offer.offersOnly')}</p>`}
       ${S.offersEnabled === false ? '' : html`<div class="offer-box">
         ${my ? html`<p style="margin:0">${t('offer.yours')}: <b>${fmtMoney(my.price)}</b> — ${t('offer.waiting')}</p>` : ''}
@@ -151,9 +158,11 @@ export function renderOrder(el, id) {
       if (nx) {
         const needPhoto = nx === 'picked_up' || nx === 'delivered';
         return html`<div class="action"><h3>${t('order.nextStep')}</h3>
+          ${nx === 'delivered' && !isP(o) && (state.settings.deliveryCode || o.guard === 'high') && state.settings.deliveryCodeAvailable ? html`<label class="f">${t('code.driverAsk')}<input id="dcode" inputmode="numeric" autocomplete="off" maxlength="7" dir="ltr" placeholder="000 000"></label><label class="row" style="gap:.5rem"><input type="checkbox" id="nocode"> <span class="small">${t('code.noCode')}</span></label>` : ''}
+          ${nx === 'picked_up' && !isP(o) && state.settings.startCode && state.settings.deliveryCodeAvailable ? html`<label class="f">${t('code.startAsk')}<input id="scode" inputmode="numeric" autocomplete="off" maxlength="7" dir="ltr" placeholder="000 000"></label><label class="row" style="gap:.5rem"><input type="checkbox" id="snocode"> <span class="small">${t('code.startNoCode')}</span></label>` : ''}
           ${needPhoto ? html`<label class="f">${isP(o) ? t('order.photoOptional') : t(nx === 'picked_up' ? 'order.photoPickup' : 'order.photoDelivery')}<input type="file" id="handover" accept="image/*" capture="environment"></label><p class="hint">${t('order.gpsRule')}</p>` : ''}
           <button class="btn primary block" data-act="next" data-next="${nx}" style="margin-top:.6rem">${t(isP(o) && NEXT_LABEL_P[nx] ? NEXT_LABEL_P[nx] : NEXT_LABEL[nx])}</button>
-          <div class="row" style="margin-top:.6rem">${dispute}${['paid', 'heading_pickup'].includes(s) ? html`<button class="btn ghost sm" data-act="cancel">${t('order.driverWithdraw')}</button>` : ''}</div></div>`;
+          <div class="row" style="margin-top:.6rem">${dispute}${['paid', 'heading_pickup'].includes(s) ? html`<button class="btn ghost sm" data-act="cancel">${t('order.driverWithdraw')}</button>` : ''}${['paid', 'heading_pickup'].includes(s) && !isP(o) && o.escrowStatus === 'held' ? html`<button class="btn ghost sm" data-act="mismatch">${t('mismatch.btn')}</button>` : ''}</div></div>`;
       }
       if (s === 'delivered') return html`<div class="action info"><p>${t('order.waitConfirm')}</p>${dispute}</div>`;
     }
@@ -164,14 +173,14 @@ export function renderOrder(el, id) {
       if (s === 'disputed') return html`<div class="action bad">${t('order.disputed')} — <a href="#/admin/disputes">${t('admin.tab.disputes')}</a></div>`;
     }
     if (s === 'disputed') return html`<div class="action bad"><p>${t('order.disputed')}</p></div>`;
-    if (s === 'cancelled') return html`<div class="action bad"><p>${t('order.cancelledMsg')}${o.cancelReason ? ': ' + (o.cancelReason === 'no_driver' ? t('refund.reason.no_driver') : o.cancelReason) : ''}</p>${o.cancelFee ? html`<p>${t('order.cancelFeeInfo', { driver: fmtMoney(o.driverNet), platform: fmtMoney(o.commission), refund: fmtMoney(o.customerRefund) })}</p>` : ''}${o.refund ? html`<p><b>${t('refund.title')}:</b> ${t('refund.' + o.refund.status, { amount: fmtMoney(o.refund.amount) })}</p>` : ''}</div>`;
+    if (s === 'cancelled') return html`<div class="action bad"><p>${t('order.cancelledMsg')}${o.cancelReason ? ': ' + (o.cancelReason === 'no_driver' ? t('refund.reason.no_driver') : o.cancelReason === 'goods_mismatch' ? t('order.cancelReason.goods_mismatch') : o.cancelReason) : ''}</p>${o.cancelFee ? html`<p>${t('order.cancelFeeInfo', { driver: fmtMoney(o.driverNet), platform: fmtMoney(o.commission), refund: fmtMoney(o.customerRefund) })}</p>` : ''}${o.refund ? html`<p><b>${t('refund.title')}:</b> ${t('refund.' + o.refund.status, { amount: fmtMoney(o.refund.amount) })}</p>` : ''}</div>`;
     if (s === 'resolved') return html`<div class="action good"><p>${t('order.resolvedMsg')}: <b>${t('dispute.decision.' + o.resolution)}</b></p></div>`;
     if (s === 'completed') {
       const my = role === 'customer' ? o.rateByCustomer : role === 'driver' ? o.rateByDriver : null;
       return html`<div class="action good"><h3>${t('order.done')}</h3>
         ${role === 'driver' ? html`<p>${t('order.youEarned')}: <b>${fmtMoney(o.driverNet)}</b> <span class="muted small">(${t('order.commission')}: ${fmtMoney(o.commission)})</span></p>` : ''}
         ${role === 'admin' ? html`<p>${t('order.commission')}: <b>${fmtMoney(o.commission)}</b> — ${t('order.driverNet')}: ${fmtMoney(o.driverNet)}</p>` : ''}
-        ${role !== 'admin' && !my ? html`<div class="stack"><div>${t('order.rate')}</div><div id="stars" class="stars"></div><textarea id="rcomment" maxlength="300" placeholder="${t('order.rateHint')}"></textarea><button class="btn primary" data-act="rate">${t('order.sendRating')}</button></div>`
+        ${role !== 'admin' && !my ? html`<div class="stack"><div>${t('order.rate')}</div><div id="stars" class="stars"></div>${role === 'customer' ? html`<div class="quick-q" id="quickq">${['onTime', 'intact', 'polite'].map((k) => html`<div class="qrow"><span>${t('rate.q.' + k)}</span><span class="yn" role="radiogroup" aria-label="${t('rate.q.' + k)}"><label><input type="radio" name="q_${k}" value="1" checked> ${t('common.yes')}</label><label><input type="radio" name="q_${k}" value="0"> ${t('common.no')}</label></span></div>`)}</div>` : ''}<textarea id="rcomment" maxlength="300" placeholder="${t('order.rateHint')}"></textarea><button class="btn primary" data-act="rate">${t('order.sendRating')}</button></div>`
           : my ? html`<p>${t('order.yourRating')}: ${'★'.repeat(my.stars)}</p>` : ''}
         ${role === 'customer' ? html`<button class="btn ghost sm" data-act="share">${t('order.share')}</button>` : ''}</div>`;
     }
@@ -192,12 +201,13 @@ export function renderOrder(el, id) {
     return html`<div class="card"><dl class="kv">
       ${kv(t('order.pickup'), o.pickup.address || '—')}${kv(t('order.dropoff'), o.dropoff.address || '—')}
       ${isP(o) ? html`${kv(t('order.service'), t('service.passengers'))}${kv(t('order.vehicleClass'), label(state.settings.passengerClasses?.[o.vehicleClass], o.vehicleClass))}${kv(t('order.passengers'), o.passengers)}` : html`${kv(t('order.category'), label(state.settings.categories?.[o.category], o.category))}${kv(t('order.size'), label(state.settings.sizes?.[o.size], o.size))}
-      ${kv(t('order.weight'), `${fmtNum(o.weightKg, 0)} ${t('common.kg')}`)}`}${kv(t('order.distance'), `${fmtNum(o.distanceKm)} ${t('common.km')}${o.distanceSource === 'estimate' ? ' ~' : ''}`)}
+      ${kv(t('order.weight'), `${fmtNum(o.weightKg, 0)} ${t('common.kg')}`)}${o.vehiclePick ? kv(t('order.vehiclePick'), vehicleName(o.vehiclePick)) : ''}${typeof o.companion === 'boolean' ? kv(t('order.companion'), html`<b>${t(o.companion ? 'companion.yes' : 'companion.no')}</b>`) : ''}`}${kv(t('order.distance'), `${fmtNum(o.distanceKm)} ${t('common.km')}${o.distanceSource === 'estimate' ? ' ~' : ''}`)}
       ${kv(t('order.when'), fmtDate(o.scheduledAt))}
       ${o.payMode === 'before' ? kv(t('order.payMode'), t('order.prepaid')) : ''}${kv(t('order.price'), html`<b>${fmtMoney(o.price)}</b>${o.priceOverridden ? html` <span class="muted small">(${t('order.priceAdjusted')}${o.priceNote ? ': ' + o.priceNote : ''})</span>` : ''}${o.priceNegotiated ? html` <span class="muted small">(${t('order.priceNegotiated')})</span>` : ''}`)}
       ${o.discount ? html`${kv(t('coupon.discount'), html`<span style="color:var(--nile)">− ${fmtMoney(o.discount)}</span>${o.couponCode ? html` <span class="muted small">(${o.couponCode})</span>` : ''}`)}${kv(t('coupon.due'), html`<b>${fmtMoney(dueOf(o))}</b>`)}` : ''}
       ${o.description ? kv(t('order.notes'), o.description) : ''}
       ${showDriver ? kv(t('order.driver'), html`${o.driverName} — ${tel(o.driverPhone)} <span class="muted small">(${t('vehicle.' + o.driverVehicle) === 'vehicle.' + o.driverVehicle ? o.driverVehicle : t('vehicle.' + o.driverVehicle)})</span>${o.driverTrust ? html`<div style="margin-top:.2rem">${trustBadge(o.driverTrust)}</div>` : ''}`) : ''}
+      ${showDriver && role === 'customer' && (o.handler?.vehiclePhotoRef || o.driverVehiclePhoto) ? kv(t('order.vehiclePhoto'), photos([o.handler?.vehiclePhotoRef || o.driverVehiclePhoto])) : ''}
       ${o.paymentMethod === 'test' ? kv(t('order.payMethod'), t('order.testPay')) : ''}
       ${o.handler ? kv(t('fleet.handler'), html`${o.handler.name} — ${tel(o.handler.phone)} <span class="muted small" dir="ltr">(${o.handler.plate})</span>${o.handler.companyName && role !== 'customer' ? html` <span class="muted small">· ${o.handler.companyName}</span>` : ''}`) : ''}
       ${showCustomer ? kv(t('order.customer'), html`${o.customerName}${showCustPhone ? html` — ${tel(o.customerPhone)}` : ''}`) : ''}
@@ -210,6 +220,79 @@ export function renderOrder(el, id) {
       ${o.deliveryPhoto ? html`<div><div class="muted small">${t('order.deliveryPhoto')}</div>${photos([o.deliveryPhoto])}</div>` : ''}
       ${o.paymentProof && role !== 'driver' ? html`<div><div class="muted small">${t('order.proof')}</div>${photos([o.paymentProof])}</div>` : ''}</div>
     <details class="card"><summary><b>${t('order.log')}</b></summary><ul class="log" style="margin-top:.6rem">${(o.log || []).map((l) => html`<li><span>${t('status.' + l.status)}${l.note ? ' — ' + l.note : ''}${l.lat && role !== 'driver' ? html` <a href="https://www.openstreetmap.org/?mlat=${l.lat}&mlon=${l.lng}#map=17/${l.lat}/${l.lng}" target="_blank" rel="noopener">📍</a>` : ''}</span><span class="muted">${fmtDate(l.at)}</span></li>`)}</ul></details>`;
+  }
+
+  // حراسة القيمة: الشحنة العالية (لو الأدمن فعّلها) كود تسليمها إجباري ومفيش تحرير تلقائي — ظاهرة للسواق قبل ما يقبل
+  const guardHtml = (o) => o.guard === 'high' ? html`<div class="action"><p><b>${t('guard.title')}</b> — ${t('guard.body')}</p></div>` : '';
+  // ---------- مواعيد الاستلام/التسليم ونقاط التأخير (تتبّع اختياري: العميل هو اللي بيحدد مدة التأخير المسموح) ----------
+  const TIMES_ST = ['accepted', 'payment_review', 'paid', 'heading_pickup', 'picked_up', 'in_transit'];
+  const localIn = (ms) => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  function timesHtml(o) {
+    if (o.graceMin == null || !o.driverId) return '';
+    const mine = role === 'driver' && o.driverId === uid, cust = role === 'customer' && o.customerId === uid;
+    const pu = o.agreed?.pickupAt ?? o.scheduledAt, de = o.agreed?.deliveryAt ?? o.deliveryAt, p = o.timeProposal;
+    const markHtml = (kind) => {
+      const m = o.lateMarks?.[kind]; if (!m) return '';
+      if (m.state === 'asked') return cust
+        ? html`<div class="action bad"><p>${t('late.ask.' + kind)}</p><div class="row"><button class="btn danger sm" type="button" data-act="lateDecide" data-kind="${kind}" data-point="1">${t('late.recordPoint')}</button><button class="btn ghost sm" type="button" data-act="lateDecide" data-kind="${kind}" data-point="0">${t('late.forgive')}</button></div><p class="hint">${t('late.askHint')}</p></div>`
+        : html`<div class="action"><p>${t('late.waiting.' + kind)}</p></div>`;
+      return html`<p class="muted small" style="margin:.2rem 0">${t('late.' + kind)}: ${t(m.state === 'point' ? 'late.pointed' : 'late.forgiven')}</p>`;
+    };
+    const proposed = (x) => html`${x.pickupAt != null ? html`<div>${t('late.pickupAt')}: <b>${fmtDate(x.pickupAt)}</b></div>` : ''}${x.deliveryAt != null ? html`<div>${t('late.deliveryAtShort')}: <b>${fmtDate(x.deliveryAt)}</b></div>` : ''}`;
+    const canPropose = mine && TIMES_ST.includes(o.status) && (o.proposalCount || 0) < 5;
+    const beforePickup = !['picked_up', 'in_transit'].includes(o.status);
+    return html`<div class="card stack"><h3>${t('late.title')}</h3>
+      <dl class="kv">${kv(t('late.pickupAt'), html`${fmtDate(pu)}${o.agreed?.pickupAt != null ? html` <span class="muted small">(${t('late.agreed')})</span>` : ''}`)}${de ? kv(t('late.deliveryAtShort'), html`${fmtDate(de)}${o.agreed?.deliveryAt != null ? html` <span class="muted small">(${t('late.agreed')})</span>` : ''}`) : ''}${kv(t('late.graceShort'), `${fmtNum(o.graceMin, 0)} ${t('late.min')}`)}</dl>
+      ${markHtml('pickup')}${markHtml('delivery')}
+      ${p ? (cust
+        ? html`<div class="action"><h3>${t('late.proposalTitle')}</h3>${proposed(p)}<div class="row" style="margin-top:.5rem"><button class="btn ok sm" type="button" data-act="answerTimes" data-accept="1">${t('late.accept')}</button><button class="btn ghost sm" type="button" data-act="answerTimes" data-accept="0">${t('late.decline')}</button></div></div>`
+        : html`<div class="action"><p>${t(mine ? 'late.proposalWaiting' : 'late.proposalPending')}</p>${proposed(p)}</div>`) : ''}
+      ${canPropose ? html`<div class="stack"><b>${t('late.proposeTitle')}</b>
+        <div class="grid-2">${beforePickup ? html`<label class="f">${t('late.pickupAt')}<input type="datetime-local" id="propPickup" value="${localIn(pu)}"></label>` : ''}<label class="f">${t('late.deliveryAtShort')}<input type="datetime-local" id="propDelivery" value="${de ? localIn(de) : ''}"></label></div>
+        <button class="btn primary sm" type="button" data-act="proposeTimes">${t('late.send')}</button><p class="hint">${t('late.proposeHint')}</p></div>` : ''}</div>`;
+  }
+  // ---------- كود التسليم (العميل بيدّيه للمستلم والسواق بيدخله عند التسليم) ----------
+  const CODE_ST = ['accepted', 'paid', 'heading_pickup', 'picked_up', 'in_transit'];
+  function ensureCode(o) { // بيتجاب مرة واحدة لما العميل يفتح طلب نشط (الكود مش بيتخزّن ولا بيجي مع بيانات الطلب)
+    if (role !== 'customer' || o.customerId !== uid || codeInfo !== undefined || !CODE_ST.includes(o.status) || !state.settings.deliveryCodeAvailable || !(state.settings.deliveryCode || state.settings.startCode || o.guard === 'high')) return;
+    codeInfo = null; api('orders/code', { orderId: o.id }).then((r) => { codeInfo = r; if (order) paint(order); }).catch(() => { codeInfo = { active: false }; });
+  }
+  function codeHtml(o) {
+    if (role !== 'customer' || !codeInfo) return '';
+    const card = (k, code) => html`<div class="card code-card" aria-label="${t('code.' + k + '.title')}"><div class="grow"><b>${t('code.' + k + '.title')}</b><p class="muted small" style="margin:.2rem 0 0">${t('code.' + k + '.hint')}</p></div><div class="code-digits num" dir="ltr">${code.slice(0, 3)} ${code.slice(3)}</div></div>`;
+    return html`${codeInfo.startCode && ['accepted', 'paid', 'heading_pickup'].includes(o.status) ? card('start', codeInfo.startCode) : ''}${codeInfo.active && CODE_ST.includes(o.status) ? card('delivery', codeInfo.code) : ''}`;
+  }
+  // ---------- عدّاد الرحلة (عند العميل والسواق): من لحظة الاستلام لحد المهلة المتوقعة ----------
+  function tripHtml(o) {
+    if (!o.startedAt || !['picked_up', 'in_transit'].includes(o.status) || role === 'admin') return '';
+    return html`<div class="card trip ${o.late ? 'late' : ''}"><div class="row"><b class="grow">${t('trip.title')}</b>${o.startVerified === 'code' ? html`<span class="stamp s-active">${t('trip.startedWithCode')}</span>` : o.startVerified === 'none' ? html`<span class="stamp s-open">${t('trip.startedNoCode')}</span>` : ''}</div>
+      <div class="trip-clock num" id="tripClock" data-start="${o.startedAt}" data-deadline="${o.deadlineAt || 0}" aria-live="off">—</div>
+      <p class="muted small" style="margin:0">${t('trip.deadline')}: ${o.deadlineAt ? fmtDate(o.deadlineAt) : '—'}</p>${o.late ? html`<p class="late-msg">${t('trip.late')}</p>` : ''}</div>`;
+  }
+  const fmtClock = (ms) => { const s = Math.floor(Math.abs(ms) / 1000), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60; return `${h}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}`; };
+  function startClock() {
+    clearInterval(tripTimer); const el = left.querySelector('#tripClock'); if (!el) return;
+    const tick = () => { const st = +el.dataset.start, dl = +el.dataset.deadline, n = Date.now(); el.textContent = fmtClock(n - st) + (dl ? (n > dl ? ' · ' + t('trip.over') + ' ' + fmtClock(n - dl) : ' · ' + t('trip.left') + ' ' + fmtClock(dl - n)) : ''); };
+    tick(); tripTimer = setInterval(tick, 1000);
+  }
+  // ---------- رابط متابعة للمستلم ----------
+  function shareHtml(o) {
+    if (role !== 'customer' || o.customerId !== uid || !['accepted', 'paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered'].includes(o.status)) return '';
+    return html`<div class="card stack"><div><b>${t('track.title')}</b><p class="muted small" style="margin:.2rem 0 0">${t('track.hint')}</p></div>
+      <div class="row"><button class="btn ghost sm" type="button" data-act="shareTrack">${t('track.share')}</button><button class="btn ghost sm" type="button" data-act="unshareTrack">${t('track.stop')}</button></div></div>`;
+  }
+  // ---------- «فين فلوسي؟»: 3 مراحل واضحة للعميل (دفع ← حجز ← تحويل/استرجاع) ----------
+  function moneyHtml(o) {
+    if (role !== 'customer') return '';
+    const steps = moneySteps(o); if (!steps) return '';
+    const paidAt = (o.log || []).find((l) => l.status === 'paid')?.at;
+    return html`<div class="card money" aria-label="${t('money.title')}"><div class="row"><h3 class="grow" style="margin:0">${t('money.title')}</h3><b class="num">${fmtMoney(dueOf(o))}</b></div>
+      <ol class="money-steps">${steps.map((s) => html`<li class="${s.state}"><span class="mk" aria-hidden="true"></span><div><b>${t('money.' + s.key)}</b><div class="muted small">${t(s.text)}${s.key === 'paid' && paidAt && s.state === 'done' ? html` · ${fmtDate(paidAt)}` : ''}</div></div></li>`)}</ol></div>`;
+  }
+  // ---------- اطلب نفس الشحنة تاني (بعد ما الطلب يخلص أو يتلغي) ----------
+  function reorderHtml(o) {
+    if (role !== 'customer' || !['completed', 'cancelled', 'resolved'].includes(o.status)) return '';
+    return html`<div class="row" style="margin-top:1rem"><button class="btn primary" type="button" data-act="reorder">${t('order.reorder')}</button></div>`;
   }
 
   // ---------- الأمان: بلاغ + زر طوارئ (ركاب أثناء الرحلة) ----------
@@ -281,8 +364,8 @@ export function renderOrder(el, id) {
     role = state.profile.role === 'admin' && o.customerId === uid ? 'customer' : state.profile.role; // الأدمن على طلب هو عمله بيتعامل كعميل
     render($('#title', el), html`${t('order.title')} ${orderNo(o.id)} ${stamp(o.status, o.service)}`);
     render($('#rlink', el), RECEIPT_STATUS.includes(o.status) ? html`<a class="btn ghost sm" href="#/receipt/${o.id}">${t('receipt.open')}</a>` : '');
-    render(left, html`${stepsHtml(o)}<div id="actions">${actionsHtml(o)}${handlerHtml(o)}</div>${safetyHtml(o)}${detailsHtml(o)}`);
-    hydrate(left);
+    render(left, html`${stepsHtml(o)}<div id="actions">${actionsHtml(o)}${handlerHtml(o)}</div>${codeHtml(o)}${tripHtml(o)}${guardHtml(o)}${timesHtml(o)}${o.late ? html`<div class="action bad"><p>${t('trip.late')}</p></div>` : ''}${role === 'admin' ? html`<div class="row"><button class="btn ghost sm" type="button" data-act="evidence">${t('evidence.btn')}</button></div>` : ''}${moneyHtml(o)}${shareHtml(o)}${reorderHtml(o)}${safetyHtml(o)}${detailsHtml(o)}`);
+    hydrate(left); ensureCode(o); startClock();
     const st = $('#stars', left); if (st) getStars = starsInput(st);
     drawMap(o); syncTracking(o); syncChat(o);
   }
@@ -291,8 +374,40 @@ export function renderOrder(el, id) {
   const call = async (route, body, okMsg) => { const r = await api(route, { orderId: id, ...body }); if (okMsg) toast(t(okMsg)); await poller?.now(); return r; };
   const requireFile = (inputId) => { const f = $('#' + inputId, left)?.files?.[0]; if (!f) throw Object.assign(new Error('bad_file'), { code: 'bad_file' }); return f; };
   const actions = {
-    accept: () => call('orders/accept', {}, 'order.acceptedToast'),
-    offer: () => call('offers/create', { price: $('#offerPrice', left).value, note: $('#offerNote', left).value }, 'offer.sent'),
+    accept: () => { if (!isP(order) && !$('#agree', left)?.checked) { toast(t('err.must_agree'), true); return; } return call('orders/accept', { agree: true }, 'order.acceptedToast'); },
+    offer: () => { if (!isP(order) && !$('#agree', left)?.checked) { toast(t('err.must_agree'), true); return; } return call('offers/create', { agree: true, price: $('#offerPrice', left).value, note: $('#offerNote', left).value }, 'offer.sent'); },
+    async mismatch() { // الشحنة مش زي الوصف: السواق يرفض الاستلام ويخد التعويض والباقي يترد للعميل
+      const reason = await promptDialog(t('mismatch.ask', { amount: fmtMoney(state.settings.mismatchCompensation || 0) }), { area: true, required: true });
+      if (!reason || reason.trim().length < 5) return;
+      const body = { reason: reason.trim() }; try { body.loc = await getPos(); } catch { /* السيرفر بيطلبه لو التحقق بالموقع مفعّل */ }
+      await call('orders/mismatch', body, 'mismatch.done');
+    },
+    async proposeTimes() { // السواق يقترح تعديل المواعيد (العميل هو اللي يوافق)
+      const pk = $('#propPickup', left)?.value, dl = $('#propDelivery', left)?.value;
+      if (!pk && !dl) { toast(t('late.proposeEmpty'), true); return; }
+      await call('orders/propose_times', { ...(pk ? { pickupAt: new Date(pk).toISOString() } : {}), ...(dl ? { deliveryAt: new Date(dl).toISOString() } : {}) }, 'late.proposedToast');
+    },
+    answerTimes: (b) => call('orders/answer_times', { accept: b.dataset.accept === '1' }, b.dataset.accept === '1' ? 'late.agreedToast' : 'late.declinedToast'),
+    async lateDecide(b) { // العميل بعد تأخير السواق: نقطة تأخير أو مسامحة
+      const point = b.dataset.point === '1';
+      if (point && !(await confirmDialog(t('late.confirmPoint'), { ok: t('late.recordPoint') }))) return;
+      await call('orders/late_decision', { kind: b.dataset.kind, point }, point ? 'late.pointToast' : 'late.forgiveToast');
+    },
+    async evidence() { // ملف أدلة للأدمن: تحميل JSON + نسخة قابلة للطباعة
+      const r = await api('admin/evidence', { orderId: id }), e = r.evidence;
+      const url = URL.createObjectURL(new Blob([JSON.stringify(r, null, 2)], { type: 'application/json' }));
+      const a = document.createElement('a'); a.href = url; a.download = `evidence-${orderNo(id)}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+      const p = (u) => u ? `${u.name} · ${u.phone} · ${u.nationalId || '—'}` : '—', tr = e.trail || [];
+      printNode(t('evidence.title') + ' ' + orderNo(id), html`<h2>${t('evidence.title')} ${orderNo(id)}</h2>
+        <p><b>${t('evidence.customer')}:</b> ${p(e.customer)}</p><p><b>${t('evidence.driver')}:</b> ${p(e.driver)}${e.handler ? ' — ' + p(e.handler) : ''}</p>
+        <h3>${t('manifest.title')}</h3><p>${e.agreement.description}</p><p>${t('manifest.items')}: ${e.agreement.itemsCount} · ${t('manifest.value')}: ${fmtMoney(e.agreement.declaredValue)} · ${t('evidence.agreedAt')}: ${e.agreement.driverAgreedAt ? fmtDate(e.agreement.driverAgreedAt) : '—'}</p>
+        <p>${t('evidence.codes')}: ${e.codes.startVerified || '—'} / ${e.codes.deliveryVerified || '—'}${e.codes.deliveredWithoutCode ? ' (' + t('evidence.noCode') + ')' : ''}</p>
+        <h3>${t('evidence.timeline')}</h3><ul>${(e.order.log || []).map((l) => html`<li>${fmtDate(l.at)} — ${l.status} — ${l.by || ''} ${l.note || ''}</li>`)}</ul>
+        <h3>${t('evidence.gps')}</h3><p>${tr.length} ${t('evidence.points')}${tr.length ? html` — <a href="https://www.google.com/maps?q=${tr[tr.length - 1].lat},${tr[tr.length - 1].lng}">${t('evidence.lastPoint')}</a>` : ''}</p>
+        <h3>${t('evidence.disputes')}</h3><ul>${(e.disputes || []).map((d) => html`<li>${d.reason} — ${d.details || ''}</li>`)}</ul>
+        <p style="word-break:break-all"><small>SHA-256: ${r.integrity}</small></p>`);
+      toast(t('evidence.done'));
+    },
     offerWithdraw: () => call('offers/withdraw', {}, 'offer.withdrawn'),
     async offerAccept(b) { if (await confirmDialog(t('offer.accept') + '؟', { ok: t('offer.accept') })) await call('offers/accept', { offerId: b.dataset.id }, 'offer.acceptedToast'); },
     offerReject: (b) => call('offers/reject', { offerId: b.dataset.id }, 'common.done'),
@@ -333,16 +448,26 @@ export function renderOrder(el, id) {
         const file = $('#handover', left)?.files?.[0]; // إجبارية للبضاعة، واختيارية للركاب
         if (file) body.photoRef = await uploadImage(file, 'handover'); else if (!isP(order)) throw Object.assign(new Error('bad_file'), { code: 'bad_file' });
         body.loc = await getPos();
+        if (nx === 'delivered' && $('#dcode', left)) { if ($('#nocode', left).checked) { body.noCode = true; body.noCodeReason = 'customer_unreachable'; } else body.code = $('#dcode', left).value; }
+        if (nx === 'picked_up' && $('#scode', left)) { if ($('#snocode', left).checked) { body.noCode = true; body.noCodeReason = 'customer_unreachable'; } else body.code = $('#scode', left).value; }
       } else { try { body.loc = await getPos(); } catch { /* اختياري */ } }
       await call('orders/status', body, 'order.updated');
     },
     async confirm() { if (await confirmDialog(t(isP(order) ? 'order.confirmAskP' : 'order.confirmAsk'), { ok: t(isP(order) ? 'order.confirmReceiptP' : 'order.confirmReceipt') })) await call('orders/confirm', {}, 'order.confirmed'); },
-    async rate() { const stars = getStars(); if (!stars) throw Object.assign(new Error('bad_input'), { code: 'bad_input' }); await call('orders/rate', { stars, comment: $('#rcomment', left).value }, 'order.thanks'); },
+    async rate() { const stars = getStars(); if (!stars) throw Object.assign(new Error('bad_input'), { code: 'bad_input' }); const q = {}; if (role === 'customer') for (const k of ['onTime', 'intact', 'polite']) q[k] = left.querySelector(`input[name="q_${k}"]:checked`)?.value === '1';
+      await call('orders/rate', { stars, comment: $('#rcomment', left).value, ...q }, 'order.thanks'); },
     async share() {
       const data = { title: t('brand'), text: t('order.shareText'), url: location.origin };
       if (navigator.share) await navigator.share(data).catch(() => {}); else { await navigator.clipboard?.writeText(`${data.text} ${data.url}`); toast(t('order.copied')); }
     },
+    async shareTrack() {
+      const r = await api('orders/share', { orderId: id }); const url = `${location.origin}/#/track/${r.token}`;
+      if (navigator.share) await navigator.share({ title: t('brand'), text: t('track.shareText'), url }).catch(() => {});
+      else { await navigator.clipboard?.writeText(url); toast(t('track.copied')); }
+    },
+    async unshareTrack() { await api('orders/unshare', { orderId: id }); toast(t('track.stopped')); },
     dispute: () => openDispute(),
+    reorder() { state.reorder = order; location.hash = '#/customer/new'; },
     async admPay(b) {
       const a = b.dataset.a; let note = '';
       if (a === 'reject') { note = await promptDialog(t('admin.rejectReason'), { required: true }); if (note === null) return; }
@@ -357,7 +482,7 @@ export function renderOrder(el, id) {
 
   function openDispute() {
     const { el: m, close } = openModal(html`<h3>${t('dispute.title')}</h3><p class="hint">${t('dispute.intro')}</p>
-      <div class="stack"><label class="f">${t('dispute.reason')}<select id="dr">${REASONS.map((r) => html`<option value="${r}">${t('dispute.reason.' + r)}</option>`)}</select></label>
+      <div class="stack"><label class="f">${t('dispute.reason')}<select id="dr">${(role === 'customer' && ['picked_up', 'in_transit', 'delivered'].includes(order.status) ? [...REASONS, 'missing'] : REASONS).map((r) => html`<option value="${r}">${t('dispute.reason.' + r)}</option>`)}</select></label>
       <label class="f">${t('dispute.details')}<textarea id="dd" maxlength="1000"></textarea></label>
       <label class="f">${t('dispute.evidence')}<input type="file" id="de" accept="image/*" multiple></label><p class="err" id="derr"></p></div>
       <div class="row end"><button class="btn ghost" data-x="0">${t('common.cancel')}</button><button class="btn danger" data-x="1">${t('dispute.submit')}</button></div>`);
@@ -385,5 +510,5 @@ export function renderOrder(el, id) {
     },
     { onError: (e) => { if (['forbidden', 'order_not_found'].includes(e.code)) { notFound(); return false; } toast(errMsg(e), true); } });
 
-  return () => { poller(); chatCtl?.stop(); if (watchId !== null) navigator.geolocation.clearWatch(watchId); map?.remove(); };
+  return () => { poller(); clearInterval(tripTimer); chatCtl?.stop(); if (watchId !== null) navigator.geolocation.clearWatch(watchId); map?.remove(); };
 }

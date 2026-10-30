@@ -78,12 +78,14 @@ export async function busy(btn, fn) {
   if (btn) btn.disabled = true;
   try { return await fn(); } catch (e) { console.error(e); toast(errMsg(e), true); } finally { if (btn) btn.disabled = false; }
 }
+// هيكل تحميل بدل الدايرة في القوائم والصفحات الرئيسية: بيدّي إحساس بشكل الصفحة قبل ما البيانات توصل
+export const skeleton = (n = 3) => html`<div class="skel-list" aria-busy="true" aria-label="${t('common.loading')}">${Array.from({ length: n }, () => html`<div class="skel"><i></i><i></i><i></i></div>`)}</div>`;
 export const spinner = () => html`<div class="center-load"><span class="spin" role="progressbar" aria-label="${t('common.loading')}"></span></div>`;
 
 // ---------- بوليصة الشحن (كارت الطلب) ----------
 export function waybill(o, { href = `#/order/${o.id}` } = {}) {
   return html`<a class="waybill" href="${href}">
-    <div class="wb-head"><span class="wb-no">${orderNo(o.id)}</span><span class="row" style="gap:.4rem">${o.payMode === 'before' ? html`<span class="stamp s-active">${t('order.prepaid')}</span>` : ''}${o.offerCount ? html`<span class="stamp s-pending">${o.offerCount} ${t('offer.count')}</span>` : ''}${stamp(o.status, o.service)}</span></div>
+    <div class="wb-head"><span class="wb-no">${orderNo(o.id)}</span><span class="row" style="gap:.4rem">${o.payMode === 'before' ? html`<span class="stamp s-active">${t('order.prepaid')}</span>` : ''}${o.guard === 'high' ? html`<span class="stamp s-pending">${t('guard.chip')}</span>` : ''}${o.offerCount ? html`<span class="stamp s-pending">${o.offerCount} ${t('offer.count')}</span>` : ''}${stamp(o.status, o.service)}</span></div>
     <div class="route"><div class="stop a"><span>${o.pickup?.address || t('order.pickup')}</span></div><i class="road"></i><div class="stop b"><span>${o.dropoff?.address || t('order.dropoff')}</span></div></div>
     <div class="wb-foot">${o.service === 'passengers' ? html`<span>${label(state.settings?.passengerClasses?.[o.vehicleClass], o.vehicleClass)}</span><span>${o.passengers} ${t('order.passengersUnit')}</span><span>${fmtNum(o.distanceKm)} ${t('common.km')}</span>` : html`<span>${label(state.settings?.categories?.[o.category], o.category)}</span><span>${fmtNum(o.distanceKm)} ${t('common.km')}</span><span>${fmtNum(o.weightKg, 0)} ${t('common.kg')}</span>`}<span>${fmtDate(o.scheduledAt)}</span><span class="price">${fmtMoney(o.price)}</span></div>
   </a>`;

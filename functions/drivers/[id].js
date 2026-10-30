@@ -7,10 +7,11 @@ export async function onRequest({ request, env, params }) {
   const origin = new URL(request.url).origin;
   try {
     if (!env.FIREBASE_SERVICE_ACCOUNT) throw new Error('no_service_account');
-    if (!(await loadSettings(env)).publicProfiles) return Response.redirect(`${origin}/`, 302);
+    const s = await loadSettings(env);
+    if (!s.publicProfiles) return Response.redirect(`${origin}/`, 302);
     const u = await loadPublicDriver(env, [].concat(params.id || []).join('/'));
     if (!u) return notFound();
-    return driverPage(env, u, origin);
+    return driverPage(env, u, origin, s);
   } catch (e) {
     console.error('driver_page_failed', e?.message || e);
     return notFound();

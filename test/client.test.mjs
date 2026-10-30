@@ -135,3 +135,90 @@ assert.equal(judge(mk(120, 90, (x) => [x * 2, x * 2, x * 2])), 'blank', 'تدر�
 assert.equal(judge(mk(120, 90, (x, y) => (Math.floor(y / 4) % 2 ? [240, 240, 240] : [40, 40, 40]))), null, 'سطور زي كتابة المستند: مقبولة');
 assert.equal(judge(mk(120, 90, (x, y) => (Math.floor(y / 4) % 2 ? [235, 175, 140] : [140, 85, 60]))), 'selfie', 'لون بشرة طاغي');
 console.log('✅ docCheck tests passed');
+
+// ===== «فين فلوسي؟» (money.js) =====
+{
+  const { moneySteps } = await import('../public/js/money.js');
+  assert.equal(moneySteps({ status: 'open', escrowStatus: '' }), null, 'قبل الدفع مفيش كارت فلوس');
+  assert.equal(moneySteps({ status: 'cancelled', escrowStatus: '' }), null, 'ملغي من غير دفع');
+  const pick = (o) => moneySteps(o).map((s) => `${s.key}:${s.state}`).join(',');
+  assert.equal(pick({ status: 'payment_review' }), 'paid:now,held:wait,out:wait', 'الدفع تحت المراجعة');
+  assert.equal(pick({ status: 'in_transit', escrowStatus: 'held' }), 'paid:done,held:now,out:wait', 'محجوز أثناء الرحلة');
+  assert.equal(moneySteps({ status: 'completed', escrowStatus: 'released' })[2].text, 'money.out.released');
+  assert.equal(moneySteps({ status: 'completed', escrowStatus: 'settled' })[2].text, 'money.out.released');
+  assert.equal(pick({ status: 'cancelled', escrowStatus: 'refunded' }), 'paid:done,held:done,out:done', 'اترجّع');
+  assert.equal(moneySteps({ status: 'cancelled', escrowStatus: 'refund_pending' })[2].text, 'money.out.refund_pending');
+  assert.equal(moneySteps({ status: 'disputed', escrowStatus: 'held' })[2].text, 'money.out.disputed', 'النزاع بيوقف التحويل');
+  // كل مفاتيح الترجمة اللي بتستخدمها الدالة موجودة بالعربي والإنجليزي
+  const keys = new Set(['money.title', 'money.paid', 'money.held', 'money.out', 'net.offline', 'net.online', 'order.reorder', 'order.reorderHint', 'ui.fontUp', 'ui.fontDown']);
+  for (const o of [{ status: 'payment_review' }, { status: 'paid', escrowStatus: 'held' }, { status: 'completed', escrowStatus: 'released' }, { status: 'cancelled', escrowStatus: 'refunded' }, { status: 'cancelled', escrowStatus: 'refund_pending' }, { status: 'disputed', escrowStatus: 'held' }])
+    moneySteps(o).forEach((s) => keys.add(s.text));
+  for (const k of keys) for (const l of ['ar', 'en']) assert.ok(DICT[l][k] && DICT[l][k] !== k, `ترجمة ناقصة: ${k} (${l})`);
+  console.log('✅ money.js tests passed');
+}
+
+// ===== صفحة قواعد التعامل (rules.js) =====
+{
+  const { rulesSections } = await import('../public/js/rules.js');
+  const ids = (S) => rulesSections(S).flatMap((g) => g.rules.map((r) => r.id));
+  const all = ids({ newDriver: { orders: 10, commissionPct: 5 }, geofenceMeters: 300, prepaidGraceMin: 30, offersEnabled: true, autoReleaseHours: 48, deliveryCode: true, deliveryCodeAvailable: true });
+  assert.ok(['a1','a7','c4','c8','d1','d1b','d3','d5','d9','k1'].every((x) => all.includes(x)));
+  assert.ok(!ids({}).some((x) => ['a7', 'c8', 'd9'].includes(x)), 'قواعد الكود والتحرير التلقائي ما بتظهرش وهي مقفولة');
+  const off = ids({ newDriver: { orders: 0 }, geofenceMeters: 0, prepaidGraceMin: 0, offersEnabled: false });
+  assert.ok(!off.includes('d1b') && !off.includes('d3') && !off.includes('c7') && !off.includes('d5'), 'القواعد المعطّلة ما بتظهرش');
+  assert.deepEqual(rulesSections({}).map((g) => g.id), ['all', 'customer', 'driver', 'company'], 'شغّالة حتى لو الإعدادات فاضية');
+  const v = rulesSections({ commissionPct: 15, cancelPaidDriverPct: 12 })[1].rules.find((r) => r.id === 'c4').vars;
+  assert.equal(v.dp, 12); assert.equal(rulesSections({ commissionPct: 15 })[2].rules[0].vars.commission, 15, 'الأرقام من الإعدادات');
+  // كل مفاتيح الترجمة موجودة بالعربي والإنجليزي، وكل متغيّر {x} في النص له قيمة
+  for (const g of rulesSections({ newDriver: { orders: 5, commissionPct: 3 }, geofenceMeters: 100, prepaidGraceMin: 10, offersEnabled: true, autoReleaseHours: 24, deliveryCode: true, deliveryCodeAvailable: true })) {
+    for (const k of [`rules.group.${g.id}`]) for (const l of ['ar', 'en']) assert.ok(DICT[l][k], `ناقص ${k}`);
+    for (const r of g.rules) for (const part of ['t', 'd']) for (const l of ['ar', 'en']) {
+      const s = DICT[l][`rules.${r.id}.${part}`]; assert.ok(s, `ناقص rules.${r.id}.${part} (${l})`);
+      for (const m of s.matchAll(/\{(\w+)\}/g)) assert.ok(r.vars[m[1]] !== undefined, `متغيّر ${m[1]} ناقص في ${r.id}`);
+    }
+  }
+  for (const k of ['rules.title', 'rules.sub', 'rules.foot', 'footer.rules']) for (const l of ['ar', 'en']) assert.ok(DICT[l][k], k);
+  console.log('✅ rules.js tests passed');
+}
+
+// ===== تقدير السعر للزوار (estimate.js): لازم يطابق معادلة السيرفر =====
+{
+  const { priceFromKm, estimate, CITIES } = await import('../public/js/estimate.js');
+  const { calcPrice, DEFAULT_SETTINGS } = await import('../functions/_lib/logic.js');
+  const S = DEFAULT_SETTINGS ?? (await import('../functions/_lib/logic.js')).DEFAULTS;
+  assert.ok(S?.categories && S?.sizes, 'إعدادات افتراضية متاحة للاختبار');
+  let n = 0;
+  for (const km of [1, 7, 33, 120, 220, 480]) for (const c of Object.keys(S.categories)) for (const z of Object.keys(S.sizes)) {
+    assert.equal(priceFromKm(S, km, c, z), calcPrice(S, km, c, z).price, `تطابق السعر ${km}/${c}/${z}`); n++;
+  }
+  const e = estimate(S, 'cairo', 'alex', Object.keys(S.categories)[0], Object.keys(S.sizes)[0]);
+  assert.ok(e && e.km > 150 && e.km < 400 && e.price >= S.minPrice, 'القاهرة→إسكندرية منطقية');
+  assert.equal(estimate(S, 'cairo', 'cairo', 'goods', 'small'), null);
+  assert.equal(priceFromKm(S, 10, 'nope', 'small'), null);
+  assert.ok(Object.values(CITIES).every((c) => c[2] > 22 && c[2] < 32 && c[3] > 24 && c[3] < 35), 'إحداثيات داخل مصر');
+  for (const k of ['est.title', 'est.sub', 'est.note', 'est.about', 'est.pick']) for (const l of ['ar', 'en']) assert.ok(DICT[l][k], k);
+  console.log(`✅ estimate.js tests passed (${n} مطابقة مع calcPrice)`);
+}
+
+// ===== مفاتيح الترجمة لتفاصيل الشحنة/عدم المطابقة/كود البداية/العدّاد/الأدلة =====
+{
+  const keys = ['manifest.title','manifest.desc','manifest.descHint','manifest.items','manifest.value','manifest.bindingHint','manifest.needDesc','manifest.agree','manifest.mismatchHint','manifest.reviewAgree',
+    'err.must_agree','err.driver_busy','err.fleet_driver_busy','err.bad_start_code','err.mismatch_limit','err.wallet_frozen','err.bad_delivery_code','mismatch.btn','mismatch.ask','mismatch.done',
+    'code.start.title','code.start.hint','code.delivery.title','code.delivery.hint','code.startAsk','code.startNoCode','trip.title','trip.startedWithCode','trip.startedNoCode','trip.deadline','trip.left','trip.over','trip.late',
+    'dispute.reason.missing','tx.mismatch_compensation','refund.reason.goods_mismatch','order.cancelReason.goods_mismatch','admin.s.guardTitle','admin.s.mismatchComp','admin.s.mismatchMax','admin.s.maxActive','admin.s.avgSpeed','admin.s.deliveryBuffer','admin.s.stallMin','admin.s.startCode',
+    'evidence.btn','evidence.title','evidence.customer','evidence.driver','evidence.agreedAt','evidence.codes','evidence.noCode','evidence.timeline','evidence.gps','evidence.points','evidence.lastPoint','evidence.disputes','evidence.done'];
+  for (const k of keys) for (const l of ['ar', 'en']) assert.ok(DICT[l][k] && DICT[l][k] !== k, `ترجمة ناقصة: ${k} (${l})`);
+  console.log('✅ مفاتيح الواجهة الجديدة موجودة');
+}
+
+// ===== لوحة السواق: كل مفاتيح الترجمة المستخدمة (ثابتة وديناميكية) موجودة بالعربي والإنجليزي =====
+{
+  const { readFileSync } = await import('node:fs');
+  const src = ['public/js/pages/driver-dash.js', 'public/js/pages/driver.js'].map((f) => readFileSync(f, 'utf8')).join('\n') + readFileSync('public/js/pages/order.js', 'utf8');
+  const used = new Set([...src.matchAll(/\bt\('([a-zA-Z0-9_.\-]+)'/g)].map((m) => m[1]).filter((k) => /^(dash|trust|rate|nav|trip|common)\./.test(k) && !k.endsWith('.')));  // المفاتيح اللي بتنتهي بنقطة بتتركّب ديناميكياً وبنفحصها تحت
+  for (const k of ['dash.q.onTime', 'dash.q.intact', 'dash.q.polite', 'rate.q.onTime', 'rate.q.intact', 'rate.q.polite', 'dash.last24', 'dash.last7', 'dash.last30', 'nav.dash']) used.add(k);
+  let n = 0; for (const k of used) for (const l of ['ar', 'en']) { assert.ok(DICT[l][k] && DICT[l][k] !== k, `ترجمة ناقصة: ${k} (${l})`); n++; }
+  assert.ok(/\{cur\}/.test(DICT.ar['trust.of']) && /\{target\}/.test(DICT.ar['trust.of']), 'trust.of بيدعم المتغيّرات (يحل مشكلة الأرقام المقلوبة)');
+  assert.ok(!/\$\{cur\} \/ \$\{target\}/.test(readFileSync('public/js/pages/driver.js', 'utf8')), 'كارت الثقة ما بقاش بيعرض «رقم / رقم» الملخبط');
+  console.log(`✅ لوحة السواق: ${n} فحص ترجمة`);
+}

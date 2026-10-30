@@ -26,6 +26,20 @@ async function sendOne(env, bearer, deviceToken, data) {
 
 // ---------- نصوص الإشعارات (عربي/إنجليزي حسب لغة المستخدم) ----------
 const MSG = {
+  auto_released: { ar: ['تم تحويل المبلغ للسواق', 'الطلب {no}: عدّت {hours} ساعة على التسليم من غير اعتراض فاتحوّل المبلغ للسواق تلقائياً. لو فيه مشكلة تواصل معانا.'], en: ['Payment released to the driver', 'Order {no}: {hours} hours passed after delivery without a dispute, so the payment was released to the driver automatically. Contact us if something is wrong.'] },
+  trip_started: { ar: ['السواق بدأ الرحلة', 'السواق دخل كود البداية للطلب {no}. الرحلة بدأت وتقدر تتابع العدّاد في صفحة الطلب.'], en: ['The trip has started', 'The driver entered the start code for order {no}. Follow the timer on the order page.'] },
+  trip_started_nocode: { ar: ['السواق بدأ الرحلة بدون كود', 'السواق بدأ الرحلة للطلب {no} من غير كود البداية. لو ده غلط راجع الطلب.'], en: ['Trip started without a code', 'The driver started order {no} without the start code. Check the order if this is wrong.'] },
+  late_ask_pickup: { ar: ['السواق اتأخر عن ميعاد الاستلام', 'الطلب {no}: السواق عدّى ميعاد الاستلام + المدة المسموحة. افتح الطلب وقرر: سجّل نقطة تأخير أو سامحه.'], en: ['Driver missed the pickup time', 'Order {no}: the driver passed the pickup time plus the allowed delay. Open the order: record a late point or forgive.'] },
+  late_ask_delivery: { ar: ['السواق اتأخر عن ميعاد التسليم', 'الطلب {no}: السواق عدّى ميعاد التسليم + المدة المسموحة. افتح الطلب وقرر: سجّل نقطة تأخير أو سامحه.'], en: ['Driver missed the delivery time', 'Order {no}: the driver passed the delivery time plus the allowed delay. Open the order: record a late point or forgive.'] },
+  late_point: { ar: ['اتسجّلت عليك نقطة تأخير', 'العميل سجّل نقطة تأخير على الطلب {no}. شوف نقاطك في لوحة السواق.'], en: ['A late point was recorded', 'The customer recorded a late point on order {no}. See your points on the driver dashboard.'] },
+  late_limit: { ar: ['سواق وصل لحد نقاط التأخير', 'السواق {name} وصل {n} نقاط تأخير. راجعه: حظر أو مسح النقاط.'], en: ['Driver reached the late-points limit', 'Driver {name} reached {n} late points. Review: ban or clear the points.'] },
+  time_proposed: { ar: ['السواق اقترح تعديل المواعيد', 'السواق اقترح ميعاد جديد للطلب {no}. افتح الطلب ووافق أو ارفض.'], en: ['Driver proposed new times', 'The driver proposed new times for order {no}. Open it to accept or decline.'] },
+  time_agreed: { ar: ['العميل وافق على المواعيد', 'العميل وافق على المواعيد الجديدة للطلب {no}.'], en: ['Customer accepted the times', 'The customer accepted the new times for order {no}.'] },
+  time_rejected: { ar: ['العميل رفض المواعيد', 'العميل رفض المواعيد المقترحة للطلب {no}. تقدر تقترح غيرها.'], en: ['Customer declined the times', 'The customer declined the proposed times for order {no}. You can propose others.'] },
+  late_delivery: { ar: ['الطلب اتأخر', 'الطلب {no} عدّى الوقت المتوقع للتسليم. افتح الطلب وراجعه.'], en: ['Order is late', 'Order {no} passed its expected delivery time. Open it to review.'] },
+  stall_alert: { ar: ['السواق واقف', 'السواق واقف في مكانه من فترة في الطلب {no}. راجع الطلب.'], en: ['Driver has stopped', 'The driver has been stationary for a while on order {no}. Please check.'] },
+  goods_mismatch: { ar: ['السواق رفض الاستلام', 'السواق رفض استلام الطلب {no} لأن الشحنة مش زي الوصف. تعويضه {amount} ج والباقي هيترد لك.'], en: ['Driver declined pickup', 'The driver declined order {no} because the cargo did not match the description. Compensation EGP {amount}; the rest will be refunded.'] },
+  missing_report: { ar: ['بلاغ فقدان شحنة', 'عميل بلّغ إن الشحنة في الطلب {no} مفقودة. محفظة السواق اتجمّدت لحد القرار.'], en: ['Missing cargo report', 'A customer reported the cargo missing on order {no}. The driver wallet is frozen until a decision.'] },
   cancel_comp: { ar: ['تم إلغاء الطلب', 'العميل لغى الطلب {no}. تم إضافة {amount} ج تعويض لمحفظتك'], en: ['Order cancelled', 'The customer cancelled {no}. EGP {amount} compensation was added to your wallet'] },
   cancel_plain: { ar: ['تم إلغاء الطلب', 'العميل لغى الطلب {no}'], en: ['Order cancelled', 'The customer cancelled {no}'] },
   driver_cancelled: { ar: ['السواق اعتذر عن الطلب', 'الطلب {no} رجع ظاهر لسواقين تانيين ومبلغك لسه محجوز'], en: ['The driver withdrew', 'Order {no} is visible to other drivers again and your payment is still held'] },
@@ -111,7 +125,7 @@ export async function dispatchNewOrder(env, o, settings) {
     const rows = pres.map((p, i) => ({ ...us[i], uid: p.uid, lat: p.lat, lng: p.lng })).filter((r, i) => us[i] && r.status === 'active' && r.role === 'driver');
     const ranked = rows
       .filter((r) => canServe(r.vehicle_type, o))
-      .map((r) => { const km = r.lat == null ? Infinity : haversineM({ lat: r.lat, lng: r.lng }, o.pickup) / 1000; return { uid: r.uid, km, score: km - BONUS_KM[trustOf(r).level] }; })
+      .map((r) => { const km = r.lat == null ? Infinity : haversineM({ lat: r.lat, lng: r.lng }, o.pickup) / 1000; return { uid: r.uid, km, score: km - BONUS_KM[trustOf(r, settings).level] }; })
       .filter((r) => r.km === Infinity || r.km <= settings.dispatchRadiusKm)
       .sort((a, b) => (a.score === b.score ? 0 : a.score < b.score ? -1 : 1)).slice(0, settings.dispatchMaxDrivers);
     const trip = o.service === 'passengers';

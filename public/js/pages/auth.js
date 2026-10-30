@@ -26,7 +26,7 @@ async function googleSignIn(btn, errEl) {
   });
 }
 
-const VEHICLES = ['pickup', 'half_ton', 'truck', 'van', 'car', 'microbus', 'minibus'];
+const VEHICLES = ['pickup', 'half_ton', 'truck', 'jumbo', 'van', 'car', 'microbus', 'minibus'];
 
 export function renderLogin(el) {
   render(el, html`<div class="auth card stack">

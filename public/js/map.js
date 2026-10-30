@@ -1,17 +1,19 @@
 import { APP } from './config.js';
 
 export function createMap(el, { center, zoom } = {}) {
-  const map = L.map(el, { scrollWheelZoom: true }).setView(center || APP.mapCenter, zoom || APP.mapZoom);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+  const map = L.map(el, { scrollWheelZoom: true, zoomControl: false, attributionControl: false, zoomSnap: 0.5, zoomDelta: 0.5 }).setView(center || APP.mapCenter, zoom || APP.mapZoom);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, className: 'map-tiles', keepBuffer: 4 }).addTo(map); // className: بيتلوّن بـ CSS (ألوان أهدى)
+  L.control.zoom({ position: 'bottomleft' }).addTo(map);
+  L.control.attribution({ prefix: false, position: 'bottomright' }).addAttribution('&copy; OpenStreetMap').addTo(map); // الإسناد مطلوب من OSM
+  L.control.scale({ imperial: false, position: 'bottomright', maxWidth: 90 }).addTo(map);
   setTimeout(() => map.invalidateSize(), 150);
   return map;
 }
-// دبابيس واضحة: A (استلام) أخضر، B (تسليم) أحمر، والسواق عربية 🚚 بنبض
-export const pinIcon = (kind) => L.divIcon({
-  className: `pin pin-${kind}`,
-  html: kind === 'truck' ? '<i class="pulse"></i><span>🚚</span>' : `<span></span><b>${kind === 'a' ? 'A' : 'B'}</b>`,
-  iconSize: kind === 'truck' ? [38, 38] : [30, 30], iconAnchor: kind === 'truck' ? [19, 19] : [15, 30],
-});
+// دبابيس بتصميم موحّد: A (استلام) أخضر النيل، B (تسليم) أحمر، والسواق عربية صفراء بنبض
+const TRUCK = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 16V7h11v9M14 10h4l3 3v3h-3"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/></svg>';
+export const pinIcon = (kind) => kind === 'truck'
+  ? L.divIcon({ className: 'pin pin-truck', html: `<i class="pulse"></i><span class="truck-body">${TRUCK}</span>`, iconSize: [44, 44], iconAnchor: [22, 22] })
+  : L.divIcon({ className: `pin pin-${kind}`, html: `<svg viewBox="0 0 36 46" width="34" height="44" aria-hidden="true"><path class="pin-body" d="M18 2C9.7 2 3 8.5 3 16.6c0 10.6 15 27.4 15 27.4s15-16.8 15-27.4C33 8.5 26.3 2 18 2z" stroke="#fff" stroke-width="3"/><circle cx="18" cy="16.5" r="8" fill="#fff"/><text x="18" y="21" text-anchor="middle" font-size="12" font-weight="700" class="pin-letter">${kind === 'a' ? 'A' : 'B'}</text></svg>`, iconSize: [34, 44], iconAnchor: [17, 44] });
 // المسار الفعلي على الطرق (OSRM العام): لو فشل نرسم خط متقطع مستقيم. بيرجّع المسافة (كم) والزمن (دقايق) لو اتحسبوا.
 export async function drawRoute(map, a, b) {
   try {
@@ -20,12 +22,13 @@ export async function drawRoute(map, a, b) {
     clearTimeout(tm);
     const rt = (await r.json()).routes?.[0]; if (!rt) throw new Error('no route');
     const pts = rt.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
-    L.polyline(pts, { color: '#fff', weight: 9, opacity: 0.95 }).addTo(map);
-    const line = L.polyline(pts, { color: '#1a6fd1', weight: 5, opacity: 0.95 }).addTo(map);
+    L.polyline(pts, { color: '#fff', weight: 11, opacity: 0.95, lineCap: 'round', lineJoin: 'round' }).addTo(map);
+    L.polyline(pts, { color: '#1e2a3a', weight: 7, opacity: 0.96, lineCap: 'round', lineJoin: 'round' }).addTo(map);
+    const line = L.polyline(pts, { color: '#f5b800', weight: 2.5, opacity: 1, dashArray: '10 12', className: 'route-flow' }).addTo(map);
     map.fitBounds(line.getBounds(), { padding: [40, 40] });
     return { km: rt.distance / 1000, min: Math.max(1, Math.round(rt.duration / 60)) };
   } catch {
-    L.polyline([a, b], { color: '#c99400', weight: 4, dashArray: '8 8' }).addTo(map);
+    L.polyline([a, b], { color: '#c99400', weight: 4, dashArray: '8 10', className: 'route-flow' }).addTo(map);
     return null;
   }
 }

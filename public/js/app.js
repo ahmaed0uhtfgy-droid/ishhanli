@@ -14,6 +14,10 @@ import { renderDriver } from './pages/driver.js';
 import { renderAdmin } from './pages/admin.js';
 import { renderAccount } from './pages/account.js';
 import { renderLegal } from './pages/legal.js';
+import { renderRules } from './pages/rules.js';
+import { renderTrack } from './pages/track.js';
+import { initEstimate } from './pages/estimate-widget.js';
+import { renderDriverDash } from './pages/driver-dash.js';
 import { initErrorReporting } from './report.js';
 
 let view = $('#view');
@@ -57,7 +61,7 @@ window.addEventListener('app:2fa-required', async () => { if (await askTotp()) r
 function renderTopbar() {
   const p = state.profile, here = location.hash.split('?')[0] || '#/';
   const roleLinks = !p ? [] : p.role === 'customer' ? [['/customer', 'nav.myOrders'], ['/customer/new', 'nav.newOrder']]
-    : p.role === 'driver' ? [['/driver', 'nav.available'], ['/driver/jobs', 'nav.jobs'], ['/driver/wallet', 'nav.wallet']]
+    : p.role === 'driver' ? [['/driver', 'nav.available'], ['/driver/jobs', 'nav.jobs'], ['/driver/wallet', 'nav.wallet'], ['/driver/dashboard', 'nav.dash']]
       : p.role === 'admin' ? [['/customer', 'nav.myOrders'], ['/customer/new', 'nav.newOrder'], ['/admin', 'nav.admin']] : [];
   const links = [...roleLinks, ...(p ? [['/account', 'nav.account']] : []), ['/about', 'nav.about']];
   const showBell = p && (p.status === 'active' || p.role === 'admin') && pushSupport() === 'default';
@@ -67,11 +71,15 @@ function renderTopbar() {
     <span class="grow"></span>
     ${p ? html`<span class="who">${p.name}</span>` : ''}
     ${showBell ? html`<button class="btn ghost sm" id="bell" type="button">${t('push.enable')}</button>` : ''}
+    <button class="btn ghost sm" id="theme" type="button" aria-label="${t('ui.theme')}" aria-pressed="${theme === 'dark'}" title="${t('ui.theme')}">◐</button>
+    <span class="fsz" role="group" aria-label="${t('ui.fontUp')}"><button class="btn ghost sm" id="fdown" type="button" aria-label="${t('ui.fontDown')}">A−</button><button class="btn ghost sm" id="fup" type="button" aria-label="${t('ui.fontUp')}">A+</button></span>
     <button class="btn ghost sm" id="lang" type="button">${getLang() === 'ar' ? 'EN' : 'عربي'}</button>
     ${state.user ? html`<button class="btn ghost sm" id="logout" type="button">${t('nav.logout')}</button>` : html`<a class="btn primary sm" href="#/login">${t('nav.login')}</a>`}
   </div>`);
 }
 topbar.addEventListener('click', async (e) => {
+  if (e.target.closest('#fup')) setFont(+1); if (e.target.closest('#fdown')) setFont(-1);
+  if (e.target.closest('#theme')) { setTheme(theme === 'dark' ? 'light' : 'dark'); e.target.closest('#theme').setAttribute('aria-pressed', String(theme === 'dark')); }
   if (e.target.closest('#lang')) { setLang(getLang() === 'ar' ? 'en' : 'ar'); applyI18n(document); renderTopbar(); route(); }
   if (e.target.closest('#bell')) {
     const r = await enablePush({ ask: true }).catch(() => 'error');
@@ -128,12 +136,14 @@ function route() {
 
   if (a === 'about') { landing.hidden = false; view.hidden = true; fillCompany(); requestAnimationFrame(() => document.getElementById('about')?.scrollIntoView()); return; } // صفحة تعريفية لكل الناس (زائر أو مسجّل)
   if (!state.user) { // زائر
-    if (!a) { landing.hidden = false; view.hidden = true; fillCompany(); return; }
+    if (!a) { landing.hidden = false; view.hidden = true; fillCompany(); initEstimate($('#estimate')); return; }
     show();
     if (a === 'login') return void (cleanup = renderLogin(view));
     if (a === 'register') return void (cleanup = renderRegister(view, query));
     if (a === 'forgot') return void (cleanup = renderForgot(view));
     if (a === 'terms' || a === 'privacy') return void (cleanup = renderLegal(view, a));
+    if (a === 'rules') return void (cleanup = renderRules(view));
+    if (a === 'track' && b) return void (cleanup = renderTrack(view, b));
     return go('/login');
   }
   if (state.profileError) { // السيرفر مش متاح: ما نعتبرش إن الحساب ناقص
@@ -154,9 +164,12 @@ function route() {
   else if (a === 'order' && b) cleanup = renderOrder(view, b);
   else if (a === 'receipt' && b) cleanup = renderReceipt(view, b);
   else if (a === 'customer' && (p.role === 'customer' || p.role === 'admin')) cleanup = b === 'new' ? renderNewOrder(view) : renderCustomerHome(view);
-  else if (a === 'driver' && p.role === 'driver') cleanup = renderDriver(view, b || 'available');
+  else if (a === 'driver' && b === 'dashboard' && p.role === 'driver') cleanup = renderDriverDash(view);
+    else if (a === 'driver' && p.role === 'driver') cleanup = renderDriver(view, b || 'available');
   else if (a === 'admin' && p.role === 'admin') cleanup = renderAdminGated(view, b || 'overview');
   else if (a === 'terms' || a === 'privacy') cleanup = renderLegal(view, a);
+    else if (a === 'rules') cleanup = renderRules(view);
+    else if (a === 'track' && b) cleanup = renderTrack(view, b);
   else go(HOME[p.role] || '/');
 }
 
@@ -176,7 +189,23 @@ if (/^YOUR_/.test(firebaseConfig.apiKey) || /^YOUR_/.test(firebaseConfig.project
   const b = document.createElement('div'); b.className = 'action bad'; b.style.cssText = 'margin:0;border-radius:0;text-align:center;position:sticky;top:0;z-index:3000';
   b.textContent = '⚠️ ' + 'config.js — Firebase config not set / لم يتم ضبط إعدادات Firebase'; document.body.prepend(b);
 }
-initLang(); applyI18n(document); enableZoom(document.body); renderTopbar(); initErrorReporting();
+// الوضع الليلي (اختياري من الزرار، مش تلقائي): بيغيّر متغيّرات الألوان في app.css (html[data-theme=dark])، والصور والدبابيس والمسار بألوانها الطبيعية
+let theme = 'light'; try { theme = localStorage.getItem('theme') === 'dark' ? 'dark' : 'light'; } catch { /* ignore */ }
+const applyTheme = () => { document.documentElement.dataset.theme = theme; document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#0a111b' : '#1e2a3a'); }; // لون شريط المتصفح في الموبايل
+function setTheme(v) { theme = v === 'dark' ? 'dark' : 'light'; try { localStorage.setItem('theme', theme); } catch { /* ignore */ } applyTheme(); }
+applyTheme();
+// حجم الخط (للقراءة المريحة): 4 مستويات بتتحفظ على الجهاز
+const FONT = [100, 112.5, 125, 140];
+let fontLv = 0; try { fontLv = Math.min(FONT.length - 1, Math.max(0, +localStorage.getItem('fontLv') || 0)); } catch { /* ignore */ }
+const applyFont = () => { document.documentElement.style.fontSize = FONT[fontLv] + '%'; };
+function setFont(d) { fontLv = Math.min(FONT.length - 1, Math.max(0, fontLv + d)); try { localStorage.setItem('fontLv', String(fontLv)); } catch { /* ignore */ } applyFont(); }
+applyFont();
+// شريط انقطاع الإنترنت: بدل ما الأزرار تفشل بصمت
+const offBar = document.createElement('div'); offBar.className = 'offline-bar'; offBar.setAttribute('role', 'status'); offBar.hidden = true; document.body.prepend(offBar);
+const syncNet = () => { const off = !navigator.onLine; offBar.hidden = !off; offBar.textContent = off ? t('net.offline') : ''; };
+window.addEventListener('offline', syncNet);
+window.addEventListener('online', () => { syncNet(); toast(t('net.online')); window.dispatchEvent(new Event('app:refresh')); });
+initLang(); applyI18n(document); syncNet(); enableZoom(document.body); renderTopbar(); initErrorReporting();
 
 onAuthStateChanged(auth, (user) => {
   state.user = user; state.profile = null; state.settings = null; state.profileError = false; state.pushChecked = false;

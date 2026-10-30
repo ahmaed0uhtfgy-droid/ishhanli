@@ -2,7 +2,7 @@ import { api, poll } from '../api.js';
 import { gpoll } from '../sync.js';
 import { state } from '../state.js';
 import { t } from '../i18n.js';
-import { $, $$, html, raw, render, toast, errMsg, busy, spinner, stamp, orderNo, fmtMoney, fmtNum, fmtDate, ratingText, trustBadge, confirmDialog, promptDialog, openModal } from '../ui.js';
+import { $, $$, html, raw, render, toast, errMsg, busy, spinner, stamp, orderNo, fmtMoney, fmtNum, fmtDate, ratingText, trustBadge, confirmDialog, promptDialog, openModal, label } from '../ui.js';
 import { hydrate, imgTag } from '../storage.js';
 import { toCsv, downloadCsv, downloadJson } from '../csv.js';
 
@@ -101,7 +101,7 @@ function users(body, badges) {
   let all = [], timer = null;
   const inRange = () => { const f = $('#fd', body).value, tt = $('#fto', body).value; const fms = f ? new Date(f + 'T00:00:00').getTime() : 0, tms = tt ? new Date(tt + 'T23:59:59.999').getTime() : 0; return (ms) => (!fms || (ms || 0) >= fms) && (!tms || (ms || 0) <= tms); };
   const paint = () => { const ok = inRange(), rows = all.filter((u) => ok(u.createdAt)); render($('#tbl', body), rows.length ? html`<div class="table-wrap"><table><thead><tr><th>${t('auth.name')}</th><th>${t('admin.role')}</th><th>${t('auth.phone')}</th><th>${t('admin.status')}</th><th>${t('admin.rating')}</th><th>${t('trust.title')}</th><th>${t('admin.joined')}</th><th></th></tr></thead>
-    <tbody>${rows.map((u) => html`<tr><td>${u.name}</td><td>${t(roleKey(u))}</td><td dir="ltr">${u.phone}</td><td>${stamp(u.status)}</td><td>${ratingText(u)}</td><td>${u.trust ? trustBadge(u.trust) : '—'}</td><td class="small">${fmtDate(u.createdAt)}</td><td><button class="btn sm ${u.status === 'pending' ? 'primary' : 'ghost'}" data-id="${u.id}">${t('admin.review')}</button></td></tr>`)}</tbody></table></div>` : html`<div class="empty">${t('admin.noneUsers')}</div>`); };
+    <tbody>${rows.map((u) => html`<tr><td>${u.name}${u.latePoints > 0 ? html` <span class="stamp s-pending">${t('late.pts', { n: u.latePoints })}</span>` : ''}</td><td>${t(roleKey(u))}</td><td dir="ltr">${u.phone}</td><td>${stamp(u.status)}</td><td>${ratingText(u)}</td><td>${u.trust ? trustBadge(u.trust) : '—'}</td><td class="small">${fmtDate(u.createdAt)}</td><td><button class="btn sm ${u.status === 'pending' ? 'primary' : 'ghost'}" data-id="${u.id}">${t('admin.review')}</button></td></tr>`)}</tbody></table></div>` : html`<div class="empty">${t('admin.noneUsers')}</div>`); };
   async function load() {
     try { all = (await api('admin/users', { role: $('#fr', body).value, status: $('#fs', body).value, q: $('#fq', body).value })).users; paint(); }
     catch (e) { render($('#tbl', body), html`<div class="empty">${errMsg(e)}</div>`); }
@@ -150,11 +150,12 @@ function userModal(u, reload) {
     <dl class="kv"><dt>${t('admin.role')}</dt><dd>${t(roleKey(u))}</dd><dt>${t('auth.phone')}</dt><dd dir="ltr">${u.phone} ${u.phoneVerified ? '✓' : ''}</dd>
       <dt>${t('auth.nationalId')}</dt><dd dir="ltr">${u.nationalId}</dd><dt>${t('auth.email')}</dt><dd dir="ltr">${u.email}</dd><dt>${t('auth.area')}</dt><dd>${u.area || '—'}</dd>
       ${u.vehicleType ? html`<dt>${t('auth.vehicleType')}</dt><dd>${t('vehicle.' + u.vehicleType)}</dd>` : ''}${u.companyName ? html`<dt>${t('auth.companyName')}</dt><dd>${u.companyName}</dd>` : ''}
-      ${u.trust ? html`<dt>${t('trust.title')}</dt><dd>${trustBadge(u.trust)}</dd>` : ''}<dt>${t('admin.trips')}</dt><dd>${u.completedOrders || 0}</dd><dt>${t('admin.cancels')}</dt><dd>${u.cancelCount || 0}</dd><dt>${t('admin.rating')}</dt><dd>${ratingText(u)}</dd>
+      ${u.trust ? html`<dt>${t('trust.title')}</dt><dd>${trustBadge(u.trust)}</dd>` : ''}<dt>${t('admin.trips')}</dt><dd>${u.completedOrders || 0}</dd><dt>${t('admin.cancels')}</dt><dd>${u.cancelCount || 0}</dd>${u.role === 'driver' ? html`<dt>${t('late.points')}</dt><dd>${u.latePoints || 0}</dd>` : ''}<dt>${t('admin.rating')}</dt><dd>${ratingText(u)}</dd>
       ${u.statusReason ? html`<dt>${t('status.reason')}</dt><dd>${u.statusReason}</dd>` : ''}</dl>
     <h3 style="margin-top:1rem">${t('admin.documents')}</h3>
     <div class="stack">${docsRefs.map(([k, r]) => html`<div><div class="muted small">${t(k)}</div>${imgs([r])}</div>`)}</div>
     ${u.accountType === 'company' ? html`<h3 style="margin-top:1rem">${t('fleet.listTitle')}</h3><div id="fleetBox">${spinner()}</div>` : ''}
+    ${u.role === 'driver' ? html`<h3 style="margin-top:1rem">${t('late.adminTitle')}</h3><div id="lateBox">${spinner()}</div>` : ''}
     <label class="f" style="margin-top:1rem">${t('admin.reason')}<input id="reason"></label>
     <label class="row" style="margin-top:.5rem"><input type="checkbox" id="bl"> <span class="small">${t('admin.addBlacklist')}</span></label>
     <div class="action" style="margin-top:1rem"><h3>${t('admin.profileEdit')}</h3>
@@ -167,6 +168,12 @@ function userModal(u, reload) {
       ${u.status === 'pending' ? html`<button class="btn danger" data-s="rejected">${t('admin.reject')}</button>` : ''}
       ${u.status !== 'banned' ? html`<button class="btn danger" data-s="banned">${t('admin.ban')}</button>` : ''}</div>`, { wide: true });
   hydrate(el);
+  if (u.role === 'driver') api('late/list', { uid: u.id }).then((r) => { // نقاط التأخير اللي العميل سجّلها (الحظر من الزرار اللي تحت، والمسح من هنا)
+    render($('#lateBox', el), html`<p>${t('late.points')}: <b>${r.points}</b> ${state.settings?.latePointsLimit > 0 && r.points >= state.settings.latePointsLimit ? html`<span class="stamp s-banned">${t('late.reviewNeeded')}</span>` : ''}</p>
+      ${r.items.length ? html`<div class="table-wrap"><table><thead><tr><th>${t('order.title')}</th><th>${t('late.kind')}</th><th>${t('late.due')}</th><th>${t('late.graceShort')}</th><th>${t('late.when')}</th></tr></thead>
+        <tbody>${r.items.map((i) => html`<tr><td><a href="#/order/${i.orderId}">${orderNo(i.orderId)}</a></td><td>${t('late.' + i.kind)}</td><td class="small">${fmtDate(i.dueAt)}</td><td>${fmtNum(i.graceMin, 0)} ${t('late.min')}</td><td class="small">${fmtDate(i.at)}</td></tr>`)}</tbody></table></div>` : html`<p class="muted small">${t('late.none')}</p>`}
+      ${r.points ? html`<button class="btn ghost sm" type="button" data-late="clear">${t('late.clear')}</button>` : ''}`);
+  }).catch(() => {});
   if (u.accountType === 'company') api('admin/fleet', { uid: u.id }).then(({ drivers }) => { // سواقين الشركة ببياناتهم ومستنداتهم (حتى الموقوفين: السجل بيفضل)
     render($('#fleetBox', el), drivers.length ? html`<div class="stack">${drivers.map((d) => html`<div class="card stack"><div class="row"><b class="grow">${d.name}</b>${d.active ? '' : html`<span class="stamp s-banned">${t('fleet.removed')}</span>`}</div>
       <div class="muted small" dir="ltr">${d.phone} · ${d.nationalId} · ${d.plate}</div>${imgs([d.idRef, d.licenseRef, d.vehiclePhotoRef])}</div>`)}</div>` : html`<div class="empty">${t('fleet.empty')}</div>`);
@@ -180,6 +187,11 @@ function userModal(u, reload) {
         else { const raw = $('#peDays', el).value.trim(); await api('admin/profile-edit', { uid: u.id, days: raw === '' ? null : Number(raw) }); }
         toast(t('common.done')); close(); reload();
       } catch (er) { $('#peerr', el).textContent = errMsg(er); }
+    });
+    const lc = e.target.closest('[data-late]');
+    if (lc) return void busy(lc, async () => {
+      if (!(await confirmDialog(t('late.clearConfirm'), { ok: t('late.clear') }))) return;
+      try { await api('admin/late_clear', { uid: u.id, note: $('#reason', el).value.trim() }); toast(t('common.done')); close(); reload(); } catch (er) { toast(errMsg(er), true); }
     });
     const b = e.target.closest('[data-s]'); if (!b) return; if (b.dataset.s === 'close') return close();
     busy(b, async () => {
@@ -369,17 +381,31 @@ function settings(body) {
     <div class="grid-3">${num('newDriver.orders', 'newDriverOrders', 1)}${num('newDriver.commissionPct', 'newDriverPct')}${num('roadFactor', 'roadFactor', 0.05, 1)}</div></div>
     <div class="card stack"><h3>${t('admin.categories')}</h3>${kvRows('categories', S.categories)}</div>
     <div class="card stack"><h3>${t('admin.sizes')}</h3>${kvRows('sizes', S.sizes)}</div>
+    <div class="card stack"><h3>${t('admin.vguide.title')}</h3><p class="hint">${t('admin.vguide.hint')}</p>
+      <label class="row"><input type="checkbox" name="companionAsk" ${S.companionAsk !== false ? 'checked' : ''}> <span>${t('admin.s.companionAsk')}</span></label>
+      <label class="row"><input type="checkbox" name="vehicleGuideOn" ${S.vehicleGuideOn !== false ? 'checked' : ''}> <span>${t('admin.s.vehicleGuideOn')}</span></label>
+      <div class="grid-2">${['pickup', 'half_ton', 'truck', 'jumbo'].map((k) => html`<div class="stack"><b>${t('vehicle.' + k)}</b>
+        <label class="f">${t('admin.vguide.maxKg')}<input type="number" name="vg.${k}.maxKg" min="0" max="100000" step="1" inputmode="numeric" value="${S.vehicleGuide?.[k]?.maxKg ?? 0}" required></label>
+        <label class="f">${t('admin.vguide.size')}<select name="vg.${k}.size">${Object.entries(S.sizes || {}).map(([sk, sv]) => html`<option value="${sk}" ${S.vehicleGuide?.[k]?.size === sk ? 'selected' : ''}>${label(sv, sk)}</option>`)}</select></label></div>`)}</div></div>
     <div class="card stack"><h3>${t('admin.passengers')}</h3>
       <label class="row"><input type="checkbox" name="passengersEnabled" ${S.passengersEnabled ? 'checked' : ''}> <span>${t('admin.s.passengersEnabled')}</span></label><p class="hint">${t('admin.paxLegal')}</p>
       ${kvRows('passengerClasses', S.passengerClasses, true)}</div>
     <div class="card stack"><h3>${t('admin.levelDiscount')}</h3><p class="hint">${t('admin.levelDiscountHint')}</p>
       <div class="grid-3">${num('levelDiscountPct.trusted', 'disc.trusted', 0.5, 0)}${num('levelDiscountPct.pro', 'disc.pro', 0.5, 0)}${num('levelDiscountPct.elite', 'disc.elite', 0.5, 0)}</div></div>
+      <div class="card stack"><h3>${t('admin.trustRules')}</h3><p class="hint">${t('admin.trustRulesHint')}</p>
+        <div class="grid-3">${['trusted', 'pro', 'elite'].map((k) => html`<div class="stack"><b>${t('trust.level.' + k)}</b>${num(`trustRules.${k}.avg`, 'trustAvg', 0.1, 1)}${num(`trustRules.${k}.ratings`, 'trustRatings', 1, 1)}</div>`)}</div></div>
     <div class="card stack"><h3>${t('admin.cancelFees')}</h3><p class="hint">${t('admin.cancelFeesHint')}</p>
       <div class="grid-2">${num('cancelPaidDriverPct', 'cancelPaidDriver', 1, 0)}${num('cancelPaidPlatformPct', 'cancelPaidPlatform', 1, 0)}</div>
       <div class="grid-2">${num('cancelHeadingDriverPct', 'cancelHeadingDriver', 1, 0)}${num('cancelHeadingPlatformPct', 'cancelHeadingPlatform', 1, 0)}</div></div>
-    <div class="card stack"><h3>${t('admin.rules')}</h3><div class="grid-3">${num('geofenceMeters', 'geofence', 10)}${num('maxCancellations', 'maxCancel', 1, 1)}${num('minWithdraw', 'minWithdraw', 1, 1)}</div>
+    <div class="card stack"><h3>${t('admin.rules')}</h3><div class="grid-3">${num('geofenceMeters', 'geofence', 10)}${num('maxCancellations', 'maxCancel', 1, 1)}${num('minWithdraw', 'minWithdraw', 1, 1)}${num('latePointsLimit', 'latePoints', 1, 0)}</div>
       <div class="grid-3">${num('offerMinPct', 'offerMin', 1, 10)}${num('offerMaxPct', 'offerMax', 1, 100)}${num('dispatchRadiusKm', 'dispatchRadius', 1, 1)}</div>
-      <div class="grid-3">${num('dispatchMaxDrivers', 'dispatchMax', 1, 1)}${num('prepaidGraceMin', 'prepaidGrace', 1, 0)}</div>
+      <div class="grid-3">${num('dispatchMaxDrivers', 'dispatchMax', 1, 1)}${num('prepaidGraceMin', 'prepaidGrace', 1, 0)}${num('autoReleaseHours', 'autoRelease', 1, 0)}</div>
+      <h4>${t('admin.s.guardTitle')}</h4><div class="grid-3">${num('mismatchCompensation', 'mismatchComp', 1, 0)}${num('mismatchMaxPer30d', 'mismatchMax', 1, 1)}${num('maxActiveJobs', 'maxActive', 1, 1)}${num('avgSpeedKmh', 'avgSpeed', 1, 10)}${num('deliveryBufferMin', 'deliveryBuffer', 1, 0)}${num('stallMinutes', 'stallMin', 1, 0)}</div>
+      <label class="row"><input type="checkbox" name="startCode" ${S.startCode ? 'checked' : ''}> <span>${t('admin.s.startCode')}</span></label>
+      <p class="hint">${t('admin.s.autoReleaseHint')}</p>
+      <label class="row"><input type="checkbox" name="deliveryCode" ${S.deliveryCode ? 'checked' : ''}> <span>${t('admin.s.deliveryCode')}</span></label>${S.deliveryCodeAvailable ? '' : html`<p class="hint">${t('admin.s.deliveryCodeNeedsEnv')}</p>`}
+      <label class="row"><input type="checkbox" name="valueGuardOn" ${S.valueGuardOn ? 'checked' : ''}> <span>${t('admin.s.valueGuard')}</span></label>
+      <div class="grid-3">${num('valueGuardFrom', 'valueGuardFrom', 1, 1)}</div><p class="hint">${t('admin.s.valueGuardHint')}</p>
       <label class="row"><input type="checkbox" name="offersEnabled" ${S.offersEnabled !== false ? 'checked' : ''}> <span>${t('admin.s.offersEnabled')}</span></label>
       <label class="row"><input type="checkbox" name="testPayments" ${S.testPayments ? 'checked' : ''}> <span>${t('admin.s.testPayments')}</span></label>${S.testPaymentsAllowed ? '' : html`<p class="hint">${t('admin.s.testNeedsEnv')}</p>`}
       <label class="row"><input type="checkbox" name="autoApproveCustomers" ${S.autoApproveCustomers ? 'checked' : ''}> <span>${t('admin.s.autoApprove')}</span></label></div>
@@ -417,15 +443,21 @@ function settings(body) {
         const n = (k) => Number(f.elements[k].value);
         const r = await api('admin/settings/save', {
           perKm: n('perKm'), minPrice: n('minPrice'), commissionPct: n('commissionPct'), roadFactor: n('roadFactor'), geofenceMeters: n('geofenceMeters'),
-          maxCancellations: n('maxCancellations'), minWithdraw: n('minWithdraw'), autoApproveCustomers: f.elements.autoApproveCustomers.checked, testPayments: f.elements.testPayments.checked,
+          maxCancellations: n('maxCancellations'), latePointsLimit: n('latePointsLimit'), minWithdraw: n('minWithdraw'), autoApproveCustomers: f.elements.autoApproveCustomers.checked, testPayments: f.elements.testPayments.checked,
+          deliveryCode: f.elements.deliveryCode.checked, valueGuardOn: f.elements.valueGuardOn.checked, valueGuardFrom: n('valueGuardFrom'), autoReleaseHours: n('autoReleaseHours'),
+          startCode: f.elements.startCode.checked, mismatchCompensation: n('mismatchCompensation'), mismatchMaxPer30d: n('mismatchMaxPer30d'), maxActiveJobs: n('maxActiveJobs'),
+          avgSpeedKmh: n('avgSpeedKmh'), deliveryBufferMin: n('deliveryBufferMin'), stallMinutes: n('stallMinutes'),
           offersEnabled: f.elements.offersEnabled.checked, offerMinPct: n('offerMinPct'), offerMaxPct: n('offerMaxPct'), dispatchRadiusKm: n('dispatchRadiusKm'), dispatchMaxDrivers: n('dispatchMaxDrivers'), prepaidGraceMin: n('prepaidGraceMin'),
           cancelPaidDriverPct: n('cancelPaidDriverPct'), cancelPaidPlatformPct: n('cancelPaidPlatformPct'), cancelHeadingDriverPct: n('cancelHeadingDriverPct'), cancelHeadingPlatformPct: n('cancelHeadingPlatformPct'),
           newDriver: { orders: n('newDriver.orders'), commissionPct: n('newDriver.commissionPct') },
           instapay: { handle: f.elements['instapay.handle'].value.trim(), name: f.elements['instapay.name'].value.trim() },
           company: Object.fromEntries(['name', 'about', 'phone', 'whatsapp', 'email', 'address', 'hours', 'facebook', 'instagram', 'tiktok', 'youtube'].map((k) => [k, f.elements['company.' + k].value.trim()])),
           categories: readKv('categories'), sizes: readKv('sizes'),
+          companionAsk: f.elements.companionAsk.checked, vehicleGuideOn: f.elements.vehicleGuideOn.checked,
+          vehicleGuide: Object.fromEntries(['pickup', 'half_ton', 'truck', 'jumbo'].map((k) => [k, { maxKg: n(`vg.${k}.maxKg`), size: f.elements[`vg.${k}.size`].value }])),
           passengersEnabled: f.elements.passengersEnabled.checked, passengerClasses: readKv('passengerClasses'),
           levelDiscountPct: { trusted: n('levelDiscountPct.trusted'), pro: n('levelDiscountPct.pro'), elite: n('levelDiscountPct.elite') },
+    trustRules: Object.fromEntries(['trusted', 'pro', 'elite'].map((k) => [k, { avg: n(`trustRules.${k}.avg`), ratings: n(`trustRules.${k}.ratings`) }])),
           profileEditEnabled: f.elements.profileEditEnabled.checked, profileEditCooldownDays: n('profileEditCooldownDays'),
           publicProfiles: f.elements.publicProfiles.checked,
           referralEnabled: f.elements.referralEnabled.checked, referralBonusReferrer: n('referralBonusReferrer'), referralBonusReferred: n('referralBonusReferred'),

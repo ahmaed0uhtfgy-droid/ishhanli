@@ -1,9 +1,9 @@
 // كل المنطق الحساس (الصلاحيات، السعر، Escrow، العمولة، المحفظة، النزاعات) بيتنفذ هنا على السيرفر (Cloudflare Pages Functions).
 // البيانات في Firestore، والمتصفح مالوش وصول مباشر ليها: كل قراءة وكتابة بتعدّي من هنا وبتتفلتر حسب دور المستخدم.
 import { HttpError, verifyIdToken, newId } from '../_lib/core.js';
-import { F, STAMP_KINDS, STAMP_PATH, now, rateLimit, walletCredit, walletTx, userOut, fleetOut, withdrawalOut, txOut, disputeOut, loadOrder, hydrateOrder, orderUpdate, orderOut, auditLog } from '../_lib/db.js';
+import { F, STAMP_KINDS, STAMP_PATH, now, rateLimit, rateTake, walletCredit, walletTx, userOut, fleetOut, withdrawalOut, txOut, disputeOut, loadOrder, hydrateOrder, orderUpdate, orderOut, auditLog } from '../_lib/db.js';
 import { randomBase32, verifyTotp, otpauthURL } from '../_lib/totp.js';
-import { loadSettings, clearSettingsCache, sanitizeSettings, distanceKm, calcPrice, calcPassengerPrice, effectiveCommissionPct, canServe, cancelSplit, couponDiscount, haversineM, split } from '../_lib/logic.js';
+import { loadSettings, clearSettingsCache, sanitizeSettings, distanceKm, calcPrice, calcPassengerPrice, effectiveCommissionPct, canServe, cancelSplit, couponDiscount, haversineM, split, dueOf, lateKinds, guardOf } from '../_lib/logic.js';
 import { saveFile, ownFiles, readFile } from '../_lib/files.js';
 import { notify, dispatchNewOrder, adminIds, orderNo, pushEnabled } from '../_lib/push.js';
 import { trustOf } from '../_lib/trust.js';
@@ -78,7 +78,7 @@ async function need(c, roles, opts = {}) {
   return userOut(r);
 }
 // حدّ محاولات التحقق بخطوتين (كود 6 أرقام): 8 محاولات كل 10 دقايق للمستخدم — بدونها التخمين محدود بالحد العام بس
-async function totpGate(c) { if (c.env.API_RATE_DISABLED === '1') return; await F.run(c.env, [await rateLimit(c.env, 'totp', c.uid, 600e3, 8, 'too_many_attempts')]); }
+async function totpGate(c) { if (c.env.API_RATE_DISABLED === '1') return; await rateTake(c.env, 'totp', c.uid, 600e3, 8, 'too_many_attempts'); }
 async function needCompany(c) { const u = await need(c, ['driver']); if (u.accountType !== 'company') throw new HttpError(403, 'company_only'); return u; }
 async function viewer(c) { // أي مستخدم مفعّل (أو أدمن) للقراءة
   const u = userOut(await F.get(c.env, `users/${c.uid}`));
@@ -93,6 +93,45 @@ const HELD = ['paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered'];
 const ACTIVE = ['heading_pickup', 'picked_up', 'in_transit'];
 const NEXT = { paid: 'heading_pickup', heading_pickup: 'picked_up', picked_up: 'in_transit', in_transit: 'delivered' };
 // إرسال الإشعارات في الخلفية: ما بيبطّأش الرد، وأي فشل فيه ما بيكسّرش العملية الأساسية
+// كود التسليم: بيتولّد من الطلب نفسه بـ HMAC بسر السيرفر (مش متخزّن في أي مكان فمش ممكن يتسرّب من تصدير أو قاعدة بيانات)
+const codeActive = (env, s) => s.deliveryCode === true && !!env.DELIVERY_CODE_SECRET;
+const codeNeeded = (env, s, o) => !!env.DELIVERY_CODE_SECRET && (s.deliveryCode === true || o.guard === 'high'); // الشحنة العالية (حراسة القيمة) كودها إجباري حتى لو الإعداد العام مقفول
+async function deliveryCodeOf(env, orderId, label = 'dc') { // 'dc' = كود التسليم، 'sc' = كود بداية الرحلة
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(env.DELIVERY_CODE_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(label + ':' + orderId)));
+  return String((((sig[0] << 24) | (sig[1] << 16) | (sig[2] << 8) | sig[3]) >>> 0) % 1000000).padStart(6, '0');
+}
+const safeEq = (a, b) => { if (a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; };
+
+// تحرير الفلوس للسواق/الشركة (مشترك بين تأكيد العميل والتحرير التلقائي — نفس الشروط الذرّية بالظبط)
+async function releaseStmts(env, o, s, by, note) {
+  const driver = await F.get(env, `users/${o.driverId}`);
+  const pct = effectiveCommissionPct(s, o.commissionPct, driver); // خصم مستوى الثقة + عمولة السواق الجديد
+  const { commission, net } = split(o.price, pct);
+  return { net, commission, stmts: [
+    ...orderUpdate(env, o, { status: 'completed', escrowStatus: 'released', commission, driverNet: net, commissionPctApplied: pct, completedAt: now() }, L('completed', by, note ? { note } : {})),
+    walletCredit(o.driverId, net),
+    walletTx({ uid: o.driverId, type: 'earning', orderId: o.id, amount: net, gross: o.price, commission }),
+    F.inc(`users/${o.driverId}`, { completed_orders: 1 }), F.inc(`users/${o.customerId}`, { completed_orders: 1 }),
+  ] };
+}
+
+// تفاصيل الشحنة اللي السواق بيوافق عليها: بصمة (hash) بتتحفظ لحظة الموافقة كدليل إن الوصف ما اتغيّرش
+const manifestHash = (o) => sha256hex(JSON.stringify([o.description || '', o.itemsCount || 1, o.declaredValue || 0, o.photos || [], o.category || '', o.size || '', o.weightKg || 0]));
+const ACTIVE_JOB = ['accepted', 'payment_review', 'paid', 'heading_pickup', 'picked_up', 'in_transit']; // طلبات شغّالة على السواق (المسلَّم ما بيتحسبش)
+// طلبات السواق الشغّالة: استعلام لكل حالة (مساواة فقط = من غير فهارس مركّبة). استعلام عام بـ limit كان ممكن يفوّت الشغّال لو السواق عنده طلبات تاريخ كتير.
+const activeJobsOf = async (env, uid) => (await Promise.all(ACTIVE_JOB.map((st) => F.query(env, 'orders', { eq: { driver_id: uid, status: st }, limit: 50 })))).flat();
+/** السواق الفرد: أقصى عدد طلبات شغّالة في نفس الوقت (الافتراضي 1). الشركات بتتحدد بسواق الأسطول في orders/handler.
+ *  بيرجّع كتابة على مستند السواق بشرط النسخة: قبولين متوازيين بيفشل التاني (409) بدل ما الاتنين يعدّوا. */
+async function driverSlot(env, uid, s, exceptOrderId) {
+  const row = await F.get(env, `users/${uid}`);
+  if (!row) throw new HttpError(409, 'driver_unavailable');
+  if (row.account_type === 'company') return null;
+  const mine = (await activeJobsOf(env, uid)).filter((r) => r.id !== exceptOrderId);
+  if (mine.length >= s.maxActiveJobs) throw new HttpError(409, 'driver_busy');
+  return F.patch(`users/${uid}`, { last_accept_at: now() }, row._ut);
+}
+
 const bg = (c, p) => { const safe = Promise.resolve(p).catch(() => {}); if (c.waitUntil) c.waitUntil(safe); return safe; };
 // ---------- الكوبونات ----------
 const normCode = (v) => String(v ?? '').trim().toUpperCase().replace(/\s+/g, '');
@@ -107,11 +146,12 @@ async function applyCoupon(env, code, price, uid) {
   const coupon = await F.get(env, `coupons/${code}`);
   if (!coupon) throw new HttpError(400, 'coupon_not_found');
   const discount = couponDiscount(coupon, price);
+  let use = null;
   if (coupon.per_user > 0 && discount > 0) {
-    const use = await F.get(env, `coupons/${code}/uses/${uid}`);
+    use = await F.get(env, `coupons/${code}/uses/${uid}`);
     if ((use?.n || 0) >= coupon.per_user) throw new HttpError(400, 'coupon_user_limit');
   }
-  return { code, discount, coupon };
+  return { code, discount, coupon, use };
 }
 
 // استرجاع واحد بس لكل طلب (معرّف المستند = رقم الطلب، و create بيفشل لو موجود = منع التكرار)
@@ -141,6 +181,67 @@ async function sweepExpired(env) {
   const cutoff = now() - s.prepaidGraceMin * 60000;
   const rows = (await F.query(env, 'orders', { eq: { status: 'open', escrow_status: 'held' }, limit: 100 })).filter((r) => r.scheduled_at < cutoff).slice(0, 10);
   for (const r of rows) await expireOrder(env, hydrateOrder(r)).catch((e) => console.error('expire_failed', e?.message));
+  // تحرير تلقائي: مسلَّم + محجوز + عدّى المدة + مفيش نزاع (النزاع بيغيّر الحالة لـ disputed فمش بيدخل هنا) + اتسلّم بكود (التسليم بدون كود بيستنّى تأكيد العميل)
+  if (s.autoReleaseHours > 0) {
+    const cut = now() - s.autoReleaseHours * 3600000;
+    const due = (await F.query(env, 'orders', { eq: { status: 'delivered', escrow_status: 'held' }, limit: 100 })).map(hydrateOrder)
+      .filter((o) => o.guard !== 'high' && o.deliveredAt && o.deliveredAt < cut && !o.late && (o.deliveryVerified === 'code' || (o.deliveryVerified === 'geo' && !o.deliveredWithoutCode))).slice(0, 10);
+    for (const o of due) await autoRelease(env, o, s).catch((e) => console.error('auto_release_failed', e?.message));
+  }
+  const moving = (await Promise.all(['picked_up', 'in_transit', 'paid', 'heading_pickup'].map((st) => F.query(env, 'orders', { eq: { status: st }, limit: 50 })))).flat().map(hydrateOrder); // paid/heading_pickup: لتتبّع ميعاد الاستلام
+  for (const o of moving) await watchOrder(env, o, s).catch((e) => console.error('watch_failed', e?.message));
+}
+// متابعة المستلم: أقل قدر من البيانات — حالة + اسم أول + نوع العربية + موقع تقريبي (≈550م) أثناء الرحلة فقط. مفيش تليفون ولا سعر ولا عنوان استلام ولا هوية.
+async function publicTrack(request, env) {
+  const H = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex' };
+  const out = (st, body) => new Response(JSON.stringify(body), { status: st, headers: H });
+  try {
+    await rateTake(env, 'trk', (await sha256hex('ip:' + (request.headers.get('CF-Connecting-IP') || 'local'))).slice(0, 24), 60000, 30, 'too_many_requests');
+    const raw = await request.text(); if (raw.length > 300) return out(413, { error: 'too_large' });
+    let t = ''; try { t = String(JSON.parse(raw || '{}').t ?? ''); } catch { /* ignore */ }
+    if (!/^[A-Za-z0-9_-]{32}$/.test(t)) return out(404, { error: 'not_found' });
+    const sh = await F.get(env, `shares/${await sha256hex(t)}`);
+    if (!sh || sh.revoked || sh.expires_at < now()) return out(404, { error: 'not_found' });
+    const o = await loadOrder(env, sh.order_id).catch(() => null);
+    if (!o) return out(404, { error: 'not_found' });
+    if (['completed', 'cancelled', 'resolved', 'expired'].includes(o.status)) return out(200, { status: o.status, final: true });
+    const rnd = (v) => Math.round(v / 0.005) * 0.005;
+    const l = ['picked_up', 'in_transit'].includes(o.status) ? await F.get(env, `live_locations/${o.id}`) : null;
+    const fresh = l && now() - l.at < 600000;
+    return out(200, { status: o.status, final: false, driver: String(o.driverName || '').split(/\s+/)[0] || null, vehicleType: o.driverVehicle || null,
+      location: fresh ? { lat: rnd(l.lat), lng: rnd(l.lng) } : null, dropoff: o.dropoff ? { lat: rnd(o.dropoff.lat), lng: rnd(o.dropoff.lng) } : null, updatedAt: fresh ? l.at : null });
+  } catch (e) {
+    if (e instanceof HttpError) return out(e.status, { error: e.code || 'error' });
+    console.error('track_failed', e?.message); return out(500, { error: 'server_error' });
+  }
+}
+// تنبيه التأخير/الوقوف أثناء الرحلة: مرة واحدة لكل طلب. الطلب المتأخر بيتعلّم (late) وما بيتحررش تلقائي.
+async function watchOrder(env, o, s) {
+  const t = now(), add = {}; let late = false, stall = false;
+  if (o.deadlineAt && t > o.deadlineAt && !o.lateNotified) { add.late = true; add.lateNotified = true; late = true; }
+  if (s.stallMinutes > 0 && !o.stallNotified && o.startedAt && t - o.startedAt > s.stallMinutes * 60000) {
+    const l = await F.get(env, `live_locations/${o.id}`);
+    // «وقوف» = المواقع بتوصل (آخر موقع من أقل من 5 دقايق) لكن مفيش حركة. لو الإرسال واقف (الصفحة مقفولة) ده مش وقوف فمفيش تنبيه كاذب.
+    if (l && t - l.at < 5 * 60000 && t - Math.max(l.moved_at || 0, o.startedAt) > s.stallMinutes * 60000) { add.stallNotified = true; stall = true; }
+  }
+  const ask = lateKinds(o, t); // ميعاد استلام/تسليم متفق عليه فات + المدة (تتبّع اختياري) → العميل يقرر نقطة أو مسامحة
+  if (ask.length) add.lateMarks = { ...(o.lateMarks || {}), ...Object.fromEntries(ask.map((k) => [k, { state: 'asked', at: t }])) };
+  if (!late && !stall && !ask.length) return;
+  await F.run(env, orderUpdate(env, o, add, L(o.status, 'system', { note: late ? 'late' : stall ? 'stalled' : 'late_ask' })));
+  if (late || stall) {
+    const type = late ? 'late_delivery' : 'stall_alert', vars = { no: orderNo(o.id) };
+    await notify(env, [o.customerId], type, vars, { url: `/#/order/${o.id}` }).catch(() => {});
+    await notify(env, await adminIds(env), type, vars, { url: '/#/admin/orders' }).catch(() => {});
+  }
+  for (const k of ask) await notify(env, [o.customerId], `late_ask_${k}`, { no: orderNo(o.id) }, { url: `/#/order/${o.id}` }).catch(() => {});
+}
+async function autoRelease(env, o, s) {
+  if (o.guard === 'high') return; // حراسة القيمة: الشحنة العالية مفيهاش تحرير تلقائي أبداً (العميل هو اللي يأكّد)
+  const { net, stmts } = await releaseStmts(env, o, s, 'system', 'auto_release'); // orderUpdate شرطه الذرّي بيمنع الصرف المزدوج لو العميل أكّد في نفس اللحظة
+  await F.run(env, stmts);
+  await notify(env, [o.driverId], 'completed', { net, no: orderNo(o.id) }, { url: '/#/driver/wallet' }).catch(() => {});
+  await notify(env, [o.customerId], 'auto_released', { no: orderNo(o.id), hours: s.autoReleaseHours }, { url: '/#/customer' }).catch(() => {});
+  await rewardReferral({ env }, o.customerId, o.id).catch(() => {}); await rewardReferral({ env }, o.driverId, o.id).catch(() => {});
 }
 const toAdmins = (c, type, vars, url) => bg(c, (async () => notify(c.env, await adminIds(c.env), type, vars, { url }))());
 
@@ -169,14 +270,14 @@ const ROUTES = {
     const r = await F.get(env, STAMP_PATH);
     return { stamp: Object.fromEntries(STAMP_KINDS.map((k) => [k, r?.[k] || 0])) };
   },
-  async settings({ env }) { return { settings: { ...(await loadSettings(env)), testPaymentsAllowed: env.ALLOW_TEST_PAYMENTS === '1' } }; }, // الدفع التجريبي لازم يتفعّل كمان من متغيّر Cloudflare (fail-closed)
+  async settings({ env }) { return { settings: { ...(await loadSettings(env)), testPaymentsAllowed: env.ALLOW_TEST_PAYMENTS === '1', deliveryCodeAvailable: !!env.DELIVERY_CODE_SECRET } }; }, // الدفع التجريبي لازم يتفعّل كمان من متغيّر Cloudflare (fail-closed)
   async me({ env, uid }) {
     const r = await F.get(env, `users/${uid}`);
     const profile = userOut(r) || null;
     if (profile) {
       const s = await loadSettings(env);
       profile.edit = editLock(r, s); // حالة تعديل بيانات الحساب (المدة + الميعاد الجاي) — المستخدم لازم يكون عارف
-      if (profile.role === 'driver') profile.trust = { ...trustOf(r), commissionPct: effectiveCommissionPct(s, s.commissionPct, r) };
+      if (profile.role === 'driver') profile.trust = { ...trustOf(r, s), commissionPct: effectiveCommissionPct(s, s.commissionPct, r) };
     }
     return { profile };
   },
@@ -198,7 +299,7 @@ const ROUTES = {
     try { await F.run(c.env, [F.patch(`users/${c.uid}`, patch, r._ut)]); }
     catch (e) { if (e.code === 'conflict') throw new HttpError(409, 'conflict'); throw e; }
     const row = { ...r, ...patch }, profile = userOut(row);
-    if (profile.role === 'driver') profile.trust = { ...trustOf(row), commissionPct: effectiveCommissionPct(s, s.commissionPct, row) };
+    if (profile.role === 'driver') profile.trust = { ...trustOf(row, s), commissionPct: effectiveCommissionPct(s, s.commissionPct, row) };
     return { ok: true, profile, edit: editLock(row, s) };
   },
 
@@ -320,6 +421,8 @@ const ROUTES = {
     if (!['accepted', 'payment_review', 'paid', 'heading_pickup'].includes(o.status)) throw new HttpError(409, 'bad_state');
     const f = await F.get(c.env, `fleet_drivers/${docId(c.body.fleetDriverId)}`);
     if (!f || f.company_uid !== u.uid || f.active === false) throw new HttpError(404, 'not_found');
+    const busyN = (await activeJobsOf(c.env, u.uid)).filter((r) => r.id !== o.id && JSON.parse(r.data || '{}').handler?.fleetDriverId === f.id).length;
+    if (busyN >= (await loadSettings(c.env)).maxActiveJobs) throw new HttpError(409, 'fleet_driver_busy'); // سواق الأسطول معاه شحنة شغّالة
     const handler = { fleetDriverId: f.id, name: f.name, phone: f.phone, nationalId: f.national_id, plate: f.plate, vehicleType: f.vehicle_type, idRef: f.id_ref, licenseRef: f.license_ref, vehiclePhotoRef: f.vehicle_photo_ref || null, companyName: u.companyName, assignedAt: now() };
     await F.run(c.env, orderUpdate(c.env, o, { handler, handlerHistory: [...(o.handlerHistory || []), { fleetDriverId: f.id, name: f.name, nationalId: f.national_id, plate: f.plate, at: now() }] }));
     bg(c, notify(c.env, [o.customerId], 'handler_assigned', { name: f.name, plate: f.plate, no: orderNo(o.id) }, { url: `/#/order/${o.id}` }));
@@ -375,14 +478,14 @@ const ROUTES = {
       const l = await F.get(c.env, `live_locations/${o.id}`);
       if (l) location = { lat: l.lat, lng: l.lng, at: l.at };
     }
-    const out = orderOut(o, u);
+    const out = orderOut(o, u), ts = await loadSettings(c.env); // ts: إعدادات شروط الثقة
     if (o.status === 'open') {
       if (u.role === 'customer' || u.role === 'admin') { // العميل يشوف العروض (بدون رقم السواق لحد ما يقبل)
         const offs = (await F.query(c.env, 'offers', { eq: { order_id: o.id }, limit: 60 })).filter((f) => f.status === 'pending').sort((a, b) => a.price - b.price).slice(0, 30);
         const ds = await F.getMany(c.env, 'users', offs.map((f) => f.driver_id));
         out.offers = offs.map((f, i) => ({ f, d: ds[i] })).filter((x) => x.d).map(({ f, d }) => ({
           id: f.id, price: f.price, note: f.note, createdAt: f.created_at, driverName: d.name, vehicleType: d.vehicle_type, ratingSum: d.rating_sum, ratingCount: d.rating_count,
-          completedOrders: d.completed_orders, trust: trustOf(d),
+          completedOrders: d.completed_orders, trust: trustOf(d, ts),
         }));
       } else if (u.role === 'driver') {
         const f = await F.get(c.env, `offers/${offerKey(o.id, c.uid)}`);
@@ -391,7 +494,7 @@ const ROUTES = {
     }
     if (o.driverId && (u.role === 'customer' || u.role === 'admin')) { // العميل يشوف مستوى وشارات سواق طلبه
       const d = await F.get(c.env, `users/${o.driverId}`);
-      if (d) out.driverTrust = trustOf(d);
+      if (d) out.driverTrust = trustOf(d, ts);
     }
     if (u.role === 'customer' || u.role === 'admin') { // حالة الاسترجاع
       const rf = await F.get(c.env, `refunds/${o.id}`);
@@ -410,7 +513,13 @@ const ROUTES = {
     const o = await loadOrder(c.env, docId(c.body.orderId));
     if (o.driverId !== c.uid || !ACTIVE.includes(o.status)) throw new HttpError(403, 'forbidden');
     const p = point(c.body, false);
-    await F.run(c.env, [F.patch(`live_locations/${o.id}`, { order_id: o.id, lat: p.lat, lng: p.lng, acc: int(c.body.acc ?? 0, 0, 100000), at: now() })]);
+    const prev = await F.get(c.env, `live_locations/${o.id}`), t = now();
+    const moved = !prev || haversineM(p, { lat: prev.lat, lng: prev.lng }) > 100;
+    const trailDue = (!prev?.trail_at || t - prev.trail_at >= 60000) && (prev?.trail_n || 0) < 600; // نقطة مسار كل دقيقة (دليل في النزاعات)
+    await F.run(c.env, [
+      F.patch(`live_locations/${o.id}`, { order_id: o.id, lat: p.lat, lng: p.lng, acc: int(c.body.acc ?? 0, 0, 100000), at: t, ...(moved ? { moved_at: t } : {}), ...(trailDue ? { trail_at: t, trail_n: (prev?.trail_n || 0) + 1 } : {}) }),
+      ...(trailDue ? [F.create(`order_trail/${o.id}_${t}`, { order_id: o.id, lat: p.lat, lng: p.lng, at: t })] : []),
+    ]);
     return { ok: true };
   },
 
@@ -434,26 +543,38 @@ const ROUTES = {
       spec = { service: 'passengers', vehicleClass: b.vehicleClass, passengers: int(b.passengers, 1, cls.seats, 'bad_passengers') };
     } else {
       ({ price } = calcPrice(s, km, b.category, b.size));
-      spec = { service: 'cargo', category: b.category, size: b.size, weightKg: int(b.weightKg, 1, 50000) };
+      // العربية المختارة (اختياري): لازم تكون مفعّلة وحجمها هو نفس الحجم المبعوت (السعر بيتحسب من الحجم زي الأول)
+      const vp = s.vehicleGuideOn !== false && b.vehiclePick ? String(b.vehiclePick) : null;
+      if (vp && !(s.vehicleGuide?.[vp]?.maxKg > 0 && s.vehicleGuide[vp].size === b.size)) throw new HttpError(400, 'bad_vehicle');
+      spec = { service: 'cargo', category: b.category, size: b.size, weightKg: int(b.weightKg, 1, 50000), itemsCount: int(b.itemsCount ?? 1, 1, 10000), declaredValue: int(b.declaredValue ?? 0, 0, 100000000),
+        vehiclePick: vp, companion: s.companionAsk !== false && typeof b.companion === 'boolean' ? b.companion : null }; // companion: العميل هيرافق الشحنة؟ (null = ما اتسألش)
     }
     const when = new Date(b.scheduledAt);
     if (isNaN(when) || when.getTime() < Date.now() - 3600e3) throw new HttpError(400, 'bad_date');
+    const guard = trip ? null : guardOf(s, spec.declaredValue); // حراسة القيمة (لو الأدمن فعّلها)
+    if (guard && !c.env.DELIVERY_CODE_SECRET) throw new HttpError(409, 'guard_needs_code'); // مش هنقبل شحنة عالية من غير القدرة على فرض الكود
+    // تتبّع التأخير (اختياري): ميعاد تسليم + مدة تأخير مسموح بالدقايق. من غير المدة مفيش تتبّع للطلب.
+    const graceMin = b.graceMin === undefined || b.graceMin === null || b.graceMin === '' ? null : int(b.graceMin, 0, 10080, 'bad_grace');
+    let deliveryAt = null;
+    if (b.deliveryAt) { const dt = new Date(b.deliveryAt).getTime(); if (!Number.isFinite(dt) || dt <= when.getTime() || dt > when.getTime() + 30 * 86400e3) throw new HttpError(400, 'bad_delivery_time'); deliveryAt = dt; }
     const code = normCode(b.coupon); // كود خصم اختياري: السيرفر هو اللي بيحسب الخصم (مش العميل)
-    const discount = code ? (await applyCoupon(c.env, code, price, c.uid)).discount : 0;
+    const cp = code ? await applyCoupon(c.env, code, price, c.uid) : null;
+    const discount = cp ? cp.discount : 0;
     const amountDue = price - discount;
     const id = newId(), t = now();
     const prepay = trip || b.prepay === true, first = prepay ? 'awaiting_payment' : 'open'; // الركاب دايماً دفع مقدم؛ البضاعة باختيار العميل
     const data = {
       customerName: u.name, customerPhone: u.phone, ...spec,
-      description: str(b.description ?? '', 0, 500), photos, pickup, dropoff, distanceKm: d.km, distanceSource: d.source,
-      priceOriginal: price, couponCode: code || null, discount, amountDue, instant: prepay ? true : b.instant !== false, payMode: prepay ? 'before' : 'after', commissionPct: s.commissionPct, log: [{ ...L(first, c.uid), at: t }],
+      description: trip ? str(b.description ?? '', 0, 500) : str(b.description ?? '', 10, 1000), photos, pickup, dropoff, distanceKm: d.km, distanceSource: d.source,
+      graceMin, deliveryAt, guard, priceOriginal: price, couponCode: code || null, discount, amountDue, instant: prepay ? true : b.instant !== false, payMode: prepay ? 'before' : 'after', commissionPct: s.commissionPct, log: [{ ...L(first, c.uid), at: t }],
     };
     await F.run(c.env, [
       F.create(`orders/${id}`, { id, customer_id: c.uid, driver_id: null, status: first, escrow_status: 'none', price, commission: null, driver_net: null, customer_refund: null, scheduled_at: when.getTime(), created_at: t, updated_at: t, version: 1, data: JSON.stringify(data) }),
       F.inc(`daily/${dayKey(t)}`, { n: 1 }, { day: dayKey(t) }), // عدّاد يومي للإحصائيات (من غير ما نقرا كل الطلبات)
       ...(code ? [ // استهلاك الكوبون (إجمالي + لكل مستخدم) في نفس الـ commit بتاع الطلب
-        F.inc(`coupons/${code}`, { used_count: 1 }, { updated_at: t }),
-        F.inc(`coupons/${code}/uses/${c.uid}`, { n: 1 }, { uid: c.uid, code, updated_at: t }),
+        // شروط ذرّية: لو اتغيّر عدّاد الكوبون/استخدام المستخدم من وقت ما قرينا (طلب متوازي) الـ commit بيفشل بدل ما الحد يتخطّى
+        F.inc(`coupons/${code}`, { used_count: 1 }, { updated_at: t }, cp.coupon.max_uses > 0 ? cp.coupon._ut : undefined),
+        { ...F.inc(`coupons/${code}/uses/${c.uid}`, { n: 1 }, { uid: c.uid, code, updated_at: t }), ...(cp.coupon.per_user > 0 && cp.discount > 0 ? { pre: cp.use ? { updateTime: cp.use._ut } : { exists: false } } : {}) },
       ] : []),
     ]);
     if (!prepay) bg(c, dispatchNewOrder(c.env, { id, ...spec, pickup, dropoff, price }, s)); // المدفوع مقدماً بيتبعت للسواقين بعد تأكيد الدفع
@@ -467,10 +588,13 @@ const ROUTES = {
     if (o.status !== 'open') throw new HttpError(409, 'order_not_open');
     if (o.instant === false) throw new HttpError(409, 'offers_only'); // العميل اختار يستقبل عروض أسعار بدل القبول الفوري
     if (o.service === 'passengers' && !canServe(u.vehicleType, o)) throw new HttpError(403, 'vehicle_mismatch'); // ركاب: لازم عربية ركاب مناسبة (أمان)
+    if (o.service !== 'passengers' && c.body.agree !== true) throw new HttpError(400, 'must_agree'); // السواق لازم يوافق صراحةً على وصف الشحنة وصورها
+    const slot = await driverSlot(c.env, c.uid, await loadSettings(c.env), o.id);
     const prepaid = o.escrowStatus === 'held'; // مدفوع مقدماً: السواق يبدأ فوراً (الحالة paid)
     const pend = (await F.query(c.env, 'offers', { eq: { order_id: o.id }, limit: 100 })).filter((f) => f.status === 'pending');
     await F.run(c.env, [
-      ...orderUpdate(c.env, o, { status: prepaid ? 'paid' : 'accepted', driverId: c.uid, driverName: u.name, driverPhone: u.phone, driverVehicle: u.vehicleType, acceptedAt: now() }, L(prepaid ? 'paid' : 'accepted', c.uid, prepaid ? { note: 'accepted_prepaid' } : {})),
+      ...orderUpdate(c.env, o, { status: prepaid ? 'paid' : 'accepted', driverId: c.uid, driverName: u.name, driverPhone: u.phone, driverVehicle: u.vehicleType, driverVehiclePhoto: u.vehiclePhotoRef || null, acceptedAt: now(), ...(o.service !== 'passengers' ? { driverAgreedAt: now(), manifestHash: await manifestHash(o) } : {}) }, L(prepaid ? 'paid' : 'accepted', c.uid, prepaid ? { note: 'accepted_prepaid' } : {})),
+      ...(slot ? [slot] : []),
       ...pend.map((f) => F.patch(`offers/${f._id}`, { status: f.driver_id === c.uid ? 'withdrawn' : 'rejected', updated_at: now() })),
     ]);
     bg(c, notify(c.env, [o.customerId], prepaid ? 'accepted_prepaid' : 'accepted', { driver: u.name, no: orderNo(o.id) }, { url: `/#/order/${o.id}` }));
@@ -487,13 +611,14 @@ const ROUTES = {
     if (o.escrowStatus === 'held' || o.payMode === 'before') throw new HttpError(409, 'prepaid_fixed'); // السعر ثابت لأنه اتدفع مقدماً
     if (o.service === 'passengers' && !canServe(u.vehicleType, o)) throw new HttpError(403, 'vehicle_mismatch');
     const lo = Math.max(Math.ceil(s.minPrice), Math.ceil((o.price * s.offerMinPct) / 100)), hi = Math.ceil((o.price * s.offerMaxPct) / 100);
+    if (o.service !== 'passengers' && c.body.agree !== true) throw new HttpError(400, 'must_agree');
     const price = int(c.body.price, lo, hi, 'offer_out_of_range');
     const note = str(c.body.note ?? '', 0, 200);
     const key = offerKey(o.id, c.uid), mine = await F.get(c.env, `offers/${key}`), t = now();
     await F.run(c.env, [
       F.guard({ _ut: o._ut }, `orders/${o.id}`), // لو الطلب اتغيّر (اتقبل/اتلغى) في نفس اللحظة العملية تفشل
-      mine && mine.status === 'pending' ? F.patch(`offers/${key}`, { price, note, updated_at: t }, mine._ut)
-        : F.set(`offers/${key}`, { id: key, order_id: o.id, driver_id: c.uid, price, note, status: 'pending', created_at: t, updated_at: t }),
+      mine && mine.status === 'pending' ? F.patch(`offers/${key}`, { price, note, updated_at: t, agreed_at: t, manifest_hash: await manifestHash(o) }, mine._ut)
+        : F.set(`offers/${key}`, { id: key, order_id: o.id, driver_id: c.uid, price, note, status: 'pending', created_at: t, updated_at: t, agreed_at: t, manifest_hash: await manifestHash(o) }),
     ]);
     bg(c, notify(c.env, [o.customerId], 'offer', { price, no: orderNo(o.id), driver: u.name }, { url: `/#/order/${o.id}`, tag: 'offer-' + o.id }));
     return { ok: true, min: lo, max: hi };
@@ -515,12 +640,14 @@ const ROUTES = {
     if (o.status !== 'open') throw new HttpError(409, 'order_not_open');
     const d = await F.get(c.env, `users/${f.driver_id}`);
     if (!d || d.role !== 'driver' || d.status !== 'active') throw new HttpError(409, 'driver_unavailable');
+    const slot = await driverSlot(c.env, d.uid, await loadSettings(c.env), o.id); // السواق مشغول بطلب تاني؟ العميل يختار عرض غيره
     const others = (await F.query(c.env, 'offers', { eq: { order_id: o.id }, limit: 100 })).filter((r) => r.status === 'pending' && r._id !== f._id);
     const amountDue = Math.max(0, f.price - Math.min(o.discount || 0, f.price)); // لو فيه كوبون: الخصم يفضل مطبّق على السعر المتفق عليه
     await F.run(c.env, [
       F.patch(`offers/${f._id}`, { status: 'accepted', updated_at: now() }, f._ut), // شرط: العرض لسه معلّق
-      ...orderUpdate(c.env, o, { status: 'accepted', driverId: d.uid, driverName: d.name, driverPhone: d.phone, driverVehicle: d.vehicle_type, acceptedAt: now(), price: f.price, amountDue, priceNegotiated: true }, L('accepted', c.uid, { note: 'offer', price: f.price })),
+      ...orderUpdate(c.env, o, { status: 'accepted', driverId: d.uid, driverName: d.name, driverPhone: d.phone, driverVehicle: d.vehicle_type, driverVehiclePhoto: d.vehicle_photo_ref || null, acceptedAt: now(), price: f.price, amountDue, priceNegotiated: true, driverAgreedAt: f.agreed_at || null, manifestHash: f.manifest_hash || null }, L('accepted', c.uid, { note: 'offer', price: f.price })),
       ...others.map((r) => F.patch(`offers/${r._id}`, { status: 'rejected', updated_at: now() })),
+      ...(slot ? [slot] : []),
     ]);
     bg(c, notify(c.env, [d.uid], 'offer_accepted', { price: f.price, no: orderNo(o.id) }, { url: `/#/order/${o.id}` }));
     bg(c, notify(c.env, others.map((r) => r.driver_id), 'offer_rejected', { no: orderNo(o.id) }, { url: '/#/driver' }));
@@ -617,13 +744,39 @@ const ROUTES = {
         patch[next === 'picked_up' ? 'pickupPhoto' : 'deliveryPhoto'] = photo;
       }
       patch[next === 'picked_up' ? 'pickedUpAt' : 'deliveredAt'] = now();
+      if (next === 'picked_up') { // عدّاد الرحلة + مهلة التسليم (مدة متوقعة من المسافة + وقت إضافي) — الاتنين بيشوفوهم
+        patch.startedAt = now(); patch.deadlineAt = now() + Math.round(((o.distanceKm || 0) / s.avgSpeedKmh) * 60 + s.deliveryBufferMin) * 60000;
+      }
       if (s.geofenceMeters > 0) {
         if (!loc) throw new HttpError(400, 'location_required');
         if (haversineM(loc, target) > s.geofenceMeters) throw new HttpError(403, 'too_far');
+        if (next === 'delivered') patch.deliveryVerified = 'geo'; // اتسلّم جوه نطاق العميل (شرط للتحرير التلقائي)
+      }
+      if (next === 'picked_up' && o.service !== 'passengers' && s.startCode === true && c.env.DELIVERY_CODE_SECRET) { // كود بداية الرحلة: العميل بيدّيه للسواق وقت التحميل
+        if (c.body.noCode === true) { patch.startVerified = 'none'; patch.noStartCodeReason = str(c.body.noCodeReason ?? '', 0, 120); }
+        else {
+          const given = String(c.body.code ?? '').replace(/\D/g, '');
+          await rateTake(c.env, 'scode', o.id, 30 * 86400e3, 6, 'too_many_attempts');
+          if (!safeEq(given, await deliveryCodeOf(c.env, o.id, 'sc'))) throw new HttpError(403, 'bad_start_code');
+          patch.startVerified = 'code';
+        }
+      }
+      if (next === 'delivered' && o.service !== 'passengers' && codeNeeded(c.env, s, o)) { // كود التسليم: دليل إن المستلم الحقيقي استلم
+        if (c.body.noCode === true) { patch.deliveredWithoutCode = true; patch.noCodeReason = str(c.body.noCodeReason ?? '', 0, 120); } // بديل لو العميل مش متاح: بيتعلّم ومش بيتحرر تلقائي
+        else {
+          const given = String(c.body.code ?? '').replace(/\D/g, '');
+          await rateTake(c.env, 'dcode', o.id, 30 * 86400e3, 6, 'too_many_attempts'); // حد محاولات ذرّي على الطلب نفسه
+          if (!safeEq(given, await deliveryCodeOf(c.env, o.id))) throw new HttpError(403, 'bad_delivery_code');
+          patch.deliveredWithCode = true; patch.deliveryVerified = 'code';
+        }
       }
     }
+    const lateNow = lateKinds({ ...o, ...patch }, now()); // السواق وصل/سلّم بعد الميعاد + المدة → العميل يتسأل (يسجّل نقطة أو يسامح)
+    if (lateNow.length) patch.lateMarks = { ...(o.lateMarks || {}), ...Object.fromEntries(lateNow.map((k) => [k, { state: 'asked', at: now() }])) };
     await F.run(c.env, orderUpdate(c.env, o, patch, L(next, c.uid, loc ? { lat: loc.lat, lng: loc.lng } : {})));
-    bg(c, notify(c.env, [o.customerId], o.service === 'passengers' ? `${next}_p` : next, { no: orderNo(o.id) }, { url: `/#/order/${o.id}` }));
+    for (const k of lateNow) bg(c, notify(c.env, [o.customerId], `late_ask_${k}`, { no: orderNo(o.id) }, { url: `/#/order/${o.id}` }));
+    const tpl = next === 'picked_up' && patch.startVerified ? (patch.startVerified === 'code' ? 'trip_started' : 'trip_started_nocode') : o.service === 'passengers' ? `${next}_p` : next;
+    bg(c, notify(c.env, [o.customerId], tpl, { no: orderNo(o.id) }, { url: `/#/order/${o.id}` }));
     return { ok: true, status: next };
   },
 
@@ -634,19 +787,148 @@ const ROUTES = {
     if (o.customerId !== c.uid) throw new HttpError(403, 'forbidden');
     if (o.status !== 'delivered' || o.escrowStatus !== 'held') throw new HttpError(409, 'bad_state');
     const s = await loadSettings(c.env);
-    const driver = await F.get(c.env, `users/${o.driverId}`);
-    const pct = effectiveCommissionPct(s, o.commissionPct, driver); // خصم مستوى الثقة + عمولة السواق الجديد
-    const { commission, net } = split(o.price, pct);
-    await F.run(c.env, [
-      ...orderUpdate(c.env, o, { status: 'completed', escrowStatus: 'released', commission, driverNet: net, commissionPctApplied: pct, completedAt: now() }, L('completed', c.uid)),
-      walletCredit(o.driverId, net),
-      walletTx({ uid: o.driverId, type: 'earning', orderId: o.id, amount: net, gross: o.price, commission }),
-      F.inc(`users/${o.driverId}`, { completed_orders: 1 }), F.inc(`users/${o.customerId}`, { completed_orders: 1 }),
-    ]);
+    const { net, commission, stmts } = await releaseStmts(c.env, o, s, c.uid);
+    await F.run(c.env, stmts);
     bg(c, notify(c.env, [o.driverId], 'completed', { net, no: orderNo(o.id) }, { url: '/#/driver/wallet' }));
     bg(c, rewardReferral(c, o.customerId, o.id)); // مكافأة إحالة المُحال (مرة واحدة، لو مفعّلة)
     bg(c, rewardReferral(c, o.driverId, o.id));
     return { ok: true, net, commission };
+  },
+
+  // ---------- كود التسليم (للعميل فقط) ----------
+  async 'orders/code'(c) {
+    await need(c, ['customer']);
+    const o = await loadOrder(c.env, docId(c.body.orderId));
+    if (o.customerId !== c.uid) throw new HttpError(403, 'forbidden');
+    const s = await loadSettings(c.env);
+    const res = { active: false };
+    if (o.service === 'passengers' || !c.env.DELIVERY_CODE_SECRET) return res;
+    if ((s.deliveryCode === true || o.guard === 'high') && ['accepted', 'paid', 'heading_pickup', 'picked_up', 'in_transit'].includes(o.status)) { res.active = true; res.code = await deliveryCodeOf(c.env, o.id); }
+    if (s.startCode === true && ['accepted', 'paid', 'heading_pickup'].includes(o.status)) res.startCode = await deliveryCodeOf(c.env, o.id, 'sc');
+    return res;
+  },
+
+  // ---------- رابط متابعة للمستلم (من غير تسجيل دخول): رمز عشوائي 192-bit متخزّن مشفّر، بيتلغي بنهاية الطلب أو بعد 72 ساعة ----------
+  async 'orders/share'(c) {
+    await need(c, ['customer']);
+    const o = await loadOrder(c.env, docId(c.body.orderId));
+    if (o.customerId !== c.uid) throw new HttpError(403, 'forbidden');
+    if (!['accepted', 'paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered'].includes(o.status)) throw new HttpError(409, 'bad_state');
+    await rateTake(c.env, 'share', c.uid, 3600e3, 10, 'too_many_requests');
+    const token = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(24)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const expiresAt = now() + 72 * 3600e3;
+    await F.run(c.env, [F.create(`shares/${await sha256hex(token)}`, { order_id: o.id, customer_id: c.uid, expires_at: expiresAt, revoked: false, created_at: now() })]);
+    return { token, expiresAt };
+  },
+  async 'orders/unshare'(c) {
+    await need(c, ['customer']);
+    const o = await loadOrder(c.env, docId(c.body.orderId));
+    if (o.customerId !== c.uid) throw new HttpError(403, 'forbidden');
+    const rows = await F.query(c.env, 'shares', { eq: { order_id: o.id }, limit: 50 });
+    await F.run(c.env, rows.filter((r) => !r.revoked).map((r) => F.patch(`shares/${r._id}`, { revoked: true })));
+    return { ok: true };
+  },
+
+  // ---------- السواق راح يستلم ولقى الشحنة مش زي وصف العميل: يرفض يستلمها ويخد تعويض (من الأدمن) والباقي يترد للعميل ----------
+  // لو السواق عايز ياخدها عادي بيكمّل الاستلام وما بيستخدمش الزرار ده. الحماية من الإساءة: لازم يكون في موقع الاستلام + سبب مكتوب + حد بلاغات في الشهر + سجل تدقيق.
+  async 'orders/mismatch'(c) {
+    const du = await need(c, ['driver']);
+    const o = await loadOrder(c.env, docId(c.body.orderId));
+    if (o.driverId !== c.uid || o.service === 'passengers') throw new HttpError(403, 'forbidden');
+    if (o.escrowStatus !== 'held' || !['paid', 'heading_pickup'].includes(o.status)) throw new HttpError(409, 'bad_state');
+    const s = await loadSettings(c.env);
+    if (s.geofenceMeters > 0) {
+      if (!c.body.loc) throw new HttpError(400, 'location_required');
+      if (haversineM(point(c.body.loc, false), o.pickup) > s.geofenceMeters) throw new HttpError(403, 'too_far'); // لازم يكون فعلاً في مكان الاستلام
+    }
+    const reason = str(c.body.reason, 5, 300); // سبب مكتوب إجباري
+    const row = await F.get(c.env, `users/${c.uid}`), t = now();
+    const win = t - (row.mm_start || 0) > 30 * 86400e3 ? { start: t, n: 0 } : { start: row.mm_start, n: row.mm_n || 0 };
+    if (win.n >= s.mismatchMaxPer30d) throw new HttpError(429, 'mismatch_limit');
+    const collected = collectedOf(o), comp = Math.min(s.mismatchCompensation, collected), back = collected - comp;
+    const stmts = [
+      ...orderUpdate(c.env, o, { status: 'cancelled', escrowStatus: 'settled', cancelledBy: 'driver', cancelReason: 'goods_mismatch', mismatchNote: reason, commission: 0, driverNet: comp, customerRefund: back }, L('cancelled', c.uid, { note: 'goods_mismatch', reason })),
+      F.patch(`users/${c.uid}`, { mm_start: win.start, mm_n: win.n + 1 }, row._ut), // بيمنع بلاغين متوازيين يتخطّوا الحد
+      auditLog(du, 'order.mismatch', { targetType: 'order', targetId: o.id, note: reason, meta: { compensation: comp, refund: back, claimsInWindow: win.n + 1 } }),
+    ];
+    if (comp > 0) stmts.push(walletCredit(c.uid, comp), walletTx({ uid: c.uid, type: 'mismatch_compensation', orderId: o.id, amount: comp, gross: collected, commission: 0 }));
+    if (back > 0) stmts.push(refundInsert(c.env, o, 'goods_mismatch', back));
+    await F.run(c.env, stmts);
+    bg(c, notify(c.env, [o.customerId], 'goods_mismatch', { no: orderNo(o.id), amount: comp }, { url: `/#/order/${o.id}` }));
+    if (back > 0) afterRefundRequest(c, o, back);
+    return { ok: true, compensation: comp, refund: back };
+  },
+
+  // ---------- مواعيد الاستلام/التسليم + نقاط التأخير (تتبّع اختياري: العميل هو اللي بيحدد مدة التأخير المسموح) ----------
+  // السواق يقترح تعديل المواعيد (العميل بس هو اللي يوافق). اقتراح واحد معلّق، وحد أقصى 5 اقتراحات للطلب.
+  async 'orders/propose_times'(c) {
+    await need(c, ['driver']);
+    const o = await loadOrder(c.env, docId(c.body.orderId));
+    if (o.driverId !== c.uid) throw new HttpError(403, 'forbidden');
+    if (o.graceMin == null) throw new HttpError(409, 'no_time_tracking');
+    if (!ACTIVE_JOB.includes(o.status)) throw new HttpError(409, 'bad_state');
+    if ((o.proposalCount || 0) >= 5) throw new HttpError(429, 'too_many_proposals');
+    const t = now(), pickedUp = ['picked_up', 'in_transit'].includes(o.status);
+    const when = (v) => { if (v === undefined || v === null || v === '') return null; const d = new Date(v).getTime(); if (!Number.isFinite(d) || d < t - 60000 || d > t + 30 * 86400e3) throw new HttpError(400, 'bad_date'); return d; };
+    const pickupAt = when(c.body.pickupAt), deliveryAt = when(c.body.deliveryAt);
+    if (pickupAt === null && deliveryAt === null) throw new HttpError(400, 'bad_input');
+    if (pickupAt !== null && pickedUp) throw new HttpError(409, 'bad_state'); // الاستلام حصل خلاص
+    const effP = pickupAt ?? dueOf(o, 'pickup'), effD = deliveryAt ?? dueOf(o, 'delivery');
+    if (effP && effD && effD <= effP) throw new HttpError(400, 'bad_delivery_time');
+    const proposal = { ...(pickupAt !== null ? { pickupAt } : {}), ...(deliveryAt !== null ? { deliveryAt } : {}), at: t };
+    await F.run(c.env, orderUpdate(c.env, o, { timeProposal: proposal, proposalCount: (o.proposalCount || 0) + 1 }, L(o.status, c.uid, { note: 'time_proposed' })));
+    bg(c, notify(c.env, [o.customerId], 'time_proposed', { no: orderNo(o.id) }, { url: `/#/order/${o.id}` }));
+    return { ok: true };
+  },
+  async 'orders/answer_times'(c) {
+    await need(c, ['customer']);
+    if (typeof c.body.accept !== 'boolean') throw new HttpError(400, 'bad_input');
+    const o = await loadOrder(c.env, docId(c.body.orderId));
+    if (o.customerId !== c.uid) throw new HttpError(403, 'forbidden');
+    const p = o.timeProposal; if (!p) throw new HttpError(409, 'no_proposal');
+    const t = now(), patch = { timeProposal: null };
+    if (c.body.accept) {
+      const pickedUp = ['picked_up', 'in_transit', 'delivered'].includes(o.status);
+      if ((p.pickupAt != null && !pickedUp && p.pickupAt < t) || (p.deliveryAt != null && p.deliveryAt < t)) throw new HttpError(409, 'proposal_expired'); // الميعاد المقترح فات — العميل يرفض والسواق يقترح تاني
+      const agreed = { ...(o.agreed || {}), at: t }, marks = { ...(o.lateMarks || {}) };
+      if (p.pickupAt != null && !pickedUp) { agreed.pickupAt = p.pickupAt; if (marks.pickup?.state === 'asked') delete marks.pickup; } // سؤال معلّق عن ميعاد اتغيّر بيتلغي؛ اللي اتحسم بيفضل
+      if (p.deliveryAt != null) { agreed.deliveryAt = p.deliveryAt; if (marks.delivery?.state === 'asked') delete marks.delivery; }
+      patch.agreed = agreed; patch.lateMarks = Object.keys(marks).length ? marks : null;
+    }
+    await F.run(c.env, orderUpdate(c.env, o, patch, L(o.status, c.uid, { note: c.body.accept ? 'times_agreed' : 'times_rejected' })));
+    bg(c, notify(c.env, [o.driverId], c.body.accept ? 'time_agreed' : 'time_rejected', { no: orderNo(o.id) }, { url: `/#/order/${o.id}` }));
+    return { ok: true };
+  },
+  // العميل بعد ما السواق يتأخر: يسجّل نقطة تأخير أو يسامح. من غير رد = مسامحة (مفيش نقطة). نقطة واحدة بس لكل ميعاد (create بيمنع التكرار).
+  async 'orders/late_decision'(c) {
+    await need(c, ['customer']);
+    const o = await loadOrder(c.env, docId(c.body.orderId));
+    if (o.customerId !== c.uid || !o.driverId) throw new HttpError(403, 'forbidden');
+    const kind = c.body.kind; if (!['pickup', 'delivery'].includes(kind) || typeof c.body.point !== 'boolean') throw new HttpError(400, 'bad_input');
+    const m = o.lateMarks?.[kind]; if (m?.state !== 'asked') throw new HttpError(409, 'bad_state');
+    const t = now(), s = await loadSettings(c.env), pointIt = c.body.point === true;
+    const marks = { ...o.lateMarks, [kind]: { state: pointIt ? 'point' : 'forgiven', at: t, askedAt: m.at } };
+    const stmts = [...orderUpdate(c.env, o, { lateMarks: marks }, L(o.status, c.uid, { note: pointIt ? 'late_point' : 'late_forgiven', kind }))];
+    let prev = 0;
+    if (pointIt) {
+      prev = (await F.get(c.env, `users/${o.driverId}`))?.late_points || 0;
+      stmts.push(F.create(`late_points/${o.id}_${kind}_${o.driverId}`, { order_id: o.id, driver_id: o.driverId, customer_id: c.uid, kind, due_at: dueOf(o, kind), grace_min: o.graceMin, at: t }), F.inc(`users/${o.driverId}`, { late_points: 1 }));
+    }
+    await F.run(c.env, stmts);
+    if (pointIt) {
+      bg(c, notify(c.env, [o.driverId], 'late_point', { no: orderNo(o.id) }, { url: '/#/driver/dashboard' }));
+      if (s.latePointsLimit > 0 && prev < s.latePointsLimit && prev + 1 >= s.latePointsLimit) toAdmins(c, 'late_limit', { name: o.driverName || '', n: prev + 1 }, '/#/admin/users'); // وصل الحد → يروح للأدمن (حظر أو مسح)
+    }
+    return { ok: true, state: marks[kind].state };
+  },
+  // نقاط التأخير: السواق يشوف نقاطه هو، والأدمن يشوف نقاط أي سواق (مع العميل اللي سجّلها)
+  async 'late/list'(c) {
+    const u = await need(c, ['driver', 'admin']);
+    const uid = u.role === 'admin' ? uidOf(c.body.uid) : c.uid;
+    const user = await F.get(c.env, `users/${uid}`); if (!user) throw new HttpError(404, 'user_not_found');
+    const since = user.late_cleared_at || 0;
+    const rows = (await F.query(c.env, 'late_points', { eq: { driver_id: uid }, limit: 100 })).filter((r) => r.at > since).sort((a, b) => b.at - a.at);
+    return { points: user.late_points || 0, items: rows.map((r) => ({ orderId: r.order_id, no: orderNo(r.order_id), kind: r.kind, dueAt: r.due_at, graceMin: r.grace_min, at: r.at, ...(u.role === 'admin' ? { customerId: r.customer_id } : {}) })) };
   },
 
   // ---------- إلغاء ----------
@@ -683,7 +965,7 @@ const ROUTES = {
       patch = { status: 'cancelled', cancelledBy: 'customer', cancelReason: reason, ...(refund ? { escrowStatus: 'refund_pending' } : {}) }; status = 'cancelled'; counts = o.status === 'accepted';
     } else if (asDriver && ['accepted', 'paid', 'heading_pickup'].includes(o.status)) {
       // السواق اعتذر: الطلب بيرجع مفتوح لسواقين تانيين (ولو مدفوع، المبلغ بيفضل محجوز) وبيتحسب عليه إلغاء
-      patch = { status: 'open', driverId: null, driverName: null, driverPhone: null, driverVehicle: null, acceptedAt: null, ...(held ? { instant: true } : {}) }; status = 'open'; counts = true;
+      patch = { status: 'open', driverId: null, driverName: null, driverPhone: null, driverVehicle: null, driverVehiclePhoto: null, acceptedAt: null, agreed: null, timeProposal: null, proposalCount: 0, lateMarks: null, ...(held ? { instant: true } : {}) }; status = 'open'; counts = true;
     } else throw new HttpError(409, 'cannot_cancel'); // بعد الاستلام: يتم فتح نزاع
     const stmts = orderUpdate(c.env, o, patch, L(status, c.uid, asDriver ? { note: 'driver_cancelled', reason } : { reason }));
     if (refund) stmts.push(refundInsert(c.env, o, 'cancelled'));
@@ -708,9 +990,16 @@ const ROUTES = {
     const field = asCustomer ? 'rateByCustomer' : 'rateByDriver';
     if (o[field]) throw new HttpError(409, 'already_rated');
     const stars = int(c.body.stars, 1, 5);
+    // أسئلة سريعة من العميل عن السواق (وصل في الميعاد؟ البضاعة سليمة؟ تعامل كويس؟) — لازم الـ3 مع بعض ومن العميل بس
+    let q = null;
+    if (asCustomer && c.body.onTime !== undefined) {
+      const v = [c.body.onTime, c.body.intact, c.body.polite];
+      if (!v.every((x) => typeof x === 'boolean')) throw new HttpError(400, 'bad_input');
+      q = { onTime: v[0], intact: v[1], polite: v[2] };
+    }
     await F.run(c.env, [
-      ...orderUpdate(c.env, o, { [field]: { stars, comment: str(c.body.comment ?? '', 0, 300), at: now() } }),
-      F.inc(`users/${asCustomer ? o.driverId : o.customerId}`, { rating_sum: stars, rating_count: 1 }),
+      ...orderUpdate(c.env, o, { [field]: { stars, comment: str(c.body.comment ?? '', 0, 300), at: now(), ...(q || {}) } }),
+      F.inc(`users/${asCustomer ? o.driverId : o.customerId}`, { rating_sum: stars, rating_count: 1, ...(q ? { q_n: 1, q_ontime: q.onTime ? 1 : 0, q_intact: q.intact ? 1 : 0, q_polite: q.polite ? 1 : 0 } : {}) }),
     ]);
     return { ok: true };
   },
@@ -726,11 +1015,56 @@ const ROUTES = {
     return { wallet: { balance: w?.balance || 0, totalEarned: w?.total_earned || 0 }, tx: tx.map(txOut), withdrawals: wd.sort(byDesc('created_at')).slice(0, 40).map(withdrawalOut) };
   },
 
+  // لوحة بيانات السواق: كل حاجة تخصه في قراءة واحدة (قراءة فقط — ما بتغيّر أي رصيد)
+  async 'driver/dashboard'(c) {
+    await need(c, ['driver']);
+    const s = await loadSettings(c.env);
+    const [row, w, tx, wd, orders, disputes] = await Promise.all([
+      F.get(c.env, `users/${c.uid}`), F.get(c.env, `wallets/${c.uid}`),
+      F.query(c.env, `wallets/${c.uid}/tx`, { order: ['at', 'desc'], limit: 300 }),
+      F.query(c.env, 'withdrawals', { eq: { uid: c.uid }, limit: 100 }),
+      F.query(c.env, 'orders', { eq: { driver_id: c.uid }, limit: 200 }),
+      F.query(c.env, 'disputes', { eq: { driver_id: c.uid }, limit: 100 }),
+    ]);
+    const activeRows = (await activeJobsOf(c.env, c.uid)).map(hydrateOrder);
+    const t = now(), DAY = 86400000, EARN = ['earning', 'dispute_earning', 'cancel_compensation', 'mismatch_compensation'];
+    const ms = (v) => (!v ? NaN : v.toDate ? v.toDate().getTime() : v instanceof Date ? v.getTime() : new Date(v).getTime());
+    const blank = () => ({ trips: 0, gross: 0, commission: 0, net: 0 });
+    const earn = { d1: blank(), d7: blank(), d30: blank() };
+    for (const r of tx.map(txOut)) {
+      if (!EARN.includes(r.type)) continue;
+      const at = ms(r.at); if (isNaN(at)) continue;
+      for (const [k, span] of [['d1', DAY], ['d7', 7 * DAY], ['d30', 30 * DAY]]) if (t - at <= span) { const p = earn[k]; p.net += r.amount; p.gross += r.gross || 0; p.commission += r.commission || 0; if (r.type === 'earning') p.trips += 1; }
+    }
+    earn.all = { trips: row.completed_orders || 0, net: w?.total_earned || 0 }; // إجمالي مدى الحياة من المحفظة نفسها
+    const os = orders.map(hydrateOrder);
+    const rated = os.filter((o) => o.rateByCustomer).sort((a, b) => (b.rateByCustomer.at || 0) - (a.rateByCustomer.at || 0)).slice(0, 8)
+      .map((o) => ({ no: orderNo(o.id), stars: o.rateByCustomer.stars, comment: o.rateByCustomer.comment || '', at: o.rateByCustomer.at, onTime: o.rateByCustomer.onTime ?? null, intact: o.rateByCustomer.intact ?? null, polite: o.rateByCustomer.polite ?? null }));
+    const pct = (x, n) => (n ? Math.round((x / n) * 100) : null);
+    const win = t - (row.mm_start || 0) > 30 * DAY ? 0 : row.mm_n || 0;
+    return {
+      profile: { name: row.name, phone: row.phone, status: row.status, accountType: row.account_type || 'individual', companyName: row.company_name || null, vehicleType: row.vehicle_type || null, phoneVerified: !!row.phone_verified, createdAt: row.created_at,
+        docs: { id: !!row.id_ref, license: !!row.license_ref, vehicleReg: !!row.vehicle_reg_ref, vehiclePhoto: !!row.vehicle_photo_ref }, walletFrozen: !!row.wallet_frozen },
+      wallet: { balance: w?.balance || 0, totalEarned: w?.total_earned || 0, pendingWithdrawals: wd.filter((x) => x.status === 'pending').reduce((a, x) => a + (x.amount || 0), 0), paidWithdrawals: wd.filter((x) => x.status === 'paid').reduce((a, x) => a + (x.amount || 0), 0) },
+      earnings: earn,
+      orders: {
+        active: activeRows.slice(0, 10).map((o) => ({ id: o.id, no: orderNo(o.id), status: o.status, price: o.price, pickup: o.pickup?.address || '', dropoff: o.dropoff?.address || '', scheduledAt: o.scheduledAt || null, late: !!o.late })),
+        activeCount: activeRows.length, maxActive: s.maxActiveJobs,
+        completed: row.completed_orders || 0, cancelledByYou: row.cancel_count || 0, lateCount: os.filter((o) => o.late === true).length, sample: os.length,
+        disputesOpen: disputes.filter((d) => d.status === 'open').length, disputesTotal: disputes.length,
+      },
+      ratings: { avg: row.rating_count ? Math.round((row.rating_sum / row.rating_count) * 10) / 10 : null, count: row.rating_count || 0, recent: rated,
+        quick: row.q_n ? { n: row.q_n, onTime: pct(row.q_ontime || 0, row.q_n), intact: pct(row.q_intact || 0, row.q_n), polite: pct(row.q_polite || 0, row.q_n) } : null },
+      trust: { ...trustOf(row, s), commissionPct: effectiveCommissionPct(s, s.commissionPct, row) },
+      protection: { mismatchUsed: win, mismatchLimit: s.mismatchMaxPer30d },
+    };
+  },
+
   // تقرير مالي أسبوعي للسواق (آخر 8 أسابيع، الأسبوع يبدأ الاثنين) — قراءة واحدة على حركات المحفظة
   async 'wallet/weekly'(c) {
     await need(c, ['driver']);
     const rows = await F.query(c.env, `wallets/${c.uid}/tx`, { order: ['at', 'desc'], limit: 300 });
-    const EARN = ['earning', 'dispute_earning', 'cancel_compensation'];
+    const EARN = ['earning', 'dispute_earning', 'cancel_compensation', 'mismatch_compensation'];
     const ms = (v) => (!v ? NaN : v.toDate ? v.toDate().getTime() : v instanceof Date ? v.getTime() : new Date(v).getTime());
     const weeks = new Map();
     for (const r of rows.map(txOut)) {
@@ -754,6 +1088,7 @@ const ROUTES = {
     const method = c.body.method;
     if (!['instapay', 'vodafone', 'bank'].includes(method)) throw new HttpError(400, 'bad_method');
     const account = str(c.body.account, 5, 60), id = newId();
+    if ((await F.get(c.env, `users/${c.uid}`))?.wallet_frozen) throw new HttpError(403, 'wallet_frozen'); // فيه بلاغ فقدان مفتوح على السواق
     const w = await F.get(c.env, `wallets/${c.uid}`);
     if (!w || (w.balance || 0) < amount) throw new HttpError(400, 'insufficient_balance');
     try {
@@ -773,7 +1108,9 @@ const ROUTES = {
     const asCustomer = o.customerId === c.uid;
     if (!asCustomer && o.driverId !== c.uid) throw new HttpError(403, 'forbidden');
     if (!HELD.includes(o.status)) throw new HttpError(409, 'bad_state'); // الفلوس لسه محجوزة
-    if (!['damaged', 'delay', 'not_as_described', 'payment', 'no_show', 'other'].includes(c.body.reason)) throw new HttpError(400, 'bad_reason');
+    if (!['damaged', 'delay', 'not_as_described', 'payment', 'no_show', 'missing', 'other'].includes(c.body.reason)) throw new HttpError(400, 'bad_reason');
+    const missing = c.body.reason === 'missing';
+    if (missing && (!asCustomer || !['picked_up', 'in_transit', 'delivered'].includes(o.status))) throw new HttpError(409, 'bad_state'); // بلاغ فقدان: العميل بعد ما السواق استلم الشحنة
     const evidence = fileRefs(c.body.evidence ?? [], 5); await ownFiles(c.env, c.uid, evidence);
     const id = newId();
     await F.run(c.env, [
@@ -783,8 +1120,9 @@ const ROUTES = {
         details: str(c.body.details ?? '', 0, 1000), evidence: JSON.stringify(evidence), order_price: o.price, status: 'open', decision: null, customer_pct: null,
         customer_refund: null, driver_net: null, commission: null, note: null, refund_paid: false, created_at: now(), resolved_at: null, resolved_by: null,
       }),
+      ...(missing ? [F.patch(`users/${o.driverId}`, { wallet_frozen: true, wallet_frozen_order: o.id })] : []), // تجميد محفظة السواق وسحوباته لحد قرار الأدمن
     ]);
-    toAdmins(c, 'dispute', { no: orderNo(o.id) }, '/#/admin/disputes');
+    toAdmins(c, missing ? 'missing_report' : 'dispute', { no: orderNo(o.id) }, '/#/admin/disputes');
     bg(c, notify(c.env, [asCustomer ? o.driverId : o.customerId], 'dispute', { no: orderNo(o.id) }, { url: `/#/order/${o.id}` }));
     return { ok: true, id };
   },
@@ -860,8 +1198,9 @@ const ROUTES = {
     return { enabled: !!u?.totp_enabled, verified: !!(s && s.uid === c.uid && Number(s.exp || 0) > now()) };
   },
   async 'admin/2fa/setup'(c) {
-    await need(c, ['admin'], { skip2fa: true });
+    // لو الـ2FA مفعّل بالفعل لازم جلسة 2FA سارية قبل ما يتغيّر السر — وإلا أي حد معاه الباسورد بس يقدر يعطّل الحماية
     const u = await F.get(c.env, `users/${c.uid}`);
+    await need(c, ['admin'], { skip2fa: !u?.totp_enabled });
     const secret = randomBase32(32);
     await F.run(c.env, [F.patch(`users/${c.uid}`, { totp_secret: secret, totp_enabled: false, totp_setup_at: now(), updated_at: now() }, u?._ut)]);
     return { secret, otpauth: otpauthURL(secret, u?.email || c.uid) };
@@ -909,7 +1248,7 @@ const ROUTES = {
     const CAPS = { orders: 5000, users: 5000, offers: 5000, wallets: 2000, withdrawals: 5000, refunds: 5000, disputes: 5000, coupons: 2000, referrals: 5000, blacklist: 2000, reports: 2000, sos_events: 2000, audit: 2000 };
     const only = str(c.body?.col ?? '', 0, 40);
     const cols = only && CAPS[only] ? [only] : Object.keys(CAPS);
-    const clean = (r) => { const o = { ...r }; delete o._id; delete o._ut; delete o._v; return o; };
+    const clean = (r) => { const o = { ...r }; delete o._id; delete o._ut; delete o._v; for (const k of Object.keys(o)) if (/secret/i.test(k)) delete o[k]; return o; }; // ما نصدّرش أسرار (totp_secret...) في النسخة الاحتياطية
     const collections = {};
     for (const col of cols) { const rows = await F.query(E, col, { limit: CAPS[col] }); collections[col] = rows.map(clean); }
     const walletTx = {};
@@ -1016,7 +1355,8 @@ const ROUTES = {
     const has = (v) => String(v ?? '').toLowerCase().includes(q);
     const rows = [...seen.values()].filter((r) => r.role !== 'admin' && (!q || has(r.name) || has(r.phone) || has(r.email)))
       .sort((a, b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1) || b.created_at - a.created_at).slice(0, 300);
-    return { users: rows.map((r) => { const u = userOut(r); if (r.role === 'driver') u.trust = trustOf(r); return u; }) };
+    const ts = await loadSettings(c.env);
+    return { users: rows.map((r) => { const u = userOut(r); if (r.role === 'driver') u.trust = trustOf(r, ts); return u; }) };
   },
 
   async 'admin/user'(c) {
@@ -1037,6 +1377,15 @@ const ROUTES = {
     await F.run(c.env, writes);
     if (status === 'active' && target.status !== 'active') bg(c, notify(c.env, [target.uid], 'account_active', {}, { url: '/' }));
     if (['rejected', 'banned'].includes(status)) bg(c, notify(c.env, [target.uid], 'account_rejected', {}, { url: '/' }));
+    return { ok: true };
+  },
+
+  // الأدمن يمسح نقاط تأخير السواق (النقاط القديمة بتفضل في السجل بس مابتتحسبش). الحظر بيتم من admin/user زي ما هو.
+  async 'admin/late_clear'(c) {
+    const admin = await need(c, ['admin']);
+    const target = await F.get(c.env, `users/${uidOf(c.body.uid)}`);
+    if (!target || target.role !== 'driver') throw new HttpError(404, 'user_not_found');
+    await F.run(c.env, [F.patch(`users/${target.uid}`, { late_points: 0, late_cleared_at: now() }, target._ut), auditLog(admin, 'user.late_clear', { targetType: 'user', targetId: target.uid, note: str(c.body.note ?? '', 0, 200), meta: { cleared: target.late_points || 0 } })]);
     return { ok: true };
   },
 
@@ -1104,6 +1453,7 @@ const ROUTES = {
     if (w.status !== 'pending') throw new HttpError(409, 'bad_state');
     const note = str(c.body.note ?? '', 0, 200);
     const mark = (s) => F.patch(`withdrawals/${w.id}`, { status: s, note, decided_by: admin.uid, decided_at: now() }, w._ut); // شرط: لسه معلّق
+    if (c.body.action === 'paid' && (await F.get(c.env, `users/${w.uid}`))?.wallet_frozen) throw new HttpError(409, 'wallet_frozen');
     if (c.body.action === 'paid') await F.run(c.env, [mark('paid'), auditLog(admin, 'withdrawal.paid', { targetType: 'withdrawal', targetId: w.id, note, meta: { uid: w.uid, amount: w.amount } })]);
     else if (c.body.action === 'reject') await F.run(c.env, [mark('rejected'), walletCredit(w.uid, w.amount), walletTx({ uid: w.uid, type: 'withdrawal_refund', amount: w.amount, withdrawalId: w.id }), auditLog(admin, 'withdrawal.reject', { targetType: 'withdrawal', targetId: w.id, note, meta: { uid: w.uid, amount: w.amount } })]);
     else throw new HttpError(400, 'bad_action');
@@ -1148,9 +1498,29 @@ const ROUTES = {
       ...orderUpdate(c.env, o, { status: 'resolved', escrowStatus: 'settled', commission, driverNet: net, customerRefund, resolution: c.body.decision }, L('resolved', admin.uid)),
     ];
     if (net > 0) writes.push(walletCredit(o.driverId, net), walletTx({ uid: o.driverId, type: 'dispute_earning', orderId: o.id, amount: net, gross: driverGross, commission }));
+    if (d.reason === 'missing') writes.push(F.patch(`users/${d.driver_id}`, { wallet_frozen: false, wallet_frozen_order: null })); // فكّ التجميد بقرار الأدمن (الإيقاف الدائم للحساب بيتم من إدارة المستخدمين)
     writes.push(auditLog(admin, 'dispute.resolve', { targetType: 'order', targetId: o.id, note, meta: { decision: c.body.decision, customerRefund, driverNet: net } }));
     await F.run(c.env, writes);
     return { ok: true, customerRefund, driverNet: net };
+  },
+
+  // ملف أدلة كامل للطلب (للشرطة/المحامي): التفاصيل المتفق عليها وموافقة السواق، هوية الطرفين، السجل، الصور، مسار الـGPS، الأكواد. بصمة نزاهة (hash) في الآخر.
+  async 'admin/evidence'(c) {
+    const admin = await need(c, ['admin']);
+    const o = await loadOrder(c.env, docId(c.body.orderId));
+    const [cust, drv, disputes, trail, last] = await Promise.all([F.get(c.env, `users/${o.customerId}`), o.driverId ? F.get(c.env, `users/${o.driverId}`) : null,
+      F.query(c.env, 'disputes', { eq: { order_id: o.id }, limit: 20 }), F.query(c.env, 'order_trail', { eq: { order_id: o.id }, limit: 600 }), F.get(c.env, `live_locations/${o.id}`)]);
+    const bundle = {
+      generatedAt: now(), generatedBy: admin.uid, orderId: o.id,
+      order: orderOut(o, { uid: admin.uid, role: 'admin' }),
+      agreement: { description: o.description, itemsCount: o.itemsCount || 1, declaredValue: o.declaredValue || 0, photos: o.photos || [], driverAgreedAt: o.driverAgreedAt || null, manifestHash: o.manifestHash || null },
+      codes: { startVerified: o.startVerified || null, deliveryVerified: o.deliveryVerified || null, deliveredWithoutCode: !!o.deliveredWithoutCode, noCodeReason: o.noCodeReason || o.noStartCodeReason || null },
+      customer: cust ? userOut(cust) : null, driver: drv ? userOut(drv) : null, handler: o.handler || null,
+      disputes: disputes.map(disputeOut), lastLocation: last ? { lat: last.lat, lng: last.lng, at: last.at } : null,
+      trail: trail.sort((a, b) => a.at - b.at).map((p) => ({ lat: p.lat, lng: p.lng, at: p.at })),
+    };
+    await F.run(c.env, [auditLog(admin, 'evidence.export', { targetType: 'order', targetId: o.id })]);
+    return { evidence: bundle, integrity: await sha256hex(JSON.stringify(bundle)) };
   },
 
   async 'admin/dispute-refund'(c) { // الأدمن يأكد إنه رد المبلغ للعميل يدوياً (InstaPay)
@@ -1381,6 +1751,7 @@ export async function onRequest({ request, env, params, waitUntil }) {
     route = [].concat(params.route || []).join('/');
     if (request.method === 'GET' && route === 'health') return json(await health(env));
     if (!env.FIREBASE_SERVICE_ACCOUNT) throw new HttpError(500, 'missing_service_account');
+    if (request.method === 'POST' && route === 'track') return publicTrack(request, env); // من غير تسجيل دخول (محمي بالرمز العشوائي + حد محاولات بالـIP)
     if (request.method === 'GET' && route === 'about') { // بيانات الشركة للصفحة الرئيسية العامة (من غير تسجيل دخول): الحقول دي بس
       return new Response(JSON.stringify({ company: (await loadSettings(env)).company }), { headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=120' } });
     }
@@ -1393,7 +1764,7 @@ export async function onRequest({ request, env, params, waitUntil }) {
     // حدّ مركزي لكل مستخدم على كل المسارات الحسّاسة (حماية موحّدة من الإساءة). مسارات الاستطلاع/القراءة مستثناة لتوفير الكوتا.
     if (env.API_RATE_DISABLED !== '1' && !isFileGet && !RL_SKIP.has(route)) {
       const max = Number(env.API_RATE_PER_MIN) > 0 ? Number(env.API_RATE_PER_MIN) : 240;
-      await F.run(env, [await rateLimit(env, 'api', token.uid, 60000, max, 'too_many_requests')]);
+      await rateTake(env, 'api', token.uid, 60000, max, 'too_many_requests');
     }
     if (isFileGet) {
       const role = (await F.get(env, `users/${token.uid}`))?.role;
