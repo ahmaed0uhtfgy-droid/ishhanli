@@ -27,10 +27,10 @@ function receiptHtml(o) {
   const pax = isP(o);
   const row = (k, v) => html`<tr><th>${k}</th><td>${v}</td></tr>`;
   const escrow = o.escrowStatus === 'held' ? t('receipt.escrowHeld') : o.escrowStatus === 'released' ? t('receipt.escrowReleased') : t('receipt.escrowNone');
-  const settled = ['completed', 'resolved'].includes(o.status);
+  const settled = ['completed', 'resolved'].includes(o.status) && o.direct !== true; // الدفع المباشر: مفيش عمولة/صافي على الطلب نفسه
   return html`<div class="card invoice">
     <div class="rc-head"><div><div class="rc-brand">${t('brand')} <b>·</b></div><div class="muted small">${t('receipt.subtitle')}</div></div>
-      <div style="text-align:end"><div class="rc-total">${orderNo(o.id)}</div><div class="small">${fmtDate(o.createdAt)}</div><div>${stamp(o.status, o.service)}</div></div></div>
+      <div style="text-align:end"><div class="rc-total">${orderNo(o.id)}</div><div class="small">${fmtDate(o.createdAt)}</div><div>${stamp(o.status, o.service, o.direct)}</div></div></div>
     <h2>${t('receipt.trip')}</h2>
     <table>${row(t('order.pickup'), o.pickup?.address || '—')}${row(t('order.dropoff'), o.dropoff?.address || '—')}
       ${pax ? row(t('order.vehicleClass'), label(state.settings?.passengerClasses?.[o.vehicleClass], o.vehicleClass)) : row(t('order.category'), label(state.settings?.categories?.[o.category], o.category))}
@@ -48,7 +48,7 @@ function receiptHtml(o) {
       ${o.discount ? row(t('coupon.due'), html`<b class="num">${fmtMoney(o.amountDue ?? o.price - o.discount)}</b>`) : ''}
       ${settled ? row(t('order.commission'), html`<span class="num">${fmtMoney(o.commission)}</span>`) : ''}
       ${settled ? row(t('order.driverNet'), html`<span class="num">${fmtMoney(o.driverNet)}</span>`) : ''}
-      ${row(t('receipt.escrow'), PAID.includes(o.status) || o.escrowStatus === 'held' ? escrow : t('receipt.escrowNone'))}
+      ${row(t('receipt.escrow'), o.direct === true ? t('receipt.direct') : PAID.includes(o.status) || o.escrowStatus === 'held' ? escrow : t('receipt.escrowNone'))}
       ${o.paymentRef ? row(t('order.payRef'), html`<span dir="ltr">${o.paymentRef}</span>`) : ''}
       ${row(t('receipt.issued'), fmtDate(Date.now()))}</table>
     <p class="rc-foot">${t('receipt.electronic')}</p></div>`;

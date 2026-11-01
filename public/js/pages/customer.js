@@ -2,10 +2,11 @@ import { api, poll } from '../api.js';
 import { gpoll } from '../sync.js';
 import { state } from '../state.js';
 import { t } from '../i18n.js';
-import { $, $$, html, render, toast, errMsg, busy, spinner, skeleton, waybill, orderNo, fmtMoney, fmtNum, label } from '../ui.js';
+import { $, $$, html, raw, render, toast, errMsg, busy, spinner, skeleton, waybill, orderNo, fmtMoney, fmtNum, label } from '../ui.js';
 import { createMap, pinIcon, geocode, reverse } from '../map.js';
 import { uploadImage } from '../storage.js';
 import { recommendVehicle, VEHICLE_KEYS } from '../estimate.js';
+import { vehicleSvg } from '../vehicles.js';
 
 export function renderCustomerHome(el) {
   render(el, html`<div class="page-head"><h1>${t('nav.myOrders')}</h1><a class="btn primary" href="#/customer/new">${t('nav.newOrder')}</a></div><div id="list" class="stack">${skeleton(3)}</div>`);
@@ -50,12 +51,13 @@ export function renderNewOrder(el) {
         <label class="f">${t('order.when')}<input type="datetime-local" name="scheduledAt" value="${localInput(new Date(Date.now() + 3600e3))}" required></label>
       </div>
       ${vkeys.length ? html`<div class="stack" data-only="cargo" style="gap:.3rem"><b>${t('vpick.title')}</b><div id="vpick" class="vpick" role="group" aria-label="${t('vpick.title')}"></div><p class="hint">${t('vpick.hint')}</p></div>` : ''}
+      ${S.codEnabled === true ? html`<div class="stack" data-only="cargo" style="gap:.3rem"><label class="f">${t('cod.formLabel')}<input name="codAmount" type="number" min="1" max="${S.codMaxAmount}" step="1" inputmode="numeric" placeholder="${t('cod.formPlaceholder', { max: fmtNum(S.codMaxAmount, 0) })}"></label><p class="hint">${t('cod.formHint')}</p></div>` : ''}
       ${S.companionAsk !== false ? html`<label class="row" data-only="cargo"><input type="checkbox" name="companion"> <span>${t('companion.ask')}</span></label><p class="hint" data-only="cargo" style="margin-top:-.4rem">${t('companion.hint')}</p>` : ''}
       <div class="stack" style="gap:.3rem"><div class="grid-2">
         <label class="f">${t('late.deliveryAt')}<input type="datetime-local" name="deliveryAt"></label>
         <label class="f">${t('late.grace')}<input type="number" name="graceMin" min="0" max="10080" inputmode="numeric" placeholder="30"></label>
       </div><p class="hint">${t('late.formHint')}</p></div>
-      <label class="row" data-only="cargo"><input type="checkbox" name="prepay"> <span>${t('new.prepay')}</span></label>
+      ${S.dcEnabled ? html`<p class="hint">${t('new.directNote')}</p>` : html`<label class="row" data-only="cargo"><input type="checkbox" name="prepay"> <span>${t('new.prepay')}</span></label>`}
       ${S.offersEnabled === false ? '' : html`<label class="row" data-only="cargo"><input type="checkbox" name="offersOnly"> <span>${t('new.offersOnly')}</span></label><p class="hint" data-only="cargo" style="margin-top:-.4rem">${t('new.offersHint')}</p>`}
       <div data-only="cargo" class="stack manifest-in"><label class="f">${t('manifest.desc')}<textarea name="description" maxlength="1000" placeholder="${t('manifest.descHint')}"></textarea></label>
         <div class="grid-2"><label class="f">${t('manifest.items')}<input type="number" name="itemsCount" min="1" max="10000" value="1" inputmode="numeric"></label>
@@ -65,7 +67,7 @@ export function renderNewOrder(el) {
       <label class="f" data-only="passengers">${t('order.notes')}<textarea name="descriptionTrip" maxlength="500" placeholder="${t('new.notesHint')}"></textarea></label>
       <label class="f" data-only="cargo">${t('new.photos')}<input type="file" name="photos" accept="image/*" multiple><span class="hint">${t('new.photosHint')}</span></label>
       <div id="previews" class="photos" data-only="cargo"></div>
-      <label class="f">${t('coupon.label')}<input name="coupon" maxlength="20" placeholder="${t('coupon.placeholder')}" autocomplete="off" style="text-transform:uppercase"></label>
+      <label class="f" ${S.dcEnabled ? 'hidden' : ''}>${t('coupon.label')}<input name="coupon" maxlength="20" placeholder="${t('coupon.placeholder')}" autocomplete="off" style="text-transform:uppercase"></label>
       <div id="quote" class="action" aria-live="polite">${t('new.needPoints')}</div>
       <p class="err" id="err" role="alert"></p>
       <button class="btn primary block" type="submit" id="submit">${t('new.submit')}</button>
@@ -153,7 +155,7 @@ export function renderNewOrder(el) {
   function drawVpick() {
     const box = $('#vpick', el); if (!box) return;
     const rec = recommendVehicle(S.vehicleGuide, f.weightKg.value);
-    render(box, html`${vkeys.map((k) => html`<button type="button" data-vp="${k}" class="${vpick === k ? 'on' : ''}" aria-pressed="${vpick === k}">${rec === k && +f.weightKg.value > 0 ? html`<span class="rec">★ ${t('vpick.recommended')}</span>` : ''}<span>${vname(k)}</span><small>${t('vpick.upTo')} ${fmtNum(S.vehicleGuide[k].maxKg, 0)} ${t('common.kg')}</small></button>`)}${S.passengersEnabled && classes.length ? html`<button type="button" data-vp="__pax"><span>${t('vpick.passengers')}</span><small>${t('vpick.passengersSub')}</small></button>` : ''}`);
+    render(box, html`${vkeys.map((k) => html`<button type="button" data-vp="${k}" class="${vpick === k ? 'on' : ''}" aria-pressed="${vpick === k}"><span class="vimg">${raw(vehicleSvg(k, vname(k)))}</span>${rec === k && +f.weightKg.value > 0 ? html`<span class="rec">★ ${t('vpick.recommended')}</span>` : ''}<span>${vname(k)}</span><small>${t('vpick.upTo')} ${fmtNum(S.vehicleGuide[k].maxKg, 0)} ${t('common.kg')}</small></button>`)}${S.passengersEnabled && classes.length ? html`<button type="button" data-vp="__pax"><span class="vimg">${raw(vehicleSvg('passengers', t('vpick.passengers')))}</span><span>${t('vpick.passengers')}</span><small>${t('vpick.passengersSub')}</small></button>` : ''}`);
   }
   $('#vpick', el)?.addEventListener('click', (e) => {
     const b = e.target.closest('[data-vp]'); if (!b) return;
@@ -209,7 +211,7 @@ export function renderNewOrder(el) {
         const r = await api('orders/create', {
           pickup: pts.pickup, dropoff: pts.dropoff,
           prepay: !trip && !!f.prepay?.checked,
-          ...(trip ? { service: 'passengers', vehicleClass: f.vehicleClass.value, passengers: f.passengers.value } : { service: 'cargo', category: f.category.value, size: f.size.value, weightKg: f.weightKg.value, itemsCount: f.itemsCount.value || 1, declaredValue: f.declaredValue.value || 0, ...(vpick ? { vehiclePick: vpick } : {}), ...(f.companion ? { companion: f.companion.checked } : {}) }),
+          ...(trip ? { service: 'passengers', vehicleClass: f.vehicleClass.value, passengers: f.passengers.value } : { service: 'cargo', category: f.category.value, size: f.size.value, weightKg: f.weightKg.value, itemsCount: f.itemsCount.value || 1, declaredValue: f.declaredValue.value || 0, ...(vpick ? { vehiclePick: vpick } : {}), ...(f.companion ? { companion: f.companion.checked } : {}), ...(f.codAmount && f.codAmount.value ? { codAmount: f.codAmount.value } : {}) }),
           description: trip ? f.descriptionTrip.value : f.description.value.trim(), photos: refs, instant: !(f.offersOnly && f.offersOnly.checked), scheduledAt: new Date(f.scheduledAt.value).toISOString(),
           ...(f.graceMin.value !== '' ? { graceMin: f.graceMin.value } : {}), ...(f.deliveryAt.value ? { deliveryAt: new Date(f.deliveryAt.value).toISOString() } : {}), // تتبّع التأخير (اختياري)
           coupon: f.coupon.value.trim(),

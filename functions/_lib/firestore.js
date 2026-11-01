@@ -158,7 +158,7 @@ const toWrite = (env, w) => {
 // ختم التغيير: لكل مجموعة بيانات "بتتحدّث" بنزوّد عدّاد في مستند meta/stamp ضمن نفس الـ commit.
 // الواجهة بتسأل `sync` (قراءة واحدة) وما بتجيبش القوائم الكبيرة غير لما العدّاد يتغيّر — ده بيوفّر معظم قراءات Firestore (الكوتا المجانية).
 // الربط بالمسار بيتم تلقائياً هنا، فمفيش كتابة جديدة ممكن تنسى تزوّد العدّاد.
-const STAMP_OF = { orders: 'orders', offers: 'orders', users: 'users', wallets: 'wallet', withdrawals: 'withdrawals', refunds: 'refunds', disputes: 'disputes', reports: 'reports', sos_events: 'reports', blacklist: 'blacklist', audit: 'audit' };
+const STAMP_OF = { orders: 'orders', offers: 'orders', users: 'users', wallets: 'wallet', withdrawals: 'withdrawals', refunds: 'refunds', disputes: 'disputes', reports: 'reports', sos_events: 'reports', blacklist: 'blacklist', audit: 'audit', dc_pay: 'dc' };
 export const STAMP_KINDS = [...new Set(Object.values(STAMP_OF))];
 export const STAMP_PATH = 'meta/stamp';
 const stampsOf = (list) => {

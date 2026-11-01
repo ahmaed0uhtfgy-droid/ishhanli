@@ -1,3 +1,4 @@
+import { vehicleSelect, wireVehicleSelect } from '../vpicker.js';
 import { attachDocCheck } from '../docCheck.js';
 import { auth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, deleteUser, RecaptchaVerifier, linkWithPhoneNumber, GoogleAuthProvider, signInWithPopup, signInWithRedirect } from '../firebase.js';
 import { api, poll } from '../api.js';
@@ -100,7 +101,7 @@ export function renderRegister(el, query) {
         <label class="f">${t('auth.password')}<input type="password" name="password" autocomplete="new-password" minlength="6" required></label></div>` : ''}
       <div id="idBox" hidden>${file('idFile', 'auth.idPhoto', false)}</div>
       <div id="driverOnly" class="stack" hidden>
-        <label class="f">${t('auth.vehicleType')}<select name="vehicleType">${VEHICLES.map((v) => html`<option value="${v}">${t('vehicle.' + v)}</option>`)}</select></label>
+        ${vehicleSelect('vehicleType', VEHICLES)}
         <label class="row"><input type="checkbox" name="isCompany"> <span>${t('auth.asCompany')}</span></label>
         <div id="companyOnly" class="stack" hidden>
           <label class="f">${t('auth.companyName')}<input name="companyName" maxlength="80"></label>
@@ -127,6 +128,7 @@ export function renderRegister(el, query) {
   el.addEventListener('click', (e) => { const b = e.target.closest('[data-role]'); if (b) { role = b.dataset.role; paint(); } });
   paint();
 
+  wireVehicleSelect(f);
   f.addEventListener('submit', (e) => {
     e.preventDefault(); err.textContent = '';
     if (!f.terms.checked) { err.textContent = t('err.terms'); return; }

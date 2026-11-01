@@ -2,11 +2,11 @@ import { api, poll } from '../api.js';
 import { gpoll } from '../sync.js';
 import { state } from '../state.js';
 import { t } from '../i18n.js';
-import { $, $$, html, raw, render, toast, errMsg, busy, spinner, stamp, orderNo, fmtMoney, fmtNum, fmtDate, ratingText, trustBadge, confirmDialog, promptDialog, openModal, label } from '../ui.js';
+import { $, $$, html, raw, render, toast, errMsg, busy, spinner, stamp, orderNo, fmtMoney, fmtNum, fmtDate, fmtDay, ratingText, trustBadge, confirmDialog, promptDialog, openModal, label } from '../ui.js';
 import { hydrate, imgTag } from '../storage.js';
 import { toCsv, downloadCsv, downloadJson } from '../csv.js';
 
-const TABS = ['overview', 'finance', 'payments', 'users', 'joins', 'orders', 'withdrawals', 'disputes', 'refunds', 'reports', 'coupons', 'referrals', 'settings', 'blacklist', 'audit', 'monitoring'];
+const TABS = ['overview', 'finance', 'payments', 'users', 'joins', 'orders', 'withdrawals', 'disputes', 'refunds', 'reports', 'coupons', 'referrals', 'cod', 'dc', 'settings', 'blacklist', 'audit', 'monitoring'];
 const onError = (e) => toast(errMsg(e), true);
 const imgs = (refs) => html`<div class="photos">${(refs || []).filter(Boolean).map((r) => raw(imgTag(r)))}</div>`;
 const roleKey = (u) => (u.accountType === 'company' ? 'auth.roleCompany' : 'auth.role' + (u.role === 'driver' ? 'Driver' : 'Customer'));
@@ -21,7 +21,7 @@ export function renderAdmin(el, tab) {
     const dj = $('[data-tab="joins"] .dot', el); if (dj) { dj.textContent = b.users || 0; dj.hidden = !b.users; } // طلبات الانضمام = الحسابات المعلّقة
   }, { dedupe: true });
   const body = $('#body', el);
-  const stop = { overview, finance, payments, users, joins, orders, withdrawals, disputes, refunds, reports, coupons, referrals, settings, blacklist, audit, monitoring }[tab](body, badges);
+  const stop = { overview, finance, payments, users, joins, orders, withdrawals, disputes, refunds, reports, coupons, referrals, cod, dc, settings, blacklist, audit, monitoring }[tab](body, badges);
   return () => { badges(); stop?.(); };
 }
 
@@ -213,7 +213,7 @@ function orders(body) {
     last = shown; // التصدير بيطلع النتائج المعروضة (بعد فلتر التاريخ)
     more.hidden = !(rows.length >= limit && limit < 300 && !q);
     render($('#tbl', body), shown.length ? html`<div class="table-wrap"><table><thead><tr><th>#</th><th>${t('admin.status')}</th><th>${t('order.customer')}</th><th>${t('order.driver')}</th><th>${t('order.price')}</th><th>${t('admin.date')}</th><th></th></tr></thead>
-      <tbody>${shown.map((o) => html`<tr><td>${orderNo(o.id)}</td><td>${stamp(o.status)}</td><td>${o.customerName}</td><td>${o.driverName || '—'}</td><td class="num">${fmtMoney(o.price)}</td><td class="small">${fmtDate(o.createdAt)}</td><td><a class="btn sm ghost" href="#/order/${o.id}">${t('admin.open')}</a></td></tr>`)}</tbody></table></div>` : html`<div class="empty">${t('admin.noneOrders')}</div>`);
+      <tbody>${shown.map((o) => html`<tr><td>${orderNo(o.id)}</td><td>${stamp(o.status, o.service, o.direct)}</td><td>${o.customerName}</td><td>${o.driverName || '—'}</td><td class="num">${fmtMoney(o.price)}</td><td class="small">${fmtDate(o.createdAt)}</td><td><a class="btn sm ghost" href="#/order/${o.id}">${t('admin.open')}</a></td></tr>`)}</tbody></table></div>` : html`<div class="empty">${t('admin.noneOrders')}</div>`);
   }, { dedupe: true, onError });
   ['#od', '#ot'].forEach((s) => $(s, body).addEventListener('change', () => p.now()));
   sel.addEventListener('change', () => { limit = 100; p.now(); });
@@ -351,6 +351,86 @@ function disputes(body) {
 }
 
 // =====================================================================  الإعدادات (تسعير + عمولة) — الفحص النهائي على السيرفر
+// =====================================================================  الدفع عند الاستلام (كشوف السواقين + التحويل للمرسلين)
+// =====================================================================  عمولات السواقين (الدفع المباشر): مراجعة صور التحويل + أرصدة السواقين + تصحيح يدوي
+function dc(body) {
+  let dead = false;
+  async function load() {
+    let d; try { d = await api('admin/dc/list', {}); } catch (e) { if (!dead) render(body, html`<div class="card"><p>${errMsg(e)}</p></div>`); return; }
+    if (dead) return;
+    render(body, html`<div class="card stack"><h3>${t('admin.dc.title')}</h3>
+      ${d.enabled ? '' : html`<div class="action info">${t('admin.dc.off')}</div>`}
+      <p class="muted small">${t('admin.dc.rate', { pct: d.pct, limit: fmtNum(d.limit, 0) })}</p></div>
+      <div class="card stack"><h3>${t('admin.dc.pending')}</h3>
+      ${d.pending.length ? d.pending.map((p) => html`<div class="card stack"><div class="row"><b class="grow">${p.name || p.driverId}</b><b>${fmtMoney(p.amount)}</b></div>
+        <p class="muted small">${t('dc.method.' + p.method)} · ${t('dc.ref')}: <b dir="ltr">${p.reference}</b> · ${t('admin.dc.gross')}: ${fmtMoney(p.gross)} (${p.pct}%) · ${fmtDate(p.createdAt)}</p>${imgs([p.proof])}
+        <div class="row"><button class="btn ok" data-dc="confirm" data-id="${p.id}" data-amount="${p.amount}" data-gross="${p.gross}">${t('admin.dc.confirm')}</button><button class="btn danger" data-dc="reject" data-id="${p.id}">${t('admin.dc.reject')}</button></div></div>`) : html`<div class="empty">${t('admin.dc.none')}</div>`}</div>
+      <div class="card stack"><h3>${t('admin.dc.drivers')}</h3>
+      ${d.drivers.length ? d.drivers.map((x) => html`<div class="row" style="padding:.4rem 0;border-bottom:1px solid var(--rule)"><b class="grow">${x.name || x.id}${x.blocked ? html` <span class="no-t"><b>${t('admin.dc.blocked')}</b></span>` : ''}<br><span class="muted small" dir="ltr">${x.phone || ''}</span></b>
+        <span class="small">${t('admin.dc.earned')}: <b>${fmtMoney(x.gross)}</b> · ${t('admin.dc.due')}: <b>${fmtMoney(x.due)}</b></span><button class="btn sm ghost" data-dc="adjust" data-uid="${x.id}" data-gross="${x.gross}">${t('admin.dc.adjust')}</button></div>`) : html`<div class="empty">${t('admin.dc.noDrivers')}</div>`}</div>
+      <div class="card stack"><h3>${t('admin.dc.recent')}</h3>
+      ${d.recent.length ? d.recent.map((p) => html`<div class="row small"><span class="grow"><b>${p.name || p.driverId}</b> · ${fmtMoney(p.amount)} · ${t('dc.method.' + p.method)} · <bdi>${p.reference}</bdi> · ${fmtDate(p.decidedAt || p.createdAt)}${p.note ? ' · ' + p.note : ''}</span><span class="${p.status === 'paid' ? 'ok-t' : 'no-t'}"><b>${t('dc.st.' + p.status)}</b></span></div>`) : html`<div class="empty">${t('admin.dc.none')}</div>`}</div>`);
+    hydrate(body);
+  }
+  const onClick = async (e) => {
+    const b = e.target.closest('[data-dc]'); if (!b) return;
+    try {
+      if (b.dataset.dc === 'confirm') {
+        if (!(await confirmDialog(t('admin.dc.confirmAsk', { amount: fmtMoney(+b.dataset.amount), gross: fmtMoney(+b.dataset.gross) }), { ok: t('admin.dc.confirm') }))) return;
+        const note = await promptDialog(t('admin.dc.note')); if (note === null) return;
+        await api('admin/dc/confirm', { id: b.dataset.id, action: 'confirm', note: note || '' });
+      } else if (b.dataset.dc === 'reject') {
+        const note = await promptDialog(t('admin.dc.rejectReason'), { required: true }); if (!note) return;
+        await api('admin/dc/confirm', { id: b.dataset.id, action: 'reject', note });
+      } else if (b.dataset.dc === 'adjust') {
+        const v = await promptDialog(t('admin.dc.adjustAsk') + ` (${b.dataset.gross})`, { required: true }); if (v === null) return;
+        const gross = Number(v); if (!Number.isInteger(gross) || gross < 0) { toast(t('err.bad_input'), true); return; }
+        const note = await promptDialog(t('admin.dc.adjustNote'), { required: true }); if (!note) return;
+        await api('admin/dc/adjust', { uid: b.dataset.uid, gross, note });
+      }
+      toast(t('admin.dc.done')); load();
+    } catch (err) { onError(err); }
+  };
+  body.addEventListener('click', onClick); load();
+  return () => { dead = true; body.removeEventListener('click', onClick); };
+}
+
+function cod(body) {
+  let dead = false;
+  const stCls = (x) => (x === 'overdue' ? 'no-t' : x === 'paid' ? 'ok-t' : 'muted');
+  async function load() {
+    let d; try { d = await api('admin/cod/list', {}); } catch (e) { if (!dead) render(body, html`<div class="card"><p>${errMsg(e)}</p></div>`); return; }
+    if (dead) return;
+    render(body, html`<div class="card stack"><h3>${t('admin.cod.title')}</h3>
+      ${d.enabled ? '' : html`<div class="action info">${t('admin.cod.off')}</div>`}
+      <p class="muted small">${t('cod.driverHint', { days: d.periodDays, grace: d.graceDays })} · ${t('cod.commission')}: <bdi>${d.pct}%</bdi></p>
+      ${d.truncated ? html`<p class="muted small">${t('admin.cod.truncated')}</p>` : ''}</div>
+      <div class="card stack"><h3>${t('admin.cod.drivers')}</h3>
+      ${d.drivers.length ? html`<div class="tbl-wrap">${d.drivers.map((dr) => html`<div class="stack" style="gap:.3rem;padding:.5rem 0;border-bottom:1px solid var(--rule)">
+        <div class="row"><b class="grow">${dr.name || dr.driverId}</b>${dr.blocked ? html`<span class="no-t"><b>${t('admin.cod.blocked')}</b></span>` : ''}<span class="muted small">${t('cod.collectedLbl')}: <b>${fmtMoney(dr.collected)}</b></span></div>
+        ${dr.statements.map((x) => html`<div class="row small"><span class="grow">${fmtDay(x.start)} → ${fmtDay(x.end - 1)} · ${t('cod.collectedLbl')}: <b>${fmtMoney(x.collected)}</b> (${fmtNum(x.count, 0)})${x.commission > 0 ? html` · ${t('cod.commission')}: ${fmtMoney(x.commission)}` : ''}${x.ref ? html` · <bdi>${x.ref}</bdi>` : ''}</span><span class="${stCls(x.status)}"><b>${t('cod.st.' + x.status)}</b></span>${x.status !== 'paid' ? html`<button class="btn sm primary" data-cod-confirm="${dr.driverId}|${x.period}|${x.collected}">${t('admin.cod.confirm')}</button>` : ''}</div>`)}</div>`)}</div>` : html`<p class="muted">${t('admin.cod.empty')}</p>`}</div>
+      <div class="card stack"><h3>${t('admin.cod.payouts')}</h3>
+      ${d.payouts.length ? html`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>${t('admin.cod.col.order')}</th><th>${t('admin.cod.col.customer')}</th><th>${t('admin.cod.col.amount')}</th><th>${t('admin.cod.col.commission')}</th><th>${t('admin.cod.col.net')}</th><th>${t('admin.cod.col.status')}</th><th></th></tr></thead><tbody>
+        ${d.payouts.map((p) => html`<tr><td><a href="#/order/${p.orderId}">${p.no}</a></td><td>${p.customerName || p.customerId}</td><td>${fmtMoney(p.amount)}</td><td>${fmtMoney(p.commission)}</td><td><b>${fmtMoney(p.net)}</b></td><td class="${p.status === 'paid' ? 'ok-t' : ''}">${t('admin.cod.st.' + p.status)}${p.ref ? html` <bdi class="muted small">${p.ref}</bdi>` : ''}</td><td>${p.status === 'due' ? html`<button class="btn sm primary" data-cod-payout="${p.orderId}">${t('admin.cod.payout')}</button>` : ''}</td></tr>`)}</tbody></table></div>` : html`<p class="muted">${t('admin.cod.empty')}</p>`}</div>`);
+  }
+  const onClick = async (e) => {
+    const c = e.target.closest('[data-cod-confirm]'), p = e.target.closest('[data-cod-payout]');
+    try {
+      if (c) {
+        const [driverId, period, amount] = c.dataset.codConfirm.split('|');
+        if (!(await confirmDialog(t('admin.cod.confirmAsk', { amount: fmtMoney(+amount) }), { ok: t('admin.cod.confirm') }))) return;
+        const note = await promptDialog(t('admin.cod.note')); if (note === null) return;
+        await api('admin/cod/confirm', { driverId, period, note: note || '' }); toast(t('admin.cod.done')); load();
+      } else if (p) {
+        const ref = await promptDialog(t('admin.cod.payoutRef'), { required: true }); if (!ref) return;
+        await api('admin/cod/payout', { orderId: p.dataset.codPayout, ref }); toast(t('admin.cod.done')); load();
+      }
+    } catch (err) { onError(err); }
+  };
+  body.addEventListener('click', onClick); load();
+  return () => { dead = true; body.removeEventListener('click', onClick); };
+}
+
 // =====================================================================  الإحالة والحوافز
 function referrals(body) {
   return gpoll(['referrals'], () => api('admin/referrals'), 30000, ({ config, pending, rewarded, paid, rows }) => {
@@ -387,6 +467,22 @@ function settings(body) {
       <div class="grid-2">${['pickup', 'half_ton', 'truck', 'jumbo'].map((k) => html`<div class="stack"><b>${t('vehicle.' + k)}</b>
         <label class="f">${t('admin.vguide.maxKg')}<input type="number" name="vg.${k}.maxKg" min="0" max="100000" step="1" inputmode="numeric" value="${S.vehicleGuide?.[k]?.maxKg ?? 0}" required></label>
         <label class="f">${t('admin.vguide.size')}<select name="vg.${k}.size">${Object.entries(S.sizes || {}).map(([sk, sv]) => html`<option value="${sk}" ${S.vehicleGuide?.[k]?.size === sk ? 'selected' : ''}>${label(sv, sk)}</option>`)}</select></label></div>`)}</div></div>
+    <div class="card stack"><h3>${t('admin.cod.settingsTitle')}</h3><p class="hint">${t('admin.cod.settingsHint')}</p>
+      <label class="row"><input type="checkbox" name="codEnabled" ${S.codEnabled === true ? 'checked' : ''}> <span>${t('admin.s.codEnabled')}</span></label>
+      <div class="grid-2"><label class="f">${t('admin.s.codPct')}<input type="number" name="codCommissionPct" min="0" max="30" step="0.1" inputmode="decimal" value="${S.codCommissionPct ?? 0}" required></label>
+        <label class="f">${t('admin.s.codMax')}<input type="number" name="codMaxAmount" min="100" max="1000000" step="1" inputmode="numeric" value="${S.codMaxAmount ?? 5000}" required></label>
+        <label class="f">${t('admin.s.codPeriod')}<input type="number" name="codPeriodDays" min="1" max="31" step="1" inputmode="numeric" value="${S.codPeriodDays ?? 7}" required></label>
+        <label class="f">${t('admin.s.codGrace')}<input type="number" name="codGraceDays" min="0" max="30" step="1" inputmode="numeric" value="${S.codGraceDays ?? 3}" required></label></div>
+      <label class="f">${t('admin.s.codScope')}<select name="codBlockScope"><option value="cod" ${S.codBlockScope !== 'all' ? 'selected' : ''}>${t('admin.s.codScope.cod')}</option><option value="all" ${S.codBlockScope === 'all' ? 'selected' : ''}>${t('admin.s.codScope.all')}</option></select></label></div>
+    <div class="card stack"><h3>${t('admin.radius.title')}</h3><p class="hint">${t('admin.radius.hint')}</p>
+      <label class="f">${t('admin.s.jobsRadiusKm')}<input type="number" name="jobsRadiusKm" min="0" max="500" step="0.5" inputmode="decimal" value="${S.jobsRadiusKm ?? 15}" required></label></div>
+    <div class="card stack"><h3>${t('admin.dc.settingsTitle')}</h3><p class="hint">${t('admin.dc.settingsHint')}</p>
+      <label class="row"><input type="checkbox" name="dcEnabled" ${S.dcEnabled === true ? 'checked' : ''}> <span>${t('admin.s.dcEnabled')}</span></label>
+      <div class="grid-2"><label class="f">${t('admin.s.dcPct')}<input type="number" name="dcPct" min="0" max="50" step="0.1" inputmode="decimal" value="${S.dcPct ?? 2}" required></label>
+        <label class="f">${t('admin.s.dcLimit')}<input type="number" name="dcLimit" min="1" max="100000000" step="1" inputmode="numeric" value="${S.dcLimit ?? 1000}" required></label>
+        <label class="f">${t('admin.s.dcAutoHours')}<input type="number" name="dcAutoCompleteHours" min="0" max="720" step="1" inputmode="numeric" value="${S.dcAutoCompleteHours ?? 24}" required></label>
+        <label class="f">${t('admin.s.dcWallet')}<input name="dcPay.wallet" maxlength="40" dir="ltr" value="${S.dcPay?.wallet || ''}"></label>
+        <label class="f">${t('admin.s.dcWalletName')}<input name="dcPay.walletName" maxlength="80" value="${S.dcPay?.walletName || ''}"></label></div></div>
     <div class="card stack"><h3>${t('admin.passengers')}</h3>
       <label class="row"><input type="checkbox" name="passengersEnabled" ${S.passengersEnabled ? 'checked' : ''}> <span>${t('admin.s.passengersEnabled')}</span></label><p class="hint">${t('admin.paxLegal')}</p>
       ${kvRows('passengerClasses', S.passengerClasses, true)}</div>
@@ -454,6 +550,8 @@ function settings(body) {
           company: Object.fromEntries(['name', 'about', 'phone', 'whatsapp', 'email', 'address', 'hours', 'facebook', 'instagram', 'tiktok', 'youtube'].map((k) => [k, f.elements['company.' + k].value.trim()])),
           categories: readKv('categories'), sizes: readKv('sizes'),
           companionAsk: f.elements.companionAsk.checked, vehicleGuideOn: f.elements.vehicleGuideOn.checked,
+          codEnabled: f.elements.codEnabled.checked, codCommissionPct: n('codCommissionPct'), codMaxAmount: n('codMaxAmount'), codPeriodDays: n('codPeriodDays'), codGraceDays: n('codGraceDays'), codBlockScope: f.elements.codBlockScope.value,
+          dcEnabled: f.elements.dcEnabled.checked, dcPct: n('dcPct'), dcLimit: n('dcLimit'), dcAutoCompleteHours: n('dcAutoCompleteHours'), jobsRadiusKm: n('jobsRadiusKm'), dcPay: { wallet: f.elements['dcPay.wallet'].value.trim(), walletName: f.elements['dcPay.walletName'].value.trim() },
           vehicleGuide: Object.fromEntries(['pickup', 'half_ton', 'truck', 'jumbo'].map((k) => [k, { maxKg: n(`vg.${k}.maxKg`), size: f.elements[`vg.${k}.size`].value }])),
           passengersEnabled: f.elements.passengersEnabled.checked, passengerClasses: readKv('passengerClasses'),
           levelDiscountPct: { trusted: n('levelDiscountPct.trusted'), pro: n('levelDiscountPct.pro'), elite: n('levelDiscountPct.elite') },

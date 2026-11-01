@@ -2,8 +2,9 @@ import { api, poll } from '../api.js';
 import { state } from '../state.js';
 import { t } from '../i18n.js';
 import { $, $$, html, raw, render, toast, errMsg, busy, spinner, skeleton, stamp, orderNo, fmtMoney, fmtNum, fmtDate, label, ratingText, trustBadge, confirmDialog, promptDialog, openModal, starsInput, printNode } from '../ui.js';
-import { getPos } from '../geo.js';
+import { getPos, cachedPos } from '../geo.js';
 import { createMap, pinIcon, drawRoute, gmapsLink, distKm } from '../map.js';
+import { vehicleSvg } from '../vehicles.js';
 import { uploadImage, hydrate, imgTag } from '../storage.js';
 import { moneySteps } from '../money.js';
 
@@ -12,6 +13,8 @@ const HELD = ['paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered'];
 const RECEIPT_STATUS = ['paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered', 'completed', 'resolved'];
 const STEPS = ['open', 'accepted', 'paid', 'picked_up', 'in_transit', 'delivered', 'completed'];
 const STEPS_PRE = ['pay', 'visible', 'accepted', 'picked_up', 'in_transit', 'delivered', 'completed'];
+const STEPS_DIRECT = ['open', 'accepted', 'picked_up', 'in_transit', 'completed']; // الدفع المباشر: مفيش خطوة دفع ولا ضمان — بيتكمّل بمجرد تأكيد السواق للتسليم
+const STEP_OF_DIRECT = { open: 0, paid: 1, heading_pickup: 1, picked_up: 2, in_transit: 3, delivered: 4, completed: 4, resolved: 4 };
 const STEP_OF_PRE = { awaiting_payment: 0, payment_review: 0, open: 1, paid: 2, heading_pickup: 2, picked_up: 3, in_transit: 4, delivered: 5, completed: 6, resolved: 6 };
 const CHAT_OPEN = ['accepted', 'payment_review', 'paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered', 'disputed'];
 const STEP_OF = { open: 0, accepted: 1, payment_review: 1, paid: 2, heading_pickup: 2, picked_up: 3, in_transit: 4, delivered: 5, completed: 6, resolved: 6 };
@@ -86,6 +89,17 @@ export function renderOrder(el, id) {
 
   // ---------- عروض الأسعار ----------
   const vehicleName = (v) => (t('vehicle.' + v) === 'vehicle.' + v ? v || '' : t('vehicle.' + v));
+  // كارت «سواقك» للعميل: صورة العربية الحقيقية اللي السواق سجّلها (أو رسمة النوع لو ما سجّلش)، واسمه ونوع العربية وتقييمه
+  const DRV_SHOW = ['accepted', 'payment_review', 'paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered'];
+  function driverCard(o) {
+    if (role !== 'customer' || !o.driverId || !DRV_SHOW.includes(o.status)) return '';
+    const ref = o.handler?.vehiclePhotoRef || o.driverVehiclePhoto, vt = o.handler?.vehicleType || o.driverVehicle, ph = o.handler?.phone || o.driverPhone;
+    return html`<div class="card drvcard"><div class="dimg">${ref ? raw(imgTag(ref)) : raw(vehicleSvg(vt, vehicleName(vt)))}</div>
+      <div class="grow stack" style="gap:.2rem"><div class="muted small">${t('drvcard.title')}</div><b>${o.handler?.name || o.driverName}</b>
+      <div class="small">${vehicleName(vt)}${o.handler?.plate ? html` · <span dir="ltr">${o.handler.plate}</span>` : ''}</div>${o.driverTrust ? html`<div>${trustBadge(o.driverTrust)}</div>` : ''}
+      ${ph ? html`<div class="small">${tel(ph)}</div>` : ''}</div></div>`;
+  }
+
   function offersHtml(o) {
     if (!o.offers?.length) return '';
     const list = [...o.offers].sort(offerSort === 'trust'
@@ -93,7 +107,7 @@ export function renderOrder(el, id) {
       : (a, b) => a.price - b.price || (LV[b.trust?.level] - LV[a.trust?.level])); // الأرخص أولاً (والمستوى الأعلى عند التساوي)
     return html`<div class="row" style="margin-top:.8rem"><h3 class="grow" style="margin:0">${t('offer.list')} (${o.offers.length})</h3>${role === 'customer' && list.length > 1 ? html`<div class="seg"><button type="button" data-act="sort" data-s="price" class="${offerSort === 'price' ? 'on' : ''}">${t('offer.sortPrice')}</button><button type="button" data-act="sort" data-s="trust" class="${offerSort === 'trust' ? 'on' : ''}">${t('offer.sortTrust')}</button></div>` : ''}</div><div class="stack" style="margin-top:.6rem">${list.map((f) => {
       const diff = f.price - o.price;
-      return html`<div class="offer-card"><div class="row"><div class="grow"><b>${f.driverName}</b>
+      return html`<div class="offer-card"><div class="row"><div class="dimg sm">${f.vehiclePhotoRef ? raw(imgTag(f.vehiclePhotoRef)) : raw(vehicleSvg(f.vehicleType, vehicleName(f.vehicleType)))}</div><div class="grow"><b>${f.driverName}</b>
         <div style="margin:.15rem 0">${trustBadge(f.trust)}</div><div class="muted small">${vehicleName(f.vehicleType)} · ${ratingText(f)} · ${f.completedOrders || 0} ${t('admin.trips')}</div>${f.note ? html`<div class="small">${f.note}</div>` : ''}</div>
         <div><b class="price">${fmtMoney(f.price)}</b>${diff ? html`<div class="small muted">${diff > 0 ? '+' : ''}${fmtMoney(diff)}</div>` : ''}</div></div>
         ${role === 'customer' ? html`<div class="row end"><button class="btn ghost sm" data-act="offerReject" data-id="${f.id}">${t('offer.reject')}</button><button class="btn ok sm" data-act="offerAccept" data-id="${f.id}">${t('offer.accept')}</button></div>` : ''}</div>`;
@@ -120,14 +134,14 @@ export function renderOrder(el, id) {
 
   function stepsHtml(o) {
     if (o.status === 'cancelled') return '';
-    const pre = o.payMode === 'before', map = pre ? STEP_OF_PRE : STEP_OF;
+    const dir = o.direct === true, pre = o.payMode === 'before', map = dir ? STEP_OF_DIRECT : pre ? STEP_OF_PRE : STEP_OF;
     const idx = o.status === 'disputed' ? (map[o.prevStatus] ?? 2) : (map[o.status] ?? 0);
-    return html`<ol class="steps" aria-label="${t('order.progress')}">${(pre ? STEPS_PRE : STEPS).map((s, i) => html`<li class="${i < idx ? 'done' : i === idx ? 'done now' : ''}">${stepLabel(s, o)}</li>`)}</ol>`;
+    return html`<ol class="steps" aria-label="${t('order.progress')}">${(dir ? STEPS_DIRECT : pre ? STEPS_PRE : STEPS).map((s, i) => html`<li class="${i < idx ? 'done' : i === idx ? 'done now' : ''}">${stepLabel(s, o)}</li>`)}</ol>`;
   }
 
   function actionsHtml(o) {
     const s = o.status, mine = o.driverId === uid;
-    const dispute = html`<button class="btn ghost sm" data-act="dispute">${t('order.openDispute')}</button>`;
+    const dispute = o.direct === true ? '' : html`<button class="btn ghost sm" data-act="dispute">${t('order.openDispute')}</button>`; // الدفع المباشر: مفيش نزاعات (مفيش فلوس محجوزة)
     if (role === 'customer') {
       if (s === 'open' && o.escrowStatus === 'held') { // مدفوع مقدماً وظاهر للسواقين
         const until = new Date((o.scheduledAt || 0) + ((state.settings.prepaidGraceMin ?? 30) * 60000));
@@ -147,6 +161,7 @@ export function renderOrder(el, id) {
           ${state.settings.testPayments && state.settings.testPaymentsAllowed ? html`<div class="action warn" style="margin-top:.8rem"><p class="small">${t('order.testBanner')}</p><button class="btn ok block" data-act="payTest">${t('order.payTest')}</button></div>` : ''}</div>`;
       }
       if (s === 'payment_review') return html`<div class="action info">${t('order.reviewing')}</div>`;
+      if (o.direct === true && ['paid', 'heading_pickup', 'picked_up', 'in_transit'].includes(s)) return html`<div class="action info"><p>${t('order.directPay')}</p>${['picked_up', 'in_transit'].includes(s) ? html`<p class="small">${t('order.directAuto', { hours: fmtNum(state.settings.dcAutoCompleteHours || 24) })}</p><div class="row"><button class="btn ok grow" data-act="confirm">${t('order.directConfirm')}</button></div>` : html`<div class="row"><button class="btn ghost sm" data-act="cancel">${t('order.directCancel')}</button></div>`}</div>`;
       if (HELD.includes(s) && s !== 'delivered') return html`<div class="action info"><p>${t('order.held')}</p><div class="row">${dispute}${['paid', 'heading_pickup'].includes(s) && o.escrowStatus === 'held' ? html`<button class="btn ghost sm" data-act="cancel">${t('order.cancelFee')}</button>` : ''}</div></div>`;
       if (s === 'delivered') return html`<div class="action good"><h3>${t(isP(o) ? 'order.deliveredTitleP' : 'order.deliveredTitle')}</h3><p>${t(isP(o) ? 'order.deliveredMsgP' : 'order.deliveredMsg')}</p><div class="row"><button class="btn ok grow" data-act="confirm">${t(isP(o) ? 'order.confirmReceiptP' : 'order.confirmReceipt')}</button>${dispute}</div></div>`;
     }
@@ -154,10 +169,11 @@ export function renderOrder(el, id) {
       if (s === 'open') return driverOpenHtml(o);
       if (!mine) return '';
       if (s === 'accepted') return html`<div class="action info"><p>${t('order.waitPay')}</p><button class="btn ghost sm" data-act="cancel">${t('order.cancel')}</button></div>`;
+      if (NEXT_OF[s] === 'delivered' && o.cod?.amount > 0 && !o.codCollectedAt) return html`<div class="action info"><h3>${t('cod.collectTitle')}</h3><p>${t('cod.collectAsk', { amount: fmtMoney(o.cod.amount) })}</p><button class="btn primary block" data-act="codCollect">${t('cod.collectBtn')}</button></div>`; // لازم يحصّل الأول قبل «تم التسليم»
       const nx = NEXT_OF[s];
       if (nx) {
         const needPhoto = nx === 'picked_up' || nx === 'delivered';
-        return html`<div class="action"><h3>${t('order.nextStep')}</h3>
+        return html`<div class="action"><h3>${t('order.nextStep')}</h3>${o.direct === true ? html`<p class="small">${t('order.directDriver', { amount: fmtMoney(dueOf(o)) })}</p>` : ''}
           ${nx === 'delivered' && !isP(o) && (state.settings.deliveryCode || o.guard === 'high') && state.settings.deliveryCodeAvailable ? html`<label class="f">${t('code.driverAsk')}<input id="dcode" inputmode="numeric" autocomplete="off" maxlength="7" dir="ltr" placeholder="000 000"></label><label class="row" style="gap:.5rem"><input type="checkbox" id="nocode"> <span class="small">${t('code.noCode')}</span></label>` : ''}
           ${nx === 'picked_up' && !isP(o) && state.settings.startCode && state.settings.deliveryCodeAvailable ? html`<label class="f">${t('code.startAsk')}<input id="scode" inputmode="numeric" autocomplete="off" maxlength="7" dir="ltr" placeholder="000 000"></label><label class="row" style="gap:.5rem"><input type="checkbox" id="snocode"> <span class="small">${t('code.startNoCode')}</span></label>` : ''}
           ${needPhoto ? html`<label class="f">${isP(o) ? t('order.photoOptional') : t(nx === 'picked_up' ? 'order.photoPickup' : 'order.photoDelivery')}<input type="file" id="handover" accept="image/*" capture="environment"></label><p class="hint">${t('order.gpsRule')}</p>` : ''}
@@ -170,6 +186,7 @@ export function renderOrder(el, id) {
       if (s === 'payment_review') return html`<div class="action"><h3>${t('admin.reviewPayment')}</h3><p>${t('order.payAmount')}: <b>${fmtMoney(dueOf(o))}</b>${o.discount ? html` <span class="muted small">(${t('coupon.applied')} ${fmtMoney(o.discount)})</span>` : ''} — ${t('order.payRef')}: <b>${o.paymentRef || '—'}</b></p>
         <div class="row"><button class="btn ok" data-act="admPay" data-a="confirm">${t('admin.confirmPay')}</button><button class="btn danger" data-act="admPay" data-a="reject">${t('admin.rejectPay')}</button></div></div>`;
       if (['open', 'accepted', 'awaiting_payment'].includes(s) && o.escrowStatus !== 'held') return html`<div class="action"><h3>${t('admin.overridePrice')}</h3><div class="row"><input type="number" id="newPrice" min="1" value="${o.price}" style="max-width:160px"><input id="priceNote" class="grow" placeholder="${t('admin.priceNote')}"><button class="btn primary" data-act="admPrice">${t('common.save')}</button></div></div>`;
+      if (s === 'delivered' && o.escrowStatus === 'held') return html`<div class="action"><h3>${t('admin.release.title')}</h3><p class="hint">${t('admin.release.hint')}</p>${o.guard === 'high' ? html`<p class="small"><b>${t('admin.release.guard')}</b></p>` : ''}${o.deliveredWithoutCode ? html`<p class="small"><b>${t('admin.release.noCode')}</b></p>` : ''}<div class="row"><input id="relNote" class="grow" maxlength="300" placeholder="${t('admin.release.note')}"><button class="btn ok" data-act="admRelease">${t('admin.release.btn')}</button></div></div>`;
       if (s === 'disputed') return html`<div class="action bad">${t('order.disputed')} — <a href="#/admin/disputes">${t('admin.tab.disputes')}</a></div>`;
     }
     if (s === 'disputed') return html`<div class="action bad"><p>${t('order.disputed')}</p></div>`;
@@ -201,7 +218,7 @@ export function renderOrder(el, id) {
     return html`<div class="card"><dl class="kv">
       ${kv(t('order.pickup'), o.pickup.address || '—')}${kv(t('order.dropoff'), o.dropoff.address || '—')}
       ${isP(o) ? html`${kv(t('order.service'), t('service.passengers'))}${kv(t('order.vehicleClass'), label(state.settings.passengerClasses?.[o.vehicleClass], o.vehicleClass))}${kv(t('order.passengers'), o.passengers)}` : html`${kv(t('order.category'), label(state.settings.categories?.[o.category], o.category))}${kv(t('order.size'), label(state.settings.sizes?.[o.size], o.size))}
-      ${kv(t('order.weight'), `${fmtNum(o.weightKg, 0)} ${t('common.kg')}`)}${o.vehiclePick ? kv(t('order.vehiclePick'), vehicleName(o.vehiclePick)) : ''}${typeof o.companion === 'boolean' ? kv(t('order.companion'), html`<b>${t(o.companion ? 'companion.yes' : 'companion.no')}</b>`) : ''}`}${kv(t('order.distance'), `${fmtNum(o.distanceKm)} ${t('common.km')}${o.distanceSource === 'estimate' ? ' ~' : ''}`)}
+      ${kv(t('order.weight'), `${fmtNum(o.weightKg, 0)} ${t('common.kg')}`)}${o.vehiclePick ? kv(t('order.vehiclePick'), vehicleName(o.vehiclePick)) : ''}${o.cod?.amount > 0 ? kv(t('cod.amount'), html`<b>${fmtMoney(o.cod.amount)}</b>${o.codCollectedAt ? html` · ✓ ${t('cod.collectedMark')}` : ''}`) : ''}${typeof o.companion === 'boolean' ? kv(t('order.companion'), html`<b>${t(o.companion ? 'companion.yes' : 'companion.no')}</b>`) : ''}`}${kv(t('order.distance'), `${fmtNum(o.distanceKm)} ${t('common.km')}${o.distanceSource === 'estimate' ? ' ~' : ''}`)}
       ${kv(t('order.when'), fmtDate(o.scheduledAt))}
       ${o.payMode === 'before' ? kv(t('order.payMode'), t('order.prepaid')) : ''}${kv(t('order.price'), html`<b>${fmtMoney(o.price)}</b>${o.priceOverridden ? html` <span class="muted small">(${t('order.priceAdjusted')}${o.priceNote ? ': ' + o.priceNote : ''})</span>` : ''}${o.priceNegotiated ? html` <span class="muted small">(${t('order.priceNegotiated')})</span>` : ''}`)}
       ${o.discount ? html`${kv(t('coupon.discount'), html`<span style="color:var(--nile)">− ${fmtMoney(o.discount)}</span>${o.couponCode ? html` <span class="muted small">(${o.couponCode})</span>` : ''}`)}${kv(t('coupon.due'), html`<b>${fmtMoney(dueOf(o))}</b>`)}` : ''}
@@ -362,9 +379,9 @@ export function renderOrder(el, id) {
 
   function paint(o) {
     role = state.profile.role === 'admin' && o.customerId === uid ? 'customer' : state.profile.role; // الأدمن على طلب هو عمله بيتعامل كعميل
-    render($('#title', el), html`${t('order.title')} ${orderNo(o.id)} ${stamp(o.status, o.service)}`);
+    render($('#title', el), html`${t('order.title')} ${orderNo(o.id)} ${stamp(o.status, o.service, o.direct)}`);
     render($('#rlink', el), RECEIPT_STATUS.includes(o.status) ? html`<a class="btn ghost sm" href="#/receipt/${o.id}">${t('receipt.open')}</a>` : '');
-    render(left, html`${stepsHtml(o)}<div id="actions">${actionsHtml(o)}${handlerHtml(o)}</div>${codeHtml(o)}${tripHtml(o)}${guardHtml(o)}${timesHtml(o)}${o.late ? html`<div class="action bad"><p>${t('trip.late')}</p></div>` : ''}${role === 'admin' ? html`<div class="row"><button class="btn ghost sm" type="button" data-act="evidence">${t('evidence.btn')}</button></div>` : ''}${moneyHtml(o)}${shareHtml(o)}${reorderHtml(o)}${safetyHtml(o)}${detailsHtml(o)}`);
+    render(left, html`${stepsHtml(o)}${driverCard(o)}<div id="actions">${actionsHtml(o)}${handlerHtml(o)}</div>${codeHtml(o)}${tripHtml(o)}${guardHtml(o)}${timesHtml(o)}${o.late ? html`<div class="action bad"><p>${t('trip.late')}</p></div>` : ''}${role === 'admin' ? html`<div class="row"><button class="btn ghost sm" type="button" data-act="evidence">${t('evidence.btn')}</button></div>` : ''}${moneyHtml(o)}${shareHtml(o)}${reorderHtml(o)}${safetyHtml(o)}${detailsHtml(o)}`);
     hydrate(left); ensureCode(o); startClock();
     const st = $('#stars', left); if (st) getStars = starsInput(st);
     drawMap(o); syncTracking(o); syncChat(o);
@@ -374,8 +391,8 @@ export function renderOrder(el, id) {
   const call = async (route, body, okMsg) => { const r = await api(route, { orderId: id, ...body }); if (okMsg) toast(t(okMsg)); await poller?.now(); return r; };
   const requireFile = (inputId) => { const f = $('#' + inputId, left)?.files?.[0]; if (!f) throw Object.assign(new Error('bad_file'), { code: 'bad_file' }); return f; };
   const actions = {
-    accept: () => { if (!isP(order) && !$('#agree', left)?.checked) { toast(t('err.must_agree'), true); return; } return call('orders/accept', { agree: true }, 'order.acceptedToast'); },
-    offer: () => { if (!isP(order) && !$('#agree', left)?.checked) { toast(t('err.must_agree'), true); return; } return call('offers/create', { agree: true, price: $('#offerPrice', left).value, note: $('#offerNote', left).value }, 'offer.sent'); },
+    accept: () => { if (!isP(order) && !$('#agree', left)?.checked) { toast(t('err.must_agree'), true); return; } return call('orders/accept', { agree: true, loc: cachedPos() }, 'order.acceptedToast'); },
+    offer: () => { if (!isP(order) && !$('#agree', left)?.checked) { toast(t('err.must_agree'), true); return; } return call('offers/create', { agree: true, loc: cachedPos(), price: $('#offerPrice', left).value, note: $('#offerNote', left).value }, 'offer.sent'); },
     async mismatch() { // الشحنة مش زي الوصف: السواق يرفض الاستلام ويخد التعويض والباقي يترد للعميل
       const reason = await promptDialog(t('mismatch.ask', { amount: fmtMoney(state.settings.mismatchCompensation || 0) }), { area: true, required: true });
       if (!reason || reason.trim().length < 5) return;
@@ -453,7 +470,7 @@ export function renderOrder(el, id) {
       } else { try { body.loc = await getPos(); } catch { /* اختياري */ } }
       await call('orders/status', body, 'order.updated');
     },
-    async confirm() { if (await confirmDialog(t(isP(order) ? 'order.confirmAskP' : 'order.confirmAsk'), { ok: t(isP(order) ? 'order.confirmReceiptP' : 'order.confirmReceipt') })) await call('orders/confirm', {}, 'order.confirmed'); },
+    async confirm() { if (await confirmDialog(t(order.direct === true ? 'order.directConfirmAsk' : isP(order) ? 'order.confirmAskP' : 'order.confirmAsk'), { ok: t(order.direct === true ? 'order.directConfirm' : isP(order) ? 'order.confirmReceiptP' : 'order.confirmReceipt') })) await call('orders/confirm', {}, 'order.confirmed'); },
     async rate() { const stars = getStars(); if (!stars) throw Object.assign(new Error('bad_input'), { code: 'bad_input' }); const q = {}; if (role === 'customer') for (const k of ['onTime', 'intact', 'polite']) q[k] = left.querySelector(`input[name="q_${k}"]:checked`)?.value === '1';
       await call('orders/rate', { stars, comment: $('#rcomment', left).value, ...q }, 'order.thanks'); },
     async share() {
@@ -472,6 +489,13 @@ export function renderOrder(el, id) {
       const a = b.dataset.a; let note = '';
       if (a === 'reject') { note = await promptDialog(t('admin.rejectReason'), { required: true }); if (note === null) return; }
       await call('admin/payment', { action: a, note }, 'common.done');
+    },
+    async codCollect() { if (await confirmDialog(t('cod.collectConfirm', { amount: fmtMoney(order.cod.amount) }), { ok: t('cod.collectBtn') })) await call('cod/collect', {}, 'cod.collected'); },
+    async admRelease() {
+      const note = $('#relNote', left).value.trim();
+      if (note.length < 5) { toast(t('admin.release.noteReq')); return; }
+      if (!(await confirmDialog(t('admin.release.confirm', { amount: fmtMoney(order.price) }), { danger: true }))) return;
+      await call('admin/release', { note }, 'common.done');
     },
     async admPrice() { await call('admin/order-price', { price: $('#newPrice', left).value, note: $('#priceNote', left).value }, 'common.done'); },
   };

@@ -21,13 +21,14 @@ export const fmtMoney = (n) => new Intl.NumberFormat(loc(), { style: 'currency',
 export const fmtNum = (n, d = 1) => new Intl.NumberFormat(loc(), { maximumFractionDigits: d }).format(Number(n) || 0);
 export const toDate = (v) => (!v ? null : v.toDate ? v.toDate() : v instanceof Date ? v : new Date(v));
 export const fmtDate = (v) => { const d = toDate(v); return d && !isNaN(d) ? d.toLocaleString(loc(), { dateStyle: 'medium', timeStyle: 'short' }) : '—'; };
+export const fmtDay = (v) => { const d = toDate(v); return d && !isNaN(d) ? d.toLocaleDateString(loc(), { dateStyle: 'medium' }) : '—'; }; // تاريخ من غير ساعة (فترات المحاسبة)
 export const orderNo = (id) => '#' + String(id).slice(0, 6).toUpperCase();
 export const ratingText = (u) => (u?.ratingCount ? `★ ${(u.ratingSum / u.ratingCount).toFixed(1)} (${u.ratingCount})` : t('common.noRating'));
 export const label = (o, key) => (o && o[getLang()]) || o?.ar || key;
 // رحلات الركاب ليها صياغة مختلفة لبعض الحالات (pstatus.*)؛ لو مفيش ترجمة بنرجع للنص العادي
-export const stamp = (s, service) => {
+export const stamp = (s, service, direct) => {
   const pk = 'pstatus.' + s;
-  return html`<span class="stamp s-${s}">${service === 'passengers' && t(pk) !== pk ? t(pk) : t('status.' + s)}</span>`;
+  return html`<span class="stamp s-${s}">${direct === true && s === 'paid' ? t('status.paid_direct') : service === 'passengers' && t(pk) !== pk ? t(pk) : t('status.' + s)}</span>`;
 };
 
 export function errMsg(e) {
@@ -85,7 +86,7 @@ export const spinner = () => html`<div class="center-load"><span class="spin" ro
 // ---------- بوليصة الشحن (كارت الطلب) ----------
 export function waybill(o, { href = `#/order/${o.id}` } = {}) {
   return html`<a class="waybill" href="${href}">
-    <div class="wb-head"><span class="wb-no">${orderNo(o.id)}</span><span class="row" style="gap:.4rem">${o.payMode === 'before' ? html`<span class="stamp s-active">${t('order.prepaid')}</span>` : ''}${o.guard === 'high' ? html`<span class="stamp s-pending">${t('guard.chip')}</span>` : ''}${o.offerCount ? html`<span class="stamp s-pending">${o.offerCount} ${t('offer.count')}</span>` : ''}${stamp(o.status, o.service)}</span></div>
+    <div class="wb-head"><span class="wb-no">${orderNo(o.id)}</span><span class="row" style="gap:.4rem">${o.payMode === 'before' ? html`<span class="stamp s-active">${t('order.prepaid')}</span>` : ''}${o.guard === 'high' ? html`<span class="stamp s-pending">${t('guard.chip')}</span>` : ''}${o.offerCount ? html`<span class="stamp s-pending">${o.offerCount} ${t('offer.count')}</span>` : ''}${stamp(o.status, o.service, o.direct)}</span></div>
     <div class="route"><div class="stop a"><span>${o.pickup?.address || t('order.pickup')}</span></div><i class="road"></i><div class="stop b"><span>${o.dropoff?.address || t('order.dropoff')}</span></div></div>
     <div class="wb-foot">${o.service === 'passengers' ? html`<span>${label(state.settings?.passengerClasses?.[o.vehicleClass], o.vehicleClass)}</span><span>${o.passengers} ${t('order.passengersUnit')}</span><span>${fmtNum(o.distanceKm)} ${t('common.km')}</span>` : html`<span>${label(state.settings?.categories?.[o.category], o.category)}</span><span>${fmtNum(o.distanceKm)} ${t('common.km')}</span><span>${fmtNum(o.weightKg, 0)} ${t('common.kg')}</span>`}<span>${fmtDate(o.scheduledAt)}</span><span class="price">${fmtMoney(o.price)}</span></div>
   </a>`;

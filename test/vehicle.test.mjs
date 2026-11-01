@@ -148,4 +148,32 @@ check('الجامبو يخدم كل الأحجام', ['small', 'medium', 'large'
   check('معامل الجامبو الجديد اتحفظ', (await call('cV', 'settings')).settings.sizes.xlarge.mult === 4);
   await ok('إعادة الإعدادات الأصلية', save({ vehicleGuide: g, sizes: cur.sizes })); }
 
+
+// ===== 7) صورة العربية: بتظهر في العروض قبل القبول، وفي الطلب بعد القبول =====
+{ mkU('drvVeh', 'driver', { name: 'سواق الصور', vehicle_type: 'half_ton' });
+  const vref = await up('drvVeh', 'vehiclePhoto'), idr = await up('drvVeh', 'id'); FS.patch('users/drvVeh', { vehicle_photo_ref: vref, id_ref: idr });
+  const a = await ok('طلب للعروض', make({ size: 'small' }));
+  await ok('السواق يقدّم عرض', call('drvVeh', 'offers/create', { orderId: a.id, price: a.price, agree: true }));
+  const v = (await ok('العميل يشوف الطلب', call('cV', 'orders/get', { orderId: a.id }))).order;
+  check('العرض فيه صورة العربية قبل القبول', v.offers?.length === 1 && v.offers[0].vehiclePhotoRef === vref);
+  check('العرض مفيهوش رقم السواق ولا هويته', !JSON.stringify(v.offers[0]).match(/phone|national|id_ref|idRef/i));
+  await ok('العميل يقبل العرض', call('cV', 'offers/accept', { offerId: v.offers[0].id }));
+  const after = (await ok('الطلب بعد القبول', call('cV', 'orders/get', { orderId: a.id }))).order;
+  check('بعد القبول العميل شايف صورة عربية السواق ونوعها', after.driverVehiclePhoto === vref && after.driverVehicle === 'half_ton'); }
+
+// ===== 8) رسمات العربيات (وحدة) =====
+{ const { vehicleSvg, vehicleImgKey } = await import('../public/js/vehicles.js');
+  for (const k of ['pickup', 'half_ton', 'truck', 'jumbo', 'passengers', 'car', 'van', 'microbus', 'minibus', 'tuktuk', 'reefer', 'flatbed', 'tanker', 'dump', 'curtain', 'carcarrier', 'غريب']) { const x = vehicleSvg(k); check(`رسمة ${k} صالحة`, x.startsWith('<svg') && x.endsWith('</svg>') && x.includes('class="wheel"')); }
+  check('كل نوع من الأربعة رسمته مختلفة', new Set(['pickup', 'half_ton', 'truck', 'jumbo'].map((k) => vehicleSvg(k))).size === 4);
+  const { VEHICLE_SHAPES } = await import('../public/js/vehicles.js'), { DICT } = await import('../public/js/i18n.js');
+  const uniq = VEHICLE_SHAPES.filter((k) => k !== 'passengers'); // passengers = نفس رسمة الميكروباص
+  check('16 مفتاح (15 رسمة مختلفة + رسمة الركاب = الميكروباص)', VEHICLE_SHAPES.length === 16 && ['tuktuk', 'reefer', 'flatbed', 'tanker', 'dump', 'curtain', 'carcarrier', 'car', 'van', 'minibus'].every((k) => VEHICLE_SHAPES.includes(k)));
+  check('كل الأشكال رسمتها مختلفة عن بعض', new Set(uniq.map((k) => vehicleSvg(k))).size === uniq.length);
+  check('كل شكل ليه اسم عربي وإنجليزي', uniq.every((k) => DICT.ar['vehicle.' + k] && DICT.en['vehicle.' + k]));
+  check('رسمة الركاب = الميكروباص', vehicleSvg('passengers') === vehicleSvg('microbus'));
+  check('السيارة والفان والميني باص ليهم رسمة خاصة', ['car', 'van', 'minibus'].every((k) => vehicleImgKey(k) === k));
+  check('النوع الغريب بيرجع لرسمة افتراضية', vehicleImgKey('xyz') === 'half_ton');
+  check('مفيش ألوان ثابتة (الثيم فاتح/ليلي)', !/#[0-9a-f]{3,6}|rgb\(/i.test(vehicleSvg('jumbo')));
+  check('الاسم بيتنضّف من الرموز الخطرة (XSS)', !vehicleSvg('truck', '"><script>x</script>').includes('<script>')); }
+
 console.log(`\n✅ اختبارات المرافقة وترشيح العربيات نجحت (${pass} فحص)`);

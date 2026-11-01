@@ -1,3 +1,4 @@
+import { vehicleSelect, wireVehicleSelect } from '../vpicker.js';
 import { api, poll } from '../api.js';
 import { gpoll } from '../sync.js';
 import { state } from '../state.js';
@@ -5,7 +6,7 @@ import { t } from '../i18n.js';
 import { $, html, render, toast, errMsg, busy, spinner, skeleton, waybill, stamp, orderNo, fmtMoney, fmtNum, fmtDate, ratingText, label, openModal, trustBadge, printNode, confirmDialog } from '../ui.js';
 import { uploadImage } from '../storage.js';
 import { attachDocCheck } from '../docCheck.js';
-import { getPos } from '../geo.js';
+import { getPos, cachedPos } from '../geo.js';
 import { chime, unlockAudio } from '../sound.js';
 import { pushSupport, enablePush } from '../push.js';
 
@@ -92,7 +93,7 @@ function newOrderAlert(o) {
   }, 1000);
   el.addEventListener('click', (e) => {
     const b = e.target.closest('[data-a]'); if (!b) return;
-    if (b.dataset.a === 'accept') busy(b, async () => { await api('orders/accept', { orderId: o.id }); close(); done(); toast(t('order.acceptedToast')); location.hash = `#/order/${o.id}`; });
+    if (b.dataset.a === 'accept') busy(b, async () => { await api('orders/accept', { orderId: o.id, loc: cachedPos() }); close(); done(); toast(t('order.acceptedToast')); location.hash = `#/order/${o.id}`; });
     else { close(); done(); } // تخطي، أو "فتح" (الرابط بيودّي لصفحة الطلب)
   });
 }
@@ -101,14 +102,17 @@ function newOrderAlert(o) {
 function available(body) {
   const sizes = Object.entries(state.settings.sizes || {});
   render(body, html`<div class="row" style="margin-bottom:1rem"><label class="f" style="min-width:220px">${t('driver.filterSize')}<select id="size"><option value="">${t('common.all')}</option>${sizes.map(([k, s]) => html`<option value="${k}">${label(s, k)}</option>`)}</select></label></div><div id="list" class="stack"></div>`);
-  let all = [], seen = null;
+  let all = [], seen = null, meta = {};
   const list = $('#list', body), sel = $('#size', body);
   const paint = () => {
     const rows = all.filter((o) => !sel.value || o.size === sel.value);
-    render(list, rows.length ? html`${rows.map((o) => waybill(o))}` : html`<div class="empty">${t('driver.noneAvail')}</div>`);
+    // نطاق الطلبات: بنعرض الطلبات اللي في دايرة من موقع السواق (الإعدادات)؛ من غير موقع مفيش طلبات بتظهر
+    render(list, html`${meta.radiusKm ? html`<p class="hint">${t('driver.radiusNote', { km: fmtNum(meta.radiusKm) })}</p>` : ''}${rows.length ? html`${rows.map((o) => waybill(o))}` : html`<div class="empty">${t(meta.needLocation ? 'driver.needLocation' : 'driver.noneAvail')}</div>`}`);
   };
   sel.addEventListener('change', paint);
-  return gpoll(['orders'], () => api('orders/list', { scope: 'available' }), 10000, ({ orders }) => {
+  const fetchList = async () => { if (!cachedPos()) await getPos().catch(() => null); const loc = cachedPos(); return api('orders/list', { scope: 'available', ...(loc ? { loc } : {}) }); };
+  return gpoll(['orders'], fetchList, 10000, ({ orders, needLocation, radiusKm }) => {
+    meta = { needLocation: needLocation === true, radiusKm: radiusKm || 0 };
     if (seen) {
       const fresh = orders.filter((o) => !seen.has(o.id));
       const fits = fresh.filter((o) => canServe(state.profile.vehicleType, o));
@@ -140,7 +144,7 @@ function fleet(body) {
       <div class="grid-2"><label class="f">${t('auth.phone')}<input name="phone" inputmode="tel" placeholder="01xxxxxxxxx" required></label>
         <label class="f">${t('auth.nationalId')}<input name="nationalId" inputmode="numeric" maxlength="14" required></label></div>
       <div class="grid-2"><label class="f">${t('fleet.plate')}<input name="plate" maxlength="20" required></label>
-        <label class="f">${t('auth.vehicleType')}<select name="vehicleType">${FLEET_VEHICLES.map((v) => html`<option value="${v}">${t('vehicle.' + v)}</option>`)}</select></label></div>
+        ${vehicleSelect('vehicleType', FLEET_VEHICLES)}</div>
       ${file('idFile', 'auth.idPhoto')}${file('licenseFile', 'auth.license')}${file('vehiclePhotoFile', 'auth.vehiclePhoto', false)}
       <p class="err" id="ferr" role="alert"></p>
       <button class="btn primary block" type="submit" id="fsub">${t('fleet.add')}</button></form></div>
@@ -153,6 +157,7 @@ function fleet(body) {
   };
   const f = $('#ff', body), err = $('#ferr', body);
   attachDocCheck(f, { idFile: 'id', licenseFile: 'license' });
+  wireVehicleSelect(f);
   f.addEventListener('submit', (e) => {
     e.preventDefault(); err.textContent = '';
     if (!(f.idFile.files[0] && f.licenseFile.files[0])) { err.textContent = t('err.bad_file'); return; }

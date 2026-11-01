@@ -65,6 +65,14 @@ export const DEFAULTS = {
     large:  { ar: 'كبير (نقل ثقيل)',         en: 'Large (heavy truck)',   mult: 2.0 },
     xlarge: { ar: 'جامبو (حمولة كبيرة جداً)', en: 'Jumbo (extra large load)', mult: 3.0 },
   },
+  // الدفع عند الاستلام (COD): مخفي ومقفول افتراضياً. العمولة صفر في الأول، وبعدها نسبة من إجمالي المبالغ المحصّلة في فترة محاسبة. السواق اللي ما يسدّدش حسابه بعد المهلة بيتوقف تلقائياً لحد ما الأدمن يأكد السداد.
+  codEnabled: false, codCommissionPct: 0, codPeriodDays: 7, codGraceDays: 3, codMaxAmount: 5000,
+  codBlockScope: 'cod',    // 'cod' = السواق المتأخر ما ياخدش طلبات دفع عند الاستلام جديدة بس · 'all' = ما ياخدش أي طلبات
+  // نظام الدفع المباشر + عمولة المنصة (مقفول افتراضياً = نظام الضمان القديم زي ما هو). لما الأدمن يفعّله: العميل بيدفع للسواق مباشرة، والمنصة بتسجّل كل شحنة ناجحة،
+  // ولما إجمالي مكسب السواق (غير المسدَّد) يوصل للحد بيتوقف عن قبول طلبات جديدة لحد ما يسدّد نسبة المنصة (محفظة/إنستا باي + صورة التحويل + تأكيد الأدمن). نسبة 0 = من غير عمولة.
+  dcEnabled: false, dcPct: 2, dcLimit: 1000, dcPay: { wallet: '', walletName: '' },
+  dcAutoCompleteHours: 24, // الدفع المباشر: الطلب اللي السواق استلمه وفضل مفتوح المدة دي من غير تأكيد تسليم بيتكمّل تلقائي (0 = مقفول)
+  jobsRadiusKm: 15,        // السواق بيشوف الطلبات اللي نقطة استلامها في الدايرة دي من موقعه (0 = من غير حد)
   companionAsk: true,      // سؤال العميل في الطلب: هترافق الشحنة ولا لأ؟ (الأدمن يقفله)
   vehicleGuideOn: true,    // ترشيح العربية المناسبة (اختياري للعميل) حسب وزن الشحنة
   vehicleGuide: {          // لكل عربية: أقصى وزن بالكجم (0 = متوقفة) والحجم المرتبط بيها (بيحدد السعر). مرتّبة من الأصغر للأكبر
@@ -124,6 +132,12 @@ export async function loadSettings(env) {
     company: Object.fromEntries(COMPANY_KEYS.map((k) => [k, typeof d.company?.[k] === 'string' ? d.company[k] : COMPANY_DEFAULT[k]])),
     categories: d.categories && Object.keys(d.categories).length ? d.categories : D.categories,
     sizes: (() => { const z = d.sizes && Object.keys(d.sizes).length ? d.sizes : D.sizes; return z.xlarge ? z : { ...z, xlarge: D.sizes.xlarge }; })(), // الجامبو حجم أساسي: لو مش متخزّن بيتضاف تلقائياً
+    codEnabled: d.codEnabled === true, codCommissionPct: Math.round(num(d.codCommissionPct, D.codCommissionPct, 0, 30) * 10) / 10,
+    codPeriodDays: Math.floor(num(d.codPeriodDays, D.codPeriodDays, 1, 31)), codGraceDays: Math.floor(num(d.codGraceDays, D.codGraceDays, 0, 30)),
+    codMaxAmount: Math.floor(num(d.codMaxAmount, D.codMaxAmount, 100, 1000000)), codBlockScope: d.codBlockScope === 'all' ? 'all' : 'cod',
+    dcEnabled: d.dcEnabled === true, dcPct: Math.round(num(d.dcPct, D.dcPct, 0, 50) * 10) / 10, dcLimit: Math.floor(num(d.dcLimit, D.dcLimit, 1, 1e8)),
+    dcAutoCompleteHours: Math.floor(num(d.dcAutoCompleteHours, D.dcAutoCompleteHours, 0, 720)), jobsRadiusKm: Math.round(num(d.jobsRadiusKm, D.jobsRadiusKm, 0, 500) * 10) / 10,
+    dcPay: { wallet: typeof d.dcPay?.wallet === 'string' ? d.dcPay.wallet.slice(0, 40) : '', walletName: typeof d.dcPay?.walletName === 'string' ? d.dcPay.walletName.slice(0, 80) : '' },
     companionAsk: d.companionAsk !== false, vehicleGuideOn: d.vehicleGuideOn !== false,
     vehicleGuide: Object.fromEntries(VEHICLE_KEYS.map((k) => [k, { maxKg: Math.floor(num(d.vehicleGuide?.[k]?.maxKg, D.vehicleGuide[k].maxKg, 0, 100000)), size: typeof d.vehicleGuide?.[k]?.size === 'string' ? d.vehicleGuide[k].size : D.vehicleGuide[k].size }])),
     passengersEnabled: d.passengersEnabled === true,
@@ -166,6 +180,11 @@ export function calcPrice(s, km, category, size) {
   return { price: Math.max(Math.ceil(s.minPrice), Math.ceil(raw)), raw: Math.round(raw), catMult: Number(c.mult), sizeMult: Number(z.mult) };
 }
 
+/** نظام الدفع المباشر: عمولة المنصة المستحقة على إجمالي مكسب السواق (جنيه صحيح، مقرّبة) */
+export const dcDue = (gross, pct) => Math.max(0, Math.round((Math.max(0, Number(gross) || 0) * (Number(pct) || 0)) / 100));
+/** السواق بيتوقف لما إجمالي مكسبه غير المسدَّد يوصل للحد أو يعدّيه (الحد نفسه = متوقف). النظام مقفول أو النسبة 0 = مفيش توقيف. */
+export const dcBlocked = (gross, s) => s.dcEnabled === true && s.dcPct > 0 && (Number(gross) || 0) >= s.dcLimit;
+
 /** توزيع المبلغ: عمولة الموقع (مقرّبة لجنيه) والباقي للسواق — أرقام صحيحة دايماً */
 export function split(amount, pct) {
   const commission = Math.round((amount * pct) / 100);
@@ -207,6 +226,12 @@ export function sanitizeSettings(b) {
     instapay: { handle: String(b.instapay?.handle || '').slice(0, 80), name: String(b.instapay?.name || '').slice(0, 80) },
     company: Object.fromEntries(COMPANY_KEYS.map((k) => [k, String(b.company?.[k] ?? COMPANY_DEFAULT[k]).trim().slice(0, k === 'about' ? 800 : 160)])),
     categories: table(b.categories), sizes: table(b.sizes),
+    codEnabled: b.codEnabled === true, codCommissionPct: Math.round(n(b.codCommissionPct ?? DEFAULTS.codCommissionPct, 0, 30) * 10) / 10,
+    codPeriodDays: Math.floor(n(b.codPeriodDays ?? DEFAULTS.codPeriodDays, 1, 31)), codGraceDays: Math.floor(n(b.codGraceDays ?? DEFAULTS.codGraceDays, 0, 30)),
+    codMaxAmount: Math.floor(n(b.codMaxAmount ?? DEFAULTS.codMaxAmount, 100, 1000000)), codBlockScope: b.codBlockScope === 'all' ? 'all' : 'cod',
+    dcEnabled: b.dcEnabled === true, dcPct: Math.round(n(b.dcPct ?? DEFAULTS.dcPct, 0, 50) * 10) / 10, dcLimit: Math.floor(n(b.dcLimit ?? DEFAULTS.dcLimit, 1, 1e8)),
+    dcAutoCompleteHours: Math.floor(n(b.dcAutoCompleteHours ?? DEFAULTS.dcAutoCompleteHours, 0, 720)), jobsRadiusKm: Math.round(n(b.jobsRadiusKm ?? DEFAULTS.jobsRadiusKm, 0, 500) * 10) / 10,
+    dcPay: { wallet: String(b.dcPay?.wallet ?? '').trim().slice(0, 40), walletName: String(b.dcPay?.walletName ?? '').trim().slice(0, 80) },
     companionAsk: b.companionAsk !== false, vehicleGuideOn: b.vehicleGuideOn !== false,
     vehicleGuide: (() => { // أقصى وزن لكل عربية (0 = متوقفة)، الأوزان المفعّلة لازم تتصاعد، والحجم لازم يكون موجود في جدول الأحجام
       const g = b.vehicleGuide ?? DEFAULTS.vehicleGuide, sizes = table(b.sizes), r = {}; let last = 0;
@@ -320,3 +345,28 @@ export function recommendVehicle(guide, weightKg) {
   if (!on.length) return null;
   return (Number.isFinite(kg) && kg > 0 && on.find((k) => kg <= guide[k].maxKg)) || on[on.length - 1];
 }
+
+// ===== الدفع عند الاستلام (COD): منطق صافي =====
+const DAY = 86400e3;
+/** فترة المحاسبة اللي فيها وقت معيّن. المفتاح `${أيام}d-${رقم}` بيتخزّن مع كل مبلغ محصّل، فتغيير طول الفترة بعدين مابيبوّظش القديم. */
+export function codPeriodOf(ts, days) { const d = Math.max(1, Math.floor(days)), idx = Math.floor(ts / (d * DAY)); return { key: `${d}d-${idx}`, start: idx * d * DAY, end: (idx + 1) * d * DAY }; }
+export function codPeriodBounds(key) { const m = /^(\d{1,2})d-(\d{1,6})$/.exec(String(key ?? '')); if (!m) return null; const d = +m[1], i = +m[2]; if (d < 1 || d > 31) return null; return { days: d, idx: i, start: i * d * DAY, end: (i + 1) * d * DAY }; }
+/** تقسيم المبلغ المحصّل: عمولة المنصة (بالنسبة المثبّتة وقت التحصيل) والباقي للمرسل. العمولة بتتقرّب لأقرب جنيه. */
+export function codSplit(amount, pct) { const a = Math.max(0, Math.floor(Number(amount) || 0)), p = Math.min(30, Math.max(0, Number(pct) || 0)); const commission = Math.min(a, Math.round((a * p) / 100)); return { amount: a, commission, net: a - commission }; }
+/** كشف الحساب لكل فترة من المبالغ المحصّلة + حالة السداد (pays: خريطة period → {status}). due = موعد السداد (آخر الفترة + المهلة). */
+export function codStatements(entries, pays, s, nowTs) {
+  const by = new Map();
+  for (const e of entries || []) {
+    if (!e.period) continue;
+    const g = by.get(e.period) || { period: e.period, count: 0, collected: 0, commission: 0, net: 0 };
+    g.count += 1; g.collected += e.amount || 0; g.commission += e.commission || 0; g.net += e.net || 0; by.set(e.period, g);
+  }
+  const grace = Math.max(0, Number(s?.codGraceDays) || 0) * DAY;
+  return [...by.values()].map((g) => {
+    const b = codPeriodBounds(g.period), pay = pays?.[g.period] || null, dueAt = b ? b.end + grace : 0;
+    const status = pay?.status === 'paid' ? 'paid' : !b || nowTs < b.end ? 'open' : pay?.status === 'reported' ? (nowTs > dueAt ? 'overdue' : 'reported') : nowTs > dueAt ? 'overdue' : 'due';
+    return { ...g, start: b?.start ?? 0, end: b?.end ?? 0, dueAt, status, ref: pay?.ref ?? null };
+  }).sort((x, y) => y.start - x.start);
+}
+/** السواق متوقف لو عنده فترة متأخرة (عدّى موعد السداد وما اتأكدش). */
+export const codBlocked = (statements) => (statements || []).some((x) => x.status === 'overdue');
