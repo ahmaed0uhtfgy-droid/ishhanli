@@ -4,7 +4,7 @@ import { webcrypto as crypto } from 'node:crypto';
 import { onRequest } from '../functions/api/[[route]].js';
 import { JWKS_URL } from '../functions/_lib/core.js';
 import { trustOf } from '../functions/_lib/trust.js';
-import { dcDue, dcBlocked } from '../functions/_lib/logic.js';
+import { dcDue, dcBlocked, dcPayable, fineCredit, calcPrice, kmFeeOf, dcFeesOn, vehicleOfSize, DEFAULTS as __D } from '../functions/_lib/logic.js'; __D.samePickupMax = 0; // حد «نفس النقطة» بيتختبر بالإعدادات في قسم الغرامات
 import { makeFirestore } from './fake-firestore.mjs';
 
 const PROJECT = 'demo-ishhanli';
@@ -320,5 +320,319 @@ await ok('الأدمن يفعّله بنسبة 0', save({ dcEnabled: true, dcPct
 { const z = await mk(); setPrice(z.id, 700); FS.patch('users/drvXX', { dc_gross: 0 });
   await ok('سواق يقبل', call('drvXX', 'orders/accept', { orderId: z.id }, eS)); await drive('drvXX', z.id); await ok('تسليم', finish('drvXX', z.id));
   check('نسبة 0: الطلب اتكمّل من غير تسجيل في الدفتر', orderRow(z.id).status === 'completed' && !U('drvXX').dc_gross && !ledger('drvXX', z.id)); }
+
+
+// ===== 8) تعويض السواق وغرامة العميل =====
+const sf = (p) => save({ dcEnabled: true, dcPct: 2, dcLimit: 1000, finesEnabled: true, ...p });
+const claim = (oid) => FS.get(`fines/${oid}`);
+const clearFines = () => { FS.list('fines').forEach((d) => FS.del(`fines/${d._id}`)); for (const u of ['drvFF', 'drvXX', 'drvYY']) FS.patch(`users/${u}`, { dc_gross: 0, dc_credit: 0, dc_fines_held: 0, dc_km: 0, dc_kmfee: 0, km_total: 0 }); FS.patch('users/cF', { fine_due: 0, cancel_count: 0 }); };
+const back = (oid, extra) => patchData(oid, extra);
+// طلب مباشر: السواق يقبل ويوصل ويستنى المهلة ويبلّغ «العميل مش موجود» => مطالبة مفتوحة
+const noShow = async (drv, price = 100) => {
+  FS.patch('users/cF', { cancel_count: 0 }); const id = (await mk()).id; setPrice(id, price);
+  await ok('سواق يقبل', call(drv, 'orders/accept', { orderId: id }, eS));
+  await ok('وصلت', call(drv, 'orders/arrived', { orderId: id, loc: CAIRO }, eS));
+  back(id, { arrivedAt: Date.now() - 11 * 60000 });
+  await ok('العميل مش موجود', call(drv, 'orders/noshow', { orderId: id }, eS));
+  return id; };
+{ // حسابات نقية
+  check('تعويض المنصة 50% من 30 = 15 (أقل من الغرامة)', fineCredit(30, 50) === 15 && fineCredit(15, 50) === 7);
+  check('التعويض دايماً أقل من الغرامة حتى بنسبة 99%', fineCredit(30, 99) === 29 && fineCredit(1, 99) === 0 && fineCredit(30, 100) === 29);
+  check('صفر لو مدخلات غلط', fineCredit(-5, 50) === 0 && fineCredit('x', 'y') === 0 && fineCredit(30, 0) === 0);
+  check('المطلوب = العمولة − التعويض', dcPayable(1400, 2, 0, 0).amount === 28 && dcPayable(1400, 2, 10, 0).amount === 18);
+  check('التعويض بيغطي العمولة بس (مش أكتر)', dcPayable(1400, 2, 50, 0).amount === 0 && dcPayable(1400, 2, 50, 0).creditUsed === 28);
+  check('الغرامات المحصّلة بتتضاف فوق', dcPayable(1400, 2, 10, 30).amount === 48 && dcPayable(0, 2, 0, 30).amount === 30); }
+clearFines();
+check('افتراضيات الغرامات مقفولة وقيم معقولة', cur.finesEnabled === false && cur.fineFreeCancelMin === 2 && cur.fineWaitMin === 10 && cur.fineEnRouteAmount === 15 && cur.fineArrivedAmount === 30 && cur.fineClaimHours === 12 && cur.fineObjectHours === 24 && cur.fineDriverSharePct === 50 && cur.fineMonthlyCap === 100 && cur.samePickupMeters === 300); // samePickupMax الافتراضي 1 لكن الملف ده بيصفّره فوق
+await bad('تعويض 100%', sf({ fineDriverSharePct: 100 }), 400, 'bad_input');
+await bad('نسبة محصّل فوق 50', sf({ fineCollectorPct: 51 }), 400, 'bad_input');
+await bad('نطاق نقطة غلط', sf({ samePickupMeters: 5001 }), 400, 'bad_input');
+await bad('عميل مايغيّرش', call('cF', 'admin/settings/save', { ...cur, finesEnabled: true }, eS), 403, 'forbidden');
+{ // الميزة مقفولة: مفيش وصول ولا غرامة
+  await ok('الدفع المباشر شغّال والغرامات مقفولة', save({ dcEnabled: true, dcPct: 2, dcLimit: 1000, finesEnabled: false }));
+  const id = (await mk()).id; await ok('سواق يقبل', call('drvFF', 'orders/accept', { orderId: id }, eS));
+  await bad('مقفولة: وصلت ممنوع', call('drvFF', 'orders/arrived', { orderId: id, loc: CAIRO }, eS), 409, 'fines_off');
+  await ok('في الطريق', call('drvFF', 'orders/status', { orderId: id, next: 'heading_pickup' }, eS)); back(id, { acceptedAt: Date.now() - 10 * 60000 });
+  await ok('العميل يلغي (مقفولة = من غير غرامة)', call('cF', 'orders/cancel', { orderId: id }, eS));
+  check('مفيش مطالبة', !claim(id)); }
+await ok('الأدمن يفعّل الغرامات', sf({}));
+
+// -- وصول السواق (إثبات الموقع) --
+FS.patch('users/cF', { cancel_count: 0 });
+{ const id = (await mk()).id; setPrice(id, 100);
+  await bad('سواق ماقبلش الطلب', call('drvXX', 'orders/arrived', { orderId: id, loc: CAIRO }, eS), 403, 'forbidden');
+  await ok('سواق يقبل', call('drvFF', 'orders/accept', { orderId: id }, eS));
+  await bad('وصلت من غير موقع', call('drvFF', 'orders/arrived', { orderId: id }, eS), 400);
+  await bad('وصلت وهو بعيد', call('drvFF', 'orders/arrived', { orderId: id, loc: FAR }, eS), 403, 'too_far');
+  await bad('عدم حضور قبل الوصول', call('drvFF', 'orders/noshow', { orderId: id }, eS), 409, 'not_arrived');
+  fcm.length = 0;
+  await ok('وصلت (جوه نطاق نقطة الاستلام)', call('drvFF', 'orders/arrived', { orderId: id, loc: CAIRO }, eS));
+  check('اتسجّل وقت ومكان الوصول', typeof dataOf(id).arrivedAt === 'number' && dataOf(id).arrivedLoc.lat === CAIRO.lat);
+  const t1 = dataOf(id).arrivedAt; await ok('وصلت تاني (نفس الوقت)', call('drvFF', 'orders/arrived', { orderId: id, loc: CAIRO }, eS)); check('الوقت ما اتغيّرش', dataOf(id).arrivedAt === t1);
+  await bad('لسه في مهلة الانتظار', call('drvFF', 'orders/noshow', { orderId: id }, eS), 409, 'wait_more');
+  await bad('عميل مايبلّغش عدم حضور', call('cF', 'orders/noshow', { orderId: id }, eS), 403, 'forbidden');
+  back(id, { arrivedAt: Date.now() - 11 * 60000 });
+  const r = await ok('العميل مش موجود (بعد 11 دقيقة)', call('drvFF', 'orders/noshow', { orderId: id }, eS));
+  check('الطلب اتلغى بسبب العميل وفيه مطالبة مفتوحة 30 جنيه والتعويض 15', orderRow(id).status === 'cancelled' && dataOf(id).noShow === true && r.amount === 30 && r.credit === 15 && claim(id).status === 'open' && claim(id).amount === 30 && claim(id).remaining === 0);
+  check('إنذار للعميل (عدّاد الإلغاء)', U('cF').cancel_count === 1);
+  check('لسه مفيش غرامة ولا تعويض (في مهلة التسوية)', !U('cF').fine_due && !U('drvFF').dc_credit);
+  await bad('مطالبة تانية على نفس الطلب', call('drvFF', 'orders/noshow', { orderId: id }, eS), 409); }
+
+// -- التسوية المباشرة: العميل عوّض السواق --
+clearFines();
+{ const id = await noShow('drvFF');
+  await bad('عميل تاني مايسجّلش', call('drvXX', 'fines/declare', { orderId: id }, eS), 403, 'forbidden');
+  await ok('العميل يسجّل إنه عوّض السواق', call('cF', 'fines/declare', { orderId: id }, eS));
+  check('بتستنى تأكيد السواق', claim(id).status === 'customer_paid');
+  await bad('العميل مايأكدش لنفسه', call('cF', 'fines/collected', { orderId: id }, eS), 403, 'forbidden');
+  await ok('السواق يأكّد إنه استلم التعويض', call('drvFF', 'fines/collected', { orderId: id }, eS));
+  check('اتقفلت من غير غرامة ولا تعويض', claim(id).status === 'settled' && !U('cF').fine_due && !U('drvFF').dc_credit);
+  await bad('مايتقفلش مرتين', call('drvFF', 'fines/collected', { orderId: id }, eS), 409, 'bad_state'); }
+{ const id = await noShow('drvFF');
+  await ok('السواق يسجّل «اتحصّل» (كاش)', call('drvFF', 'fines/collected', { orderId: id }, eS));
+  check('مقفولة من غير غرامة', claim(id).status === 'settled' && !U('cF').fine_due); }
+
+// -- التطبيق: المنصة تتنازل عن جزء من العمولة والعميل ياخد غرامة --
+clearFines();
+{ const id = await noShow('drvFF'); fcm.length = 0;
+  await bad('عميل مايطبّقش', call('cF', 'fines/apply', { orderId: id }, eS), 403, 'forbidden');
+  const r = await ok('السواق: ماتحصّلش — طبّق دلوقتي', call('drvFF', 'fines/apply', { orderId: id }, eS));
+  check('تعويض 15 للسواق وغرامة 30 على العميل', r.credit === 15 && U('drvFF').dc_credit === 15 && U('cF').fine_due === 30 && claim(id).status === 'applied' && claim(id).remaining === 30 && claim(id).credit === 15);
+  check('التعويض أقل من الغرامة', claim(id).credit < claim(id).amount);
+  await bad('مايتطبّقش مرتين', call('drvFF', 'fines/apply', { orderId: id }, eS), 409, 'bad_state');
+  const m = await ok('العميل يشوف غراماته', call('cF', 'fines/mine', {}, eS)); check('فيها الغرامة والمطالبة', m.due === 30 && m.claims.length === 1 && m.claims[0].remaining === 30 && m.role === 'customer');
+  const d = await ok('السواق يشوف تعويضاته', call('drvFF', 'fines/mine', {}, eS)); check('فيها رصيد التعويض', d.credit === 15 && d.claims.length === 1 && d.role === 'driver' && d.sharePct === 50);
+  // اعتراض العميل
+  await bad('اعتراض بسبب قصير', call('cF', 'fines/object', { orderId: id, note: 'x' }, eS), 400);
+  await bad('سواق مايعترضش', call('drvFF', 'fines/object', { orderId: id, note: 'اعتراض' }, eS), 403, 'forbidden');
+  await ok('العميل يعترض', call('cF', 'fines/object', { orderId: id, note: 'كنت في المكان وماحدش اتصل' }, eS));
+  await bad('اعتراض تاني', call('cF', 'fines/object', { orderId: id, note: 'تاني' }, eS), 409, 'already_objected');
+  const L = await ok('الأدمن يشوف الاعتراضات', call('admin1', 'admin/fines/list', {}, eS)); check('الاعتراض ظاهر مع بيانات العميل', L.objected.some((x) => x.id === id && x.objectNote.includes('المكان')) && L.customers.some((x) => x.id === 'cF' && x.due === 30));
+  await bad('عميل مايشوفش لوحة الأدمن', call('cF', 'admin/fines/list', {}, eS), 403, 'forbidden');
+  await bad('قرار غلط', call('admin1', 'admin/fines/decide', { id, action: 'x' }, eS), 400, 'bad_action');
+  await bad('رفض من غير سبب', call('admin1', 'admin/fines/decide', { id, action: 'reject' }, eS), 400);
+  await ok('الأدمن يقبل الاعتراض (الادعاء مش صحيح)', call('admin1', 'admin/fines/decide', { id, action: 'reject', note: 'السواق مكنش في المكان' }, eS));
+  check('اتشالت الغرامة والتعويض واتسجّل إنذار للسواق', U('cF').fine_due === 0 && U('drvFF').dc_credit === 0 && U('drvFF').false_claims === 1 && claim(id).status === 'rejected');
+  await bad('قرار تاني على نفس المطالبة', call('admin1', 'admin/fines/decide', { id, action: 'waive' }, eS), 409, 'bad_state');
+  check('سجل التدقيق', FS.list('audit').some((x) => x.action === 'fine.reject')); }
+{ const id = await noShow('drvFF'); await ok('تطبيق', call('drvFF', 'fines/apply', { orderId: id }, eS));
+  await ok('الأدمن يعفي العميل (المنصة بتتحمّل)', call('admin1', 'admin/fines/decide', { id, action: 'waive', note: 'عميل قديم' }, eS));
+  check('العميل اتعفى والسواق احتفظ بتعويضه', U('cF').fine_due === 0 && U('drvFF').dc_credit === 15 && claim(id).status === 'waived'); }
+{ const id = await noShow('drvXX'); await ok('تطبيق', call('drvXX', 'fines/apply', { orderId: id }, eS));
+  await ok('العميل سدّد للمنصة مباشرة', call('admin1', 'admin/fines/decide', { id, action: 'settle', note: 'تحويل إنستا باي' }, eS));
+  check('اتسوّت', U('cF').fine_due === 0 && claim(id).status === 'paid_platform'); }
+mkU('custLong1', 'customer', { name: 'عميل طويل' }); // مُعرّف أطول من 5 حروف (uidOf بيرفض القصير)
+await bad('تصحيح من غير سبب', call('admin1', 'admin/fines/adjust', { uid: 'custLong1', due: 10 }, eS), 400);
+await bad('تصحيح على سواق', call('admin1', 'admin/fines/adjust', { uid: 'drvFF', due: 10, note: 'تجربة' }, eS), 404, 'not_found');
+await ok('الأدمن يصحّح غرامة', call('admin1', 'admin/fines/adjust', { uid: 'custLong1', due: 10, note: 'تصحيح' }, eS)); check('اتصحّحت', U('custLong1').fine_due === 10);
+await ok('وتتصفّر', call('admin1', 'admin/fines/adjust', { uid: 'custLong1', due: 0, note: 'تصحيح' }, eS)); check('اتصفّرت وفي سجل التدقيق', U('custLong1').fine_due === 0 && FS.list('audit').some((x) => x.action === 'fine.adjust'));
+
+// -- التطبيق التلقائي بعد المهلة (فحص دوري) --
+clearFines();
+{ const a = await noShow('drvFF'), b = await noShow('drvXX');
+  await ok('العميل يسجّل التعويض على الأولى', call('cF', 'fines/declare', { orderId: a }, eS));
+  await ok('فحص دوري والمهلة لسه', call('drvYY', 'orders/list', { scope: 'mine' }, eS));
+  check('لسه مفتوحتين', claim(a).status === 'customer_paid' && claim(b).status === 'open' && !U('cF').fine_due);
+  FS.patch(`fines/${a}`, { apply_at: Date.now() - 1000 }); FS.patch(`fines/${b}`, { apply_at: Date.now() - 1000 });
+  await ok('فحص دوري بعد المهلة', call('drvYY', 'orders/list', { scope: 'mine' }, eS));
+  check('اتطبّقتا تلقائي (السواق ماأكدش تأكيد العميل)', claim(a).status === 'applied' && claim(b).status === 'applied' && U('cF').fine_due === 60 && U('drvFF').dc_credit === 15 && U('drvXX').dc_credit === 15); }
+
+// -- تحصيل الغرامة مع الطلب الجاي + تحويلها للمنصة --
+{ const pre = U('drvYY');
+  await bad('عميل عليه غرامة وفيه طلب شغّال تاني', (async () => { await mk(); return make(100, eS, {}, false); })(), 409, 'fine_one_order');
+  const id = (await mk()).id; setPrice(id, 900);
+  check('الغرامة 60 ظاهرة في الطلب للسواق', dataOf(id).fineDue === 60);
+  await ok('السواق يقبل', call('drvYY', 'orders/accept', { orderId: id }, eS));
+  FS.patch('users/drvYY', { dc_gross: 0, dc_credit: 0, dc_fines_held: 0 });
+  await drive('drvYY', id); await ok('تسليم', finish('drvYY', id));
+  check('اتحصّلت 60 من العميل وبقت على السواق للمنصة', U('cF').fine_due === 0 && U('drvYY').dc_fines_held === 60 && dataOf(id).fineCollected === 60 && orderRow(id).status === 'completed');
+  check('المطالبات اتقفلت وفيها مين حصّلها', ['collected'].every((x) => FS.list('fines').filter((f) => f.customer_id === 'cF').every((f) => f.status === x && f.remaining === 0 && JSON.parse(f.collected_by || '[]')[0]?.driver_id === 'drvYY')));
+  check('مكسب الطلب (900) اتسجّل من غير الغرامة', U('drvYY').dc_gross === 900 && ledger('drvYY', id)?.gross === 900);
+  const sm = await ok('ملخص السواق', call('drvYY', 'dc/summary', {}, eS));
+  check('المطلوب = عمولة 18 + غرامات 60', sm.commission === 18 && sm.finesHeld === 60 && sm.due === 78 && sm.creditUsed === 0);
+  // رصيد تعويض: 10 يتخصم من العمولة
+  FS.patch('users/drvYY', { dc_credit: 10 }); const sm2 = await call('drvYY', 'dc/summary', {}, eS);
+  check('المطلوب = 18 − 10 + 60 = 68', sm2.due === 68 && sm2.credit === 10 && sm2.creditUsed === 10);
+  const pr = await up('drvYY', 'payment');
+  const py = await ok('السواق يحوّل المطلوب', call('drvYY', 'dc/pay', { method: 'wallet', proofRef: pr, reference: 'FINE-0001' }, eS));
+  check('المبلغ 68', py.amount === 68 && FS.get(`dc_pay/${py.id}`).credit_used === 10 && FS.get(`dc_pay/${py.id}`).fines_held === 60);
+  FS.patch('users/drvYY', { dc_fines_held: 70 }); // غرامة اتحصّلت بعد طلب السداد
+  await ok('الأدمن يأكّد', call('admin1', 'admin/dc/confirm', { id: py.id, action: 'confirm' }, eS));
+  check('اتخصم اللي اتحسب بس', U('drvYY').dc_gross === 0 && U('drvYY').dc_credit === 0 && U('drvYY').dc_fines_held === 10 && U('drvYY').dc_paid_total >= 68); }
+
+// -- عمولة اتغطّت برصيد التعويض بالكامل: تتسوّى من غير تحويل --
+{ FS.patch('users/drvXX', { dc_gross: 600, dc_credit: 20, dc_fines_held: 0 });
+  const pbefore = await call('drvXX', 'dc/summary', {}, eS); check('العمولة 12 والتعويض 20 = المطلوب صفر', pbefore.commission === 12 && pbefore.due === 0);
+  const cv = await ok('سواق يسوّي بالتعويض من غير إثبات', call('drvXX', 'dc/pay', { method: 'wallet' }, eS));
+  check('اتسوّت فوراً والباقي من التعويض 8', cv.covered === true && U('drvXX').dc_gross === 0 && U('drvXX').dc_credit === 8 && FS.list('dc_pay').some((x) => x.driver_id === 'drvXX' && x.method === 'credit' && x.status === 'paid'));
+  await bad('ماعليهوش حاجة بعدها', call('drvXX', 'dc/pay', { method: 'wallet' }, eS), 409, 'nothing_due'); }
+
+// -- نسبة المحصِّل (السواق يحتفظ بجزء من الغرامة) --
+clearFines();
+{ await ok('الأدمن يخلّي المحصّل ياخد 10%', sf({ fineCollectorPct: 10 }));
+  const a = await noShow('drvFF'); await ok('تطبيق', call('drvFF', 'fines/apply', { orderId: a }, eS));
+  const id = (await mk()).id; setPrice(id, 200); await ok('سواق يقبل', call('drvXX', 'orders/accept', { orderId: id }, eS)); await drive('drvXX', id); await ok('تسليم', finish('drvXX', id));
+  check('المحصّل احتفظ بـ3 وعليه 27 للمنصة', dataOf(id).fineCollected === 30 && dataOf(id).fineKept === 3 && U('drvXX').dc_fines_held === 27); }
+
+// -- مراحل إلغاء العميل بعد القبول --
+clearFines(); await ok('نرجّع النسبة', sf({}));
+{ const stage = async (setup) => { FS.patch('users/cF', { cancel_count: 0 }); const id = (await mk()).id; await ok('سواق يقبل', call('drvFF', 'orders/accept', { orderId: id }, eS)); await setup(id); return id; };
+  let id = await stage(async () => {}); const r0 = await ok('إلغاء مباشرة بعد القبول', call('cF', 'orders/cancel', { orderId: id }, eS));
+  check('إلغاء مجاني (جوه فترة الإلغاء المجاني)', r0.fine === undefined && !claim(id));
+  id = await stage(async (x) => { back(x, { acceptedAt: Date.now() - 5 * 60000 }); });
+  const r1 = await ok('إلغاء بعد المهلة والسواق لسه ماتحرّكش', call('cF', 'orders/cancel', { orderId: id }, eS));
+  check('من غير غرامة (السواق لسه ماطلعش)', r1.fine === undefined && !claim(id));
+  id = await stage(async (x) => { await ok('في الطريق', call('drvFF', 'orders/status', { orderId: x, next: 'heading_pickup' }, eS)); back(x, { acceptedAt: Date.now() - 5 * 60000 }); fcm.length = 0; });
+  const r2 = await ok('إلغاء والسواق في الطريق', call('cF', 'orders/cancel', { orderId: id }, eS));
+  check('غرامة السواق في الطريق 15', r2.fine === 15 && claim(id).kind === 'cancel_enroute' && claim(id).amount === 15 && claim(id).status === 'open');
+  id = await stage(async (x) => { await ok('وصلت', call('drvFF', 'orders/arrived', { orderId: x, loc: CAIRO }, eS)); back(x, { acceptedAt: Date.now() - 5 * 60000 }); });
+  const r3 = await ok('إلغاء بعد وصول السواق', call('cF', 'orders/cancel', { orderId: id }, eS));
+  check('غرامة بعد الوصول 30', r3.fine === 30 && claim(id).kind === 'cancel_arrived' && claim(id).amount === 30);
+  id = await stage(async (x) => { await ok('وصلت', call('drvFF', 'orders/arrived', { orderId: x, loc: CAIRO }, eS)); }); // جوه فترة الإلغاء المجاني
+  const r4 = await ok('إلغاء بعد وصول السواق لكن جوه الفترة المجانية', call('cF', 'orders/cancel', { orderId: id }, eS));
+  check('من غير غرامة', r4.fine === undefined && !claim(id)); }
+
+// -- الحد اليومي للمطالبات --
+clearFines();
+{ await ok('حد مطالبة واحدة في اليوم', sf({ fineMaxClaimsPerDay: 1 }));
+  await noShow('drvFF');
+  FS.patch('users/cF', { cancel_count: 0 }); const id = (await mk()).id; await ok('سواق يقبل', call('drvFF', 'orders/accept', { orderId: id }, eS));
+  await ok('وصلت', call('drvFF', 'orders/arrived', { orderId: id, loc: CAIRO }, eS)); back(id, { arrivedAt: Date.now() - 11 * 60000 });
+  await bad('تعدّى الحد اليومي', call('drvFF', 'orders/noshow', { orderId: id }, eS), 429, 'claims_limit');
+  check('الطلب لسه شغّال (الإبلاغ ما اتنفذش)', orderRow(id).status === 'paid');
+  back(id, { acceptedAt: Date.now() - 5 * 60000 }); const rc = await ok('العميل يلغي بعد الوصول', call('cF', 'orders/cancel', { orderId: id }, eS));
+  check('وبرضه من غير غرامة لأن السواق وصل لحد المطالبات', rc.fine === undefined && !claim(id));
+  await ok('نرجّع الحد', sf({})); }
+
+// -- السقف الشهري لتعويض المنصة --
+clearFines();
+{ await ok('سقف 20 جنيه في الشهر', sf({ fineMonthlyCap: 20 }));
+  const a = await noShow('drvFF'); await ok('تطبيق', call('drvFF', 'fines/apply', { orderId: a }, eS));
+  const b = await noShow('drvFF'); const rb = await ok('تطبيق التاني', call('drvFF', 'fines/apply', { orderId: b }, eS));
+  check('الأولى 15 والتانية 5 (الباقي من السقف) والغرامة كاملة على العميل', claim(a).credit === 15 && rb.credit === 5 && U('drvFF').dc_credit === 20 && U('cF').fine_due === 60);
+  const c3 = await noShow('drvFF'); const rc3 = await ok('تطبيق التالتة', call('drvFF', 'fines/apply', { orderId: c3 }, eS));
+  check('السقف خلص: من غير تعويض لكن الغرامة اتسجّلت', rc3.credit === 0 && U('drvFF').dc_credit === 20 && U('cF').fine_due === 90);
+  await ok('نرجّع', sf({})); }
+
+// -- منع العميل بسبب غرامات متراكمة --
+clearFines();
+{ FS.patch('users/cF', { fine_due: 40 }); await ok('منع عند 40', sf({ fineBlockLimit: 40 }));
+  await bad('عميل عليه 40 مايطلبش', make(100, eS, {}, true), 403, 'fine_blocked');
+  FS.patch('users/cF', { fine_due: 10 }); // تسوية (الأدمن بيصفّرها من لوحة الغرامات)
+  await ok('بعد التسوية يطلب', make(100, eS, {}, true));
+  await ok('نرجّع', sf({})); }
+
+// -- طلبين من نفس النقطة --
+clearFines();
+{ await ok('حد طلب واحد شغّال في نفس النقطة', sf({ samePickupMax: 1, samePickupMeters: 300 }));
+  await ok('الأول', make(100, eS, {}, true));
+  await bad('التاني من نفس النقطة', make(100, eS, {}, false), 409, 'same_pickup_limit');
+  { clearRl(); const far = await call('cF', 'orders/create', { pickup: { ...FAR, address: 'إسكندرية' }, dropoff: GIZA, category: 'goods', size: 'small', weightKg: 100, description: 'كراتين أدوات منزلية 4 قطع', declaredValue: 100, scheduledAt: new Date(Date.now() + 3600e3).toISOString(), photos: [await up('cF', 'cargo')] }, eS); check('نقطة بعيدة مسموحة', far.status === 200 || far.error !== 'same_pickup_limit'); }
+  await ok('نرفع الحد لـ2', sf({ samePickupMax: 2 }));
+  await ok('التاني يعدّي', make(100, eS, {}, false));
+  await bad('التالت لأ', make(100, eS, {}, false), 409, 'same_pickup_limit');
+  await ok('نقفل القاعدة', sf({ samePickupMax: 0 }));
+  await ok('التالت يعدّي', make(100, eS, {}, false));
+  await bad('نطاق غلط', sf({ samePickupMax: 51 }), 400, 'bad_input'); }
+
+// -- رقم التواصل إجباري --
+{ const ph = U('cF').phone; FS.patch('users/cF', { phone: '' });
+  await bad('عميل من غير رقم تواصل', make(100, eS, {}, true), 400, 'phone_required');
+  FS.patch('users/cF', { phone: ph }); await ok('وبرقمه يطلب', make(100, eS, {}, true)); }
+{ const r = await call('newcust', 'register', { role: 'customer', name: 'عميل جديد' }, eS); check('التسجيل من غير رقم تواصل مرفوض', r.status === 400 && r.error === 'bad_phone'); }
+
+await ok('نقفل الغرامات', save({ dcEnabled: false, finesEnabled: false }));
+
+
+// ===== 9) تسعير كل نوع عربية + رسوم الكيلومتر + العمولة 0 مع الغرامة + تعويض المحفظة =====
+clearFines();
+const sv9 = (p) => save({ dcEnabled: true, dcPct: 2, dcLimit: 1000, finesEnabled: true, ...p });
+const VP = { pickup: { base: 30, perKm: 6, minPrice: 200, kmFee: 0 }, half_ton: { base: 0, perKm: 9, minPrice: 0, kmFee: 0 }, truck: { base: 50, perKm: 12, minPrice: 400, kmFee: 1 }, jumbo: { base: 0, perKm: 0, minPrice: 0, kmFee: 0 } };
+{ // حسابات نقية
+  const S = { ...cur, vehiclePricing: VP };
+  const cm = Number(S.categories.goods.mult);
+  check('الحجم المرتبط بكل عربية', vehicleOfSize(S, 'small') === 'pickup' && vehicleOfSize(S, 'medium') === 'half_ton' && vehicleOfSize(S, 'large') === 'truck' && vehicleOfSize(S, 'nope') === null);
+  check('ربع نقل: (30 + 6×10) × المعامل', calcPrice(S, 10, 'goods', 'small').price === Math.max(200, Math.ceil((30 + 6 * 10) * cm)));
+  check('الحد الأدنى للعربية بيسري (200)', calcPrice(S, 1, 'goods', 'small').price === 200);
+  check('نص نقل من غير حد أدنى خاص: بيستخدم العام', calcPrice(S, 1, 'goods', 'medium').price === Math.max(Math.ceil(S.minPrice), Math.ceil(9 * 1 * cm)));
+  check('نقل: (50 + 12×40) × المعامل وحد أدنى 400', calcPrice(S, 40, 'goods', 'large').price === Math.max(400, Math.ceil((50 + 12 * 40) * cm)));
+  check('جامبو سعر كيلو 0 = المعادلة العامة القديمة', calcPrice(S, 40, 'goods', 'xlarge').price === calcPrice({ ...S, vehiclePricing: {} }, 40, 'goods', 'xlarge').price);
+  check('كل عربية بسعر مختلف على نفس المسافة', new Set(['small', 'medium', 'large'].map((z) => calcPrice(S, 40, 'goods', z).price)).size === 3);
+  check('العربية المحددة صراحة بتحدد السعر', calcPrice(S, 40, 'goods', 'small', 'truck').price === calcPrice(S, 40, 'goods', 'large').price);
+  check('من غير إعدادات تسعير = زي الأول', calcPrice({ ...S, vehiclePricing: undefined }, 40, 'goods', 'small').price === Math.max(Math.ceil(S.minPrice), Math.ceil(S.perKm * 40 * cm * Number(S.sizes.small.mult))));
+  check('رسوم الكيلو: العامة والخاصة بالعربية', kmFeeOf({ dcPerKm: 2, vehiclePricing: VP }, 100, 'pickup') === 200 && kmFeeOf({ dcPerKm: 2, vehiclePricing: VP }, 100, 'truck') === 100 && kmFeeOf({ dcPerKm: 0, vehiclePricing: VP }, 100, 'pickup') === 0 && kmFeeOf({ dcPerKm: 2 }, 0, null) === 0);
+  check('فيه رسوم لو نسبة أو كيلو (عام أو للعربية)', dcFeesOn({ dcEnabled: true, dcPct: 2 }) && dcFeesOn({ dcEnabled: true, dcPct: 0, dcPerKm: 1 }) && dcFeesOn({ dcEnabled: true, dcPct: 0, dcPerKm: 0, vehiclePricing: VP }) && !dcFeesOn({ dcEnabled: true, dcPct: 0, dcPerKm: 0 }) && !dcFeesOn({ dcEnabled: false, dcPct: 5 }));
+  check('المطلوب بيشمل رسوم الكيلومتر', dcPayable(1000, 2, 0, 0, 200).commission === 220 && dcPayable(1000, 2, 0, 0, 200).amount === 220 && dcPayable(1000, 0, 50, 30, 200).amount === 180);
+  check('الإعدادات الافتراضية: تسعير العربيات مقفول', ['pickup', 'half_ton', 'truck', 'jumbo'].every((k) => cur.vehiclePricing[k].perKm === 0 && cur.vehiclePricing[k].kmFee === 0) && cur.dcPerKm === 0 && cur.fineCreditToWallet === false); }
+await bad('سعر كيلو سالب', sv9({ vehiclePricing: { ...VP, pickup: { ...VP.pickup, perKm: -1 } } }), 400, 'bad_input');
+await bad('رسوم كيلو فوق الحد', sv9({ dcPerKm: 10001 }), 400, 'bad_input');
+await bad('عميل مايغيّرش التسعير', call('cF', 'admin/settings/save', { ...cur, vehiclePricing: VP }, eS), 403, 'forbidden');
+await ok('الأدمن يحدد تسعير كل عربية', sv9({ vehiclePricing: VP }));
+{ const body = (size, extra = {}) => ({ pickup: CAIRO, dropoff: GIZA, category: 'goods', size, ...extra });
+  const qS = await ok('عرض سعر ربع نقل', call('cF', 'quote', body('small', { vehiclePick: 'pickup' }), eS));
+  const cm = Number(cur.categories.goods.mult), km = Math.max(qS.distanceKm, 0.5);
+  check('السعر طبق تسعير ربع نقل', qS.price === Math.max(200, Math.ceil((30 + 6 * km) * cm)) && qS.vehicle === 'pickup');
+  const qL = await ok('عرض سعر نقل', call('cF', 'quote', body('large', { vehiclePick: 'truck' }), eS));
+  check('النقل غير ربع النقل', qL.price === Math.max(400, Math.ceil((50 + 12 * km) * cm)) && qL.price > qS.price);
+  const qN = await ok('من غير اختيار عربية (بالحجم)', call('cF', 'quote', body('small'), eS)); check('بيتحسب بعربية الحجم', qN.price === qS.price);
+  const qBad = await ok('عربية مش مطابقة للحجم: بيتجاهلها', call('cF', 'quote', body('small', { vehiclePick: 'truck' }), eS)); check('بيرجع لعربية الحجم', qBad.price === qS.price);
+  const o = await ok('طلب بنفس العربية', make(100, eS, { vehiclePick: 'pickup' }, true)); check('سعر الطلب = عرض السعر', o.price === qS.price || orderRow(o.id).price === qS.price); }
+
+// -- رسوم الكيلومتر + تتبع الكيلومترات --
+clearFines();
+await ok('رسوم 2 جنيه/كم والنسبة 0', sv9({ vehiclePricing: VP, dcPct: 0, dcPerKm: 2, dcLimit: 1000 }));
+{ const id = (await mk()).id; setPrice(id, 400); patchData(id, { distanceKm: 100 });
+  await ok('سواق يقبل', call('drvFF', 'orders/accept', { orderId: id }, eS)); await drive('drvFF', id); await ok('تسليم', finish('drvFF', id));
+  check('الكيلومترات اتسجّلت ورسومها 200 (ربع نقل ما لهاش رسوم خاصة = العامة)', dataOf(id).directKm === 100 && U('drvFF').dc_km === 100 && U('drvFF').dc_kmfee === 200 && U('drvFF').km_total === 100);
+  check('الدفتر فيه الكيلومترات والعربية', ledger('drvFF', id)?.km === 100 && ledger('drvFF', id)?.km_fee === 200 && ledger('drvFF', id)?.vehicle === 'pickup');
+  const sm = await ok('ملخص السواق', call('drvFF', 'dc/summary', {}, eS)); check('العمولة = رسوم الكيلومتر (نسبة 0)', sm.commission === 200 && sm.due === 200 && sm.kmFee === 200 && sm.km === 100 && sm.kmTotal === 100 && sm.perKm === 2);
+  const L = await ok('لوحة الأدمن', call('admin1', 'admin/dc/list', {}, eS)); check('الأدمن شايف الكيلومترات', L.drivers.some((d) => d.id === 'drvFF' && d.km === 100 && d.kmFee === 200 && d.kmTotal === 100 && d.due === 200));
+  const py = await ok('السواق يحوّل رسوم الكيلومتر', call('drvFF', 'dc/pay', { method: 'wallet', proofRef: await up('drvFF', 'payment'), reference: 'KM-0001' }, eS)); check('المبلغ 200', py.amount === 200 && FS.get(`dc_pay/${py.id}`).km === 100 && FS.get(`dc_pay/${py.id}`).km_fee === 200);
+  patchData(id, {}); FS.patch('users/drvFF', { dc_km: 130, dc_kmfee: 260 }); // مشوار خلص بعد طلب السداد
+  await ok('الأدمن يأكّد', call('admin1', 'admin/dc/confirm', { id: py.id, action: 'confirm' }, eS));
+  check('اتخصم اللي اتحسب بس وفضل 30 كم و60 جنيه', U('drvFF').dc_km === 30 && U('drvFF').dc_kmfee === 60 && U('drvFF').km_total === 100); }
+{ // رسوم خاصة بنوع العربية (نقل = 1 جنيه/كم) بدل العامة
+  FS.patch('users/drvXX', { dc_km: 0, dc_kmfee: 0, dc_gross: 0, km_total: 0 });
+  const id = (await ok('طلب نقل', make(100, eS, { size: 'large', vehiclePick: 'truck' }, true))).id; setPrice(id, 900); patchData(id, { distanceKm: 100 });
+  FS.patch('users/drvXX', { vehicle_type: 'truck' });
+  await ok('سواق يقبل', call('drvXX', 'orders/accept', { orderId: id }, eS)); await drive('drvXX', id); await ok('تسليم', finish('drvXX', id));
+  check('رسوم النقل 100 (1 جنيه/كم) مش العامة 200', U('drvXX').dc_kmfee === 100 && ledger('drvXX', id)?.vehicle === 'truck' && dataOf(id).kmFee === 100); }
+{ // توقيف بسبب الحد حتى لو النسبة 0 (فيه رسوم كيلومتر)
+  FS.patch('users/drvFF', { dc_gross: 1000 }); check('رسوم كيلومتر + مكسب فوق الحد = متوقف', (await call('drvFF', 'dc/summary', {}, eS)).blocked === true);
+  const id = (await mk()).id; await bad('المتوقف مايقبلش', call('drvFF', 'orders/accept', { orderId: id }, eS), 403, 'dc_blocked'); FS.patch('users/drvFF', { dc_gross: 0 }); }
+await ok('نقفل رسوم الكيلومتر (حتى الخاصة بالنقل)', sv9({ vehiclePricing: { ...VP, truck: { ...VP.truck, kmFee: 0 } }, dcPct: 0, dcPerKm: 0, dcLimit: 1000 }));
+{ const id = (await mk()).id; setPrice(id, 400); patchData(id, { distanceKm: 50, vehiclePick: 'pickup' }); FS.patch('users/drvXX', { dc_km: 0, dc_kmfee: 0, dc_gross: 0, km_total: 0 });
+  await ok('سواق يقبل', call('drvXX', 'orders/accept', { orderId: id }, eS)); await drive('drvXX', id); await ok('تسليم', finish('drvXX', id));
+  check('من غير أي رسوم: الكيلومترات بتتتبّع بس من غير رسوم ولا دفتر', U('drvXX').km_total === 50 && !U('drvXX').dc_kmfee && !U('drvXX').dc_gross && !ledger('drvXX', id)); }
+
+// -- العمولة 0: السواق يحصّل الغرامة ويحوّلها للمنصة --
+clearFines();
+await ok('النسبة 0 والكيلو 0 (من غير رسوم)', sv9({ dcPct: 0, dcPerKm: 0 }));
+{ const a = await noShow('drvFF'); const r = await ok('تطبيق التعويض', call('drvFF', 'fines/apply', { orderId: a }, eS));
+  check('العميل اتفرضت عليه 30 والتعويض بيتسجّل رصيد (مفيش عمولة تتخصم منها)', U('cF').fine_due === 30 && r.credit === 15 && U('drvFF').dc_credit === 15);
+  FS.list('dc_pay').filter((x) => x.status === 'pending').forEach((x) => FS.del(`dc_pay/${x._id}`)); // طلبات سداد معلّقة من اختبارات سابقة
+  const id = (await mk()).id; setPrice(id, 300); check('الغرامة ظاهرة في الطلب الجديد', dataOf(id).fineDue === 30);
+  await ok('سواق تاني يقبل', call('drvXX', 'orders/accept', { orderId: id }, eS)); FS.patch('users/drvXX', { dc_gross: 0, dc_fines_held: 0, dc_credit: 0, dc_kmfee: 0, dc_km: 0 });
+  await drive('drvXX', id); await ok('تسليم', finish('drvXX', id));
+  check('حصّل الغرامة 30 وبقت عليه للمنصة (من غير ما يتسجّل مكسب)', U('cF').fine_due === 0 && U('drvXX').dc_fines_held === 30 && !U('drvXX').dc_gross && !ledger('drvXX', id));
+  const sm = await ok('ملخص السواق', call('drvXX', 'dc/summary', {}, eS)); check('المطلوب 30 (غرامة بس) ومش متوقف', sm.due === 30 && sm.commission === 0 && sm.blocked === false);
+  const py = await ok('يحوّل الغرامة للمنصة', call('drvXX', 'dc/pay', { method: 'instapay', proofRef: await up('drvXX', 'payment'), reference: 'FINE-0099' }, eS)); check('المبلغ 30', py.amount === 30);
+  await ok('الأدمن يأكّد', call('admin1', 'admin/dc/confirm', { id: py.id, action: 'confirm' }, eS)); check('اتصفّرت الغرامات المحصّلة', U('drvXX').dc_fines_held === 0 && U('drvXX').dc_paid_total >= 30);
+  const sm0 = await call('drvFF', 'dc/summary', {}, eS); check('السواق المتضرر رصيده 15 ومفيش عمولة تتخصم منها (بيستنى عمولة أو محفظة)', sm0.credit === 15 && sm0.due === 0); }
+
+// -- تعويض المنصة كرصيد محفظة (مفيد لما العمولة 0) --
+clearFines();
+await ok('التعويض كمحفظة', sv9({ dcPct: 0, dcPerKm: 0, fineCreditToWallet: true }));
+{ FS.put('wallets/drvFF', { balance: 0, uid: 'drvFF' });
+  const a = await noShow('drvFF'); const r = await ok('تطبيق', call('drvFF', 'fines/apply', { orderId: a }, eS));
+  check('التعويض 15 اتحط في محفظة السواق (مش رصيد عمولة)', r.credit === 15 && (FS.get('wallets/drvFF')?.balance || 0) === 15 && !U('drvFF').dc_credit && claim(a).credit_mode === 'wallet' && U('cF').fine_due === 30);
+  const m = await ok('السواق يشوف المحفظة', call('drvFF', 'fines/mine', {}, eS)); check('الغرامة كاملة على العميل والتعويض أقل', m.claims[0].credit === 15 && m.claims[0].amount === 30);
+  await ok('الأدمن: الادعاء غير صحيح', call('admin1', 'admin/fines/decide', { id: a, action: 'reject', note: 'السواق مكنش موجود' }, eS));
+  check('اتسحب التعويض من المحفظة واتشالت الغرامة وإنذار للسواق', (FS.get('wallets/drvFF')?.balance || 0) === 0 && U('cF').fine_due === 0 && U('drvFF').false_claims >= 1);
+  const b = await noShow('drvFF'); await ok('تطبيق', call('drvFF', 'fines/apply', { orderId: b }, eS));
+  FS.patch('wallets/drvFF', { balance: 5 }); // السواق سحب جزء من الرصيد
+  await ok('رفض بعد ما سحب', call('admin1', 'admin/fines/decide', { id: b, action: 'reject', note: 'ادعاء كاذب' }, eS));
+  check('اتسحب اللي لسه موجود بس (5) والرصيد مابقاش سالب', (FS.get('wallets/drvFF')?.balance || 0) === 0); }
+await ok('نرجّع الإعدادات', save({ dcEnabled: false, finesEnabled: false }));
 
 console.log(`\n✅ اختبارات الدفع المباشر وعمولة المنصة نجحت (${pass} فحص)`);

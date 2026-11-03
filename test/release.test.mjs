@@ -5,6 +5,7 @@ import { onRequest } from '../functions/api/[[route]].js';
 import { JWKS_URL } from '../functions/_lib/core.js';
 import { trustOf } from '../functions/_lib/trust.js';
 import { makeFirestore } from './fake-firestore.mjs';
+import { DEFAULTS as __D } from '../functions/_lib/logic.js'; __D.samePickupMax = 0; // اختبارات قديمة بتفتح طلبات كتير من نفس النقطة؛ حد «نفس نقطة الاستلام» متختبر في dc.test.mjs
 
 const PROJECT = 'demo-ishhanli';
 const b64u = (b) => Buffer.from(b).toString('base64url');

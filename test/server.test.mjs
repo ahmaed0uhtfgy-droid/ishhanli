@@ -1,6 +1,6 @@
 // اختبار شامل للسيرفر على Firestore وهمي (test/fake-firestore.mjs: نفس واجهة REST + نفس قيود الفهارس والشروط) — من غير إنترنت.  تشغيل: npm test
 import assert from 'node:assert/strict';
-import { DEFAULTS as __D } from '../functions/_lib/logic.js'; __D.maxActiveJobs = 50; __D.jobsRadiusKm = 0; // اختبارات الطلبات القديمة بتشغّل سواق واحد على طلبات كتير؛ حد «شحنة واحدة» متختبر في features.test.mjs
+import { DEFAULTS as __D } from '../functions/_lib/logic.js'; __D.maxActiveJobs = 50; __D.jobsRadiusKm = 0; __D.samePickupMax = 0; // اختبارات الطلبات القديمة بتشغّل سواق واحد على طلبات كتير؛ حد «شحنة واحدة» متختبر في features.test.mjs
 import { webcrypto as crypto } from 'node:crypto';
 import { onRequest } from '../functions/api/[[route]].js';
 import { JWKS_URL } from '../functions/_lib/core.js';

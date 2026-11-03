@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "wrangler pages dev public",
     "deploy": "wrangler pages deploy public --project-name=ishhanli",
-    "test": "node --no-warnings test/server.test.mjs && node --no-warnings test/security.regress.mjs && node --no-warnings test/features.test.mjs && node --no-warnings test/lateness.test.mjs && node --no-warnings test/guard.test.mjs && node --no-warnings test/trust.test.mjs && node --no-warnings test/vehicle.test.mjs && node --no-warnings test/release.test.mjs && node --no-warnings test/cod.test.mjs && node --no-warnings test/dc.test.mjs && node --no-warnings test/rules2.test.mjs && node --no-warnings test/client.test.mjs",
+    "test": "node --no-warnings test/server.test.mjs && node --no-warnings test/security.regress.mjs && node --no-warnings test/features.test.mjs && node --no-warnings test/lateness.test.mjs && node --no-warnings test/guard.test.mjs && node --no-warnings test/trust.test.mjs && node --no-warnings test/vehicle.test.mjs && node --no-warnings test/release.test.mjs && node --no-warnings test/cod.test.mjs && node --no-warnings test/dc.test.mjs && node --no-warnings test/rules2.test.mjs && node --no-warnings test/client.test.mjs && node --no-warnings test/landing.test.mjs",
     "e2e": "node --no-warnings test/e2e.smoke.mjs"
   },
   "devDependencies": {

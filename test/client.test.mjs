@@ -177,6 +177,22 @@ console.log('✅ docCheck tests passed');
       for (const m of s.matchAll(/\{(\w+)\}/g)) assert.ok(r.vars[m[1]] !== undefined, `متغيّر ${m[1]} ناقص في ${r.id}`);
     }
   }
+  // قواعد الدفع المباشر والعمولة والتعويضات والتسعير: بتظهر بس لما الميزة شغّالة، والأرقام من الإعدادات، وكل مفاتيحها بالعربي والإنجليزي
+  const full = { dcEnabled: true, finesEnabled: true, dcPct: 3, dcPerKm: 1.5, dcLimit: 700, dcAutoCompleteHours: 24, jobsRadiusKm: 15, samePickupMax: 1, samePickupMeters: 250, fineWaitMin: 12, fineArrivedAmount: 40, fineDriverSharePct: 60, vehiclePricing: { pickup: { perKm: 5 } } };
+  const fids = ids(full);
+  assert.ok(['a10', 'a11', 'c16', 'c16a', 'c17', 'c18', 'c19', 'd16', 'd16k', 'd17', 'd18', 'd19', 'd20', 'k5'].every((x) => fids.includes(x)), 'كل قواعد الدفع المباشر ظاهرة');
+  assert.ok(!fids.includes('d16z'), 'قاعدة «مفيش عمولة» مش ظاهرة وفيه عمولة');
+  assert.ok(ids({ dcEnabled: true, dcPct: 0 }).includes('d16z') && !ids({ dcEnabled: true, dcPct: 0 }).includes('d16'), 'عمولة 0: قاعدة مفيش عمولة بدل قاعدة العمولة');
+  assert.ok(ids({ dcEnabled: true, dcPct: 0, dcPerKm: 1 }).includes('d16') && ids({ dcEnabled: true, dcPct: 0, dcPerKm: 1 }).includes('d16k'), 'رسوم الكيلومتر لوحدها = قاعدة العمولة والكيلومترات');
+  const none = ids({});
+  assert.ok(!['a10', 'a11', 'c16', 'c17', 'c18', 'd16', 'd17', 'd18', 'd19', 'd20', 'k5'].some((x) => none.includes(x)) && none.includes('c19'), 'من غير الميزة: قواعدها مش ظاهرة ورقم التواصل ظاهر دايماً');
+  assert.ok(!ids({ dcEnabled: true, finesEnabled: false }).includes('c17') && !ids({ dcEnabled: true, finesEnabled: false }).includes('d17'), 'قواعد الغرامات مقفولة لو الميزة مقفولة');
+  const dv = rulesSections(full)[2].rules.find((r) => r.id === 'd17').vars;
+  assert.equal(dv.fWait, 12); assert.equal(dv.fAr, 40); assert.equal(dv.fShare, 60); assert.equal(rulesSections(full)[2].rules.find((r) => r.id === 'd16').vars.dcLimit, 700, 'الأرقام من الإعدادات');
+  for (const g of rulesSections(full)) for (const r of g.rules) for (const part of ['t', 'd']) for (const l of ['ar', 'en']) {
+    const txt = DICT[l][`rules.${r.id}.${part}`]; assert.ok(txt, `ناقص rules.${r.id}.${part} (${l})`);
+    for (const m of txt.matchAll(/\{(\w+)\}/g)) assert.ok(r.vars[m[1]] !== undefined, `متغيّر ${m[1]} ناقص في ${r.id}`);
+  }
   for (const k of ['rules.title', 'rules.sub', 'rules.foot', 'footer.rules']) for (const l of ['ar', 'en']) assert.ok(DICT[l][k], k);
   console.log('✅ rules.js tests passed');
 }
@@ -191,6 +207,14 @@ console.log('✅ docCheck tests passed');
   for (const km of [1, 7, 33, 120, 220, 480]) for (const c of Object.keys(S.categories)) for (const z of Object.keys(S.sizes)) {
     assert.equal(priceFromKm(S, km, c, z), calcPrice(S, km, c, z).price, `تطابق السعر ${km}/${c}/${z}`); n++;
   }
+  // تسعير كل عربية: لازم يطابق السيرفر بالظبط (مع وبدون اختيار العربية صراحة)
+  const VP2 = { pickup: { base: 25, perKm: 6.5, minPrice: 180, kmFee: 0 }, half_ton: { base: 0, perKm: 9, minPrice: 0, kmFee: 0 }, truck: { base: 60, perKm: 12.5, minPrice: 450, kmFee: 1 }, jumbo: { base: 0, perKm: 0, minPrice: 0, kmFee: 0 } };
+  const S2 = { ...S, vehiclePricing: VP2 };
+  for (const km of [1, 7, 33, 120, 480]) for (const c of Object.keys(S.categories)) for (const z of Object.keys(S.sizes)) {
+    assert.equal(priceFromKm(S2, km, c, z), calcPrice(S2, km, c, z).price, `تطابق سعر العربية ${km}/${c}/${z}`); n++;
+    for (const v of ['pickup', 'half_ton', 'truck', 'jumbo']) { assert.equal(priceFromKm(S2, km, c, z, v), calcPrice(S2, km, c, z, v).price, `تطابق سعر ${v} ${km}/${c}/${z}`); n++; }
+  }
+  assert.notEqual(priceFromKm(S2, 50, 'goods', 'small'), priceFromKm(S2, 50, 'goods', 'large'), 'ربع نقل غير نقل');
   const e = estimate(S, 'cairo', 'alex', Object.keys(S.categories)[0], Object.keys(S.sizes)[0]);
   assert.ok(e && e.km > 150 && e.km < 400 && e.price >= S.minPrice, 'القاهرة→إسكندرية منطقية');
   assert.equal(estimate(S, 'cairo', 'cairo', 'goods', 'small'), null);
