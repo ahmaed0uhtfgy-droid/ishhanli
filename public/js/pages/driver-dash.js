@@ -1,8 +1,9 @@
 // لوحة بيانات السواق: كل حاجة تخصه في صفحة واحدة (قراءة فقط) — البيانات كلها من driver/dashboard
 import { api } from '../api.js';
 import { t } from '../i18n.js';
-import { html, render, skeleton, errMsg, fmtMoney, fmtNum, fmtDate, fmtDay, stamp, orderNo, trustBadge, promptDialog, toast, busy } from '../ui.js';
+import { html, render, skeleton, errMsg, fmtMoney, fmtNum, fmtDate, fmtDay, stamp, orderNo, trustBadge, promptDialog, confirmDialog, toast, busy } from '../ui.js';
 import { uploadImage } from '../storage.js';
+import { state } from '../state.js';
 
 const bar = (pct, cls = '') => html`<div class="pbar ${cls}" role="img" aria-label="${pct ?? 0}%"><i class="pbar-fill" data-w="${Math.max(0, Math.min(100, pct ?? 0))}"></i></div>`;
 const kpi = (label, value, sub) => html`<div class="card kpi"><div class="muted small">${label}</div><div class="kpi-v num">${value}</div>${sub ? html`<div class="muted small">${sub}</div>` : ''}</div>`;
@@ -12,7 +13,9 @@ const yn = (ok) => html`<span class="${ok ? 'ok-t' : 'no-t'}">${ok ? '✓' : '�
 const dcSection = (d) => !d || !d.enabled ? '' : html`<section class="card stack"><h3>${t('dc.title')}</h3>
   ${d.blocked ? html`<div class="action bad"><b>${t('dc.blockedTitle')}</b><p>${t('dc.blockedMsg')}</p></div>` : ''}
   <p class="muted small">${t('dc.hint', { pct: d.pct, limit: fmtNum(d.limit, 0) })}</p>
-  <div class="grid-4">${kpi(t('dc.gross'), fmtMoney(d.gross), t('dc.limit') + ': ' + fmtMoney(d.limit))}${kpi(t('dc.due'), fmtMoney(d.due), d.pct + '%')}</div>
+  <div class="grid-4">${kpi(t('dc.gross'), fmtMoney(d.gross), t('dc.limit') + ': ' + fmtMoney(d.limit))}${kpi(t('fine.payable'), fmtMoney(d.due), d.pct + '%')}</div>
+  ${d.perKm > 0 || d.km > 0 || d.kmTotal > 0 ? html`<p class="muted small">${t('dc.kmLine', { km: fmtNum(d.km), fee: fmtMoney(d.kmFee), total: fmtNum(d.kmTotal) })}</p>` : ''}
+  ${d.credit > 0 || d.finesHeld > 0 || d.kmFee > 0 ? html`<p class="muted small">${t('fine.commission')}: <b>${fmtMoney(d.commission)}</b>${d.creditUsed > 0 ? html` − ${t('fine.creditUsed')}: <b>${fmtMoney(d.creditUsed)}</b>` : ''}${d.finesHeld > 0 ? html` + ${t('fine.driverHeld')}: <b>${fmtMoney(d.finesHeld)}</b>` : ''}${d.credit > d.creditUsed ? html` · ${t('fine.driverCredit')}: <b>${fmtMoney(d.credit)}</b>` : ''}</p>` : ''}
   ${bar(Math.round((d.gross / d.limit) * 100), d.blocked ? 'bad' : '')}
   ${d.pending ? html`<div class="action info"><p>${t('dc.pendingMsg', { amount: fmtMoney(d.pending.amount) })}</p></div>`
     : d.due > 0 ? html`<div class="stack" id="dcPay"><h4>${t('dc.payTitle')}</h4>
@@ -22,15 +25,22 @@ const dcSection = (d) => !d || !d.enabled ? '' : html`<section class="card stack
       <label class="f">${t('dc.method')}<select id="dcMethod"><option value="wallet">${t('dc.method.wallet')}</option><option value="instapay">${t('dc.method.instapay')}</option></select></label>
       <label class="f">${t('dc.proof')}<input type="file" id="dcProof" accept="image/*"></label>
       <label class="f">${t('dc.ref')}<input id="dcRef" maxlength="40" dir="ltr" autocomplete="off"></label>
-      <button class="btn primary block" id="dcSend">${t('dc.send')}</button></div>` : html`<p class="muted small">${t('dc.noDue')}</p>`}
+      <button class="btn primary block" id="dcSend">${t('dc.send')}</button></div>` : d.gross > 0 ? html`<button class="btn primary block" id="dcCover">${t('dc.cover')}</button>` : html`<p class="muted small">${t('dc.noDue')}</p>`}
   ${d.history.length ? html`<h4>${t('dc.history')}</h4><ul class="plain">${d.history.map((x) => html`<li class="row"><span class="grow">${fmtDate(x.decidedAt || x.createdAt)} · <b>${fmtMoney(x.amount)}</b> · ${t('dc.method.' + x.method)}${x.status === 'rejected' && x.note ? html` · <span class="no-t">${x.note}</span>` : ''}</span><span class="${x.status === 'paid' ? 'ok-t' : 'no-t'}"><b>${t('dc.st.' + x.status)}</b></span></li>`)}</ul>` : ''}
   ${d.entries.length ? html`<h4>${t('dc.entries')}</h4><ul class="plain">${d.entries.map((x) => html`<li class="row small"><a class="grow" href="#/order/${x.orderId}">${orderNo(x.orderId)}</a><span>${fmtDate(x.at)}</span><b>${fmtMoney(x.gross)}</b></li>`)}</ul>` : ''}</section>`;
+
+// تعويضات السواق: مطالبات على العملاء اللي مش موجودين أو لغوا بعد ما السواق تحرّك — «اتحصّل» (العميل عوّضه) أو «طبّق التعويض» (المنصة بتتنازل عن جزء من عمولته)
+const finesSection = (f) => !f || (!f.enabled && !f.claims.length) ? '' : html`<section class="card stack"><h3>${t('fine.title')}</h3>
+  ${f.claims.length ? html`<ul class="plain">${f.claims.map((x) => html`<li class="stack" style="padding:.5rem 0;border-bottom:1px solid var(--rule)">
+    <div class="row"><a class="grow" href="#/order/${x.orderId}">${orderNo(x.orderId)}</a><b>${fmtMoney(x.amount)}</b><span class="${['settled', 'collected', 'applied'].includes(x.status) ? 'ok-t' : 'muted'}"><b>${t('fine.claim.' + x.status)}</b></span></div>
+    <div class="muted small">${t('fine.kind.' + x.kind)} · ${fmtDate(x.createdAt)}${x.status === 'applied' ? html` · ${t('fine.driverCredit')}: <b>${fmtMoney(x.credit)}</b>` : ''}${['open', 'customer_paid'].includes(x.status) ? html` · ${t('fine.applyAt', { time: fmtDate(x.applyAt) })}` : ''}</div>
+    ${['open', 'customer_paid'].includes(x.status) ? html`<div class="row"><button class="btn ok sm" data-fine="collected" data-id="${x.orderId}">${t('fine.collectedBtn')}</button><button class="btn ghost sm" data-fine="apply" data-id="${x.orderId}" data-amount="${x.amount}">${t('fine.applyBtn')}</button></div>` : ''}</li>`)}</ul>` : html`<p class="muted small">${t('fine.none')}</p>`}</section>`;
 
 export function renderDriverDash(view) {
   render(view, html`<div class="page-head"><h1>${t('dash.title')}</h1></div><div id="dash">${skeleton(3)}</div>`);
   const box = view.querySelector('#dash'); let dead = false, timer = null;
   async function load() {
-    let d, lt, cs, dc; try { [d, lt, cs, dc] = await Promise.all([api('driver/dashboard', {}), api('late/list', {}).catch(() => null), api('cod/summary', {}).catch(() => null), api('dc/summary', {}).catch(() => null)]); } catch (e) { if (!dead) render(box, html`<div class="card"><p>${errMsg(e)}</p></div>`); return; }
+    let d, lt, cs, dc, fn; try { [d, lt, cs, dc, fn] = await Promise.all([api('driver/dashboard', {}), api('late/list', {}).catch(() => null), api('cod/summary', {}).catch(() => null), api('dc/summary', {}).catch(() => null), api('fines/mine', {}).catch(() => null)]); } catch (e) { if (!dead) render(box, html`<div class="card"><p>${errMsg(e)}</p></div>`); return; }
     if (dead) return;
     const p = d.profile, w = d.wallet, e = d.earnings, o = d.orders, r = d.ratings, tr = d.trust, pr = d.protection, S = tr.stats, n = tr.next;
     const lateTxt = o.sample ? Math.round((o.lateCount / o.sample) * 100) + '%' : '—';
@@ -40,6 +50,7 @@ export function renderDriverDash(view) {
       <div class="card row"><div class="grow"><h2 style="margin:0">${p.companyName || p.name}</h2><div class="muted small" dir="ltr">${p.phone}</div></div>${stamp(p.status)}${trustBadge(tr)}</div>
 
       ${dcSection(dc)}
+      ${finesSection(fn)}
       <div class="grid-4">${kpi(t('dash.balance'), fmtMoney(w.balance), w.pendingWithdrawals ? t('dash.pendingWd', { amount: fmtMoney(w.pendingWithdrawals) }) : '')}
         ${kpi(t('dash.earn30'), fmtMoney(e.d30.net), t('dash.trips', { n: fmtNum(e.d30.trips, 0) }))}
         ${kpi(t('dash.completed'), fmtNum(o.completed, 0), t('dash.activeNow', { n: fmtNum(o.activeCount, 0), max: fmtNum(o.maxActive, 0) }))}
@@ -78,6 +89,19 @@ export function renderDriverDash(view) {
         <p class="muted small">${t('dash.since')}: ${fmtDate(p.createdAt)}${p.vehicleType ? ' · ' + t('dash.vehicle') + ': ' + p.vehicleType : ''}</p></section>`);
     box.querySelectorAll('.pbar-fill').forEach((el) => { el.style.width = el.dataset.w + '%'; }); // العرض بيتحط بالـDOM (الـCSP بتمنع style inline في القوالب)
   }
+  view.addEventListener('click', async (e) => { // تعويضات: اتحصّل / طبّق + تسوية العمولة بالتعويض
+    const fb = e.target.closest('[data-fine]'), cv = e.target.closest('#dcCover');
+    if (cv) { busy(cv, async () => { try { await api('dc/pay', {}); toast(t('fine.done')); load(); } catch (err) { toast(errMsg(err), true); } }); return; }
+    if (!fb) return;
+    try {
+      if (fb.dataset.fine === 'apply') {
+        const amount = +fb.dataset.amount, credit = Math.floor((amount * Math.min(99, state.settings.fineDriverSharePct || 0)) / 100);
+        if (!(await confirmDialog(t('fine.applyAsk', { credit: fmtMoney(credit), amount: fmtMoney(amount) }), { ok: t('fine.applyBtn') }))) return;
+        await api('fines/apply', { orderId: fb.dataset.id });
+      } else await api('fines/collected', { orderId: fb.dataset.id });
+      toast(t('fine.done')); load();
+    } catch (err) { toast(errMsg(err), true); }
+  });
   view.addEventListener('click', async (e) => { // سداد عمولة المنصة: صورة التحويل + رقم المرجع (الإدارة بتأكّد)
     const sb = e.target.closest('#dcSend'); if (!sb) return;
     const file = view.querySelector('#dcProof')?.files?.[0], reference = view.querySelector('#dcRef')?.value.trim();

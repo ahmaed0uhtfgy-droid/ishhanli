@@ -1,6 +1,7 @@
 import { HttpError } from './core.js';
 import { F } from './db.js';
 import { trustOf, DEFAULT_TRUST } from './trust.js';
+import { cleanSite, SITE_DEFAULTS } from '../../public/js/landing-content.js';
 
 // القيم الافتراضية (أرقام تجريبية — الأدمن بيعدّلها من لوحة التحكم ولا تحتاج تعديل كود)
 // بيانات الشركة اللي بتظهر في الصفحة الرئيسية العامة (الأدمن يعدّلها من الإعدادات)
@@ -8,6 +9,7 @@ export const COMPANY_KEYS = ['name', 'about', 'phone', 'whatsapp', 'email', 'add
 const COMPANY_DEFAULT = { name: 'اشحنلي', about: '', phone: '', whatsapp: '', email: '', address: '', hours: '', facebook: '', instagram: '', tiktok: '', youtube: '' };
 export const DEFAULTS = {
   company: COMPANY_DEFAULT,
+  site: SITE_DEFAULTS,     // واجهة الصفحة الرئيسية: التصميم الفعّال والوضع الافتراضي والنصوص والأقسام (الأدمن)
   perKm: 10,               // جنيه لكل كيلومتر
   minPrice: 150,           // حد أدنى للسعر
   commissionPct: 12,       // عمولة الموقع %
@@ -71,7 +73,27 @@ export const DEFAULTS = {
   // نظام الدفع المباشر + عمولة المنصة (مقفول افتراضياً = نظام الضمان القديم زي ما هو). لما الأدمن يفعّله: العميل بيدفع للسواق مباشرة، والمنصة بتسجّل كل شحنة ناجحة،
   // ولما إجمالي مكسب السواق (غير المسدَّد) يوصل للحد بيتوقف عن قبول طلبات جديدة لحد ما يسدّد نسبة المنصة (محفظة/إنستا باي + صورة التحويل + تأكيد الأدمن). نسبة 0 = من غير عمولة.
   dcEnabled: false, dcPct: 2, dcLimit: 1000, dcPay: { wallet: '', walletName: '' },
+  // تسعير مستقل لكل نوع عربية (ربع نقل / نص نقل / نقل / جامبو): سعر فتح + سعر الكيلو + حد أدنى (0 = نستخدم المعادلة العامة: سعر الكيلو العام × معامل الحجم).
+  // kmFee = رسوم المنصة على كل كيلومتر من مشاوير العربية دي (0 = نستخدم dcPerKm العام).
+  vehiclePricing: Object.fromEntries(['pickup', 'half_ton', 'truck', 'jumbo'].map((k) => [k, { base: 0, perKm: 0, minPrice: 0, kmFee: 0 }])),
+  dcPerKm: 0,                // رسوم المنصة على كل كيلومتر مكتمل (جنيه/كم) بجانب النسبة — 0 = مقفولة
+  fineCreditToWallet: false, // تعويض المنصة للسواق يتحوّل لرصيد محفظة قابل للسحب بدل خصم من العمولة (مفيد لو العمولة 0)
   dcAutoCompleteHours: 24, // الدفع المباشر: الطلب اللي السواق استلمه وفضل مفتوح المدة دي من غير تأكيد تسليم بيتكمّل تلقائي (0 = مقفول)
+  // ---- تعويض السواق وغرامة العميل (الدفع المباشر) — كل الأرقام والمدد من الأدمن، والميزة مقفولة افتراضياً ----
+  finesEnabled: false,
+  fineFreeCancelMin: 2,     // دقائق بعد قبول السواق يقدر العميل يلغي فيها من غير غرامة
+  fineWaitMin: 10,          // مهلة انتظار السواق بعد وصوله قبل ما يقدر يبلّغ «العميل مش موجود»
+  fineEnRouteAmount: 15,    // غرامة إلغاء العميل والسواق في الطريق (جنيه)
+  fineArrivedAmount: 30,    // غرامة عدم الحضور / الإلغاء بعد وصول السواق (جنيه)
+  fineClaimHours: 12,       // مهلة التسوية المباشرة بين السواق والعميل قبل ما المنصة تطبّق الإعفاء والغرامة
+  fineObjectHours: 24,      // مهلة اعتراض العميل بعد تطبيق الغرامة (0 = من غير اعتراض)
+  fineDriverSharePct: 50,   // تعويض المنصة للسواق كنسبة من الغرامة — دايماً أقل من اللي ممكن ياخده من العميل مباشرة
+  fineCollectorPct: 0,      // نسبة من الغرامة المحصّلة يحتفظ بيها السواق اللي حصّلها (الباقي بيتحوّل للمنصة)
+  fineMonthlyCap: 100,      // أقصى إعفاء من عمولة المنصة للسواق الواحد خلال 30 يوم (0 = من غير سقف)
+  fineMaxClaimsPerDay: 5,   // أقصى مطالبات للسواق في 24 ساعة (0 = من غير حد)
+  fineBlockLimit: 0,        // غرامات العميل لو وصلت الحد ده ما يطلبش لحد ما تتسوّى (0 = من غير منع)
+  samePickupMeters: 300,    // نطاق «نفس نقطة الاستلام» لطلبات نفس العميل
+  samePickupMax: 1,         // أقصى طلبات شغّالة (قبل الاستلام) من نفس العميل في نفس النقطة (0 = من غير حد)
   jobsRadiusKm: 15,        // السواق بيشوف الطلبات اللي نقطة استلامها في الدايرة دي من موقعه (0 = من غير حد)
   companionAsk: true,      // سؤال العميل في الطلب: هترافق الشحنة ولا لأ؟ (الأدمن يقفله)
   vehicleGuideOn: true,    // ترشيح العربية المناسبة (اختياري للعميل) حسب وزن الشحنة
@@ -136,6 +158,14 @@ export async function loadSettings(env) {
     codPeriodDays: Math.floor(num(d.codPeriodDays, D.codPeriodDays, 1, 31)), codGraceDays: Math.floor(num(d.codGraceDays, D.codGraceDays, 0, 30)),
     codMaxAmount: Math.floor(num(d.codMaxAmount, D.codMaxAmount, 100, 1000000)), codBlockScope: d.codBlockScope === 'all' ? 'all' : 'cod',
     dcEnabled: d.dcEnabled === true, dcPct: Math.round(num(d.dcPct, D.dcPct, 0, 50) * 10) / 10, dcLimit: Math.floor(num(d.dcLimit, D.dcLimit, 1, 1e8)),
+    finesEnabled: d.finesEnabled === true, fineFreeCancelMin: Math.floor(num(d.fineFreeCancelMin, D.fineFreeCancelMin, 0, 1440)), fineWaitMin: Math.floor(num(d.fineWaitMin, D.fineWaitMin, 0, 1440)),
+    fineEnRouteAmount: Math.floor(num(d.fineEnRouteAmount, D.fineEnRouteAmount, 0, 100000)), fineArrivedAmount: Math.floor(num(d.fineArrivedAmount, D.fineArrivedAmount, 0, 100000)),
+    fineClaimHours: Math.floor(num(d.fineClaimHours, D.fineClaimHours, 0, 720)), fineObjectHours: Math.floor(num(d.fineObjectHours, D.fineObjectHours, 0, 720)),
+    fineDriverSharePct: num(d.fineDriverSharePct, D.fineDriverSharePct, 0, 99), fineCollectorPct: num(d.fineCollectorPct, D.fineCollectorPct, 0, 50),
+    fineMonthlyCap: Math.floor(num(d.fineMonthlyCap, D.fineMonthlyCap, 0, 1e6)), fineMaxClaimsPerDay: Math.floor(num(d.fineMaxClaimsPerDay, D.fineMaxClaimsPerDay, 0, 1000)), fineBlockLimit: Math.floor(num(d.fineBlockLimit, D.fineBlockLimit, 0, 1e6)),
+    samePickupMeters: Math.floor(num(d.samePickupMeters, D.samePickupMeters, 0, 5000)), samePickupMax: Math.floor(num(d.samePickupMax, D.samePickupMax, 0, 50)),
+    vehiclePricing: Object.fromEntries(PRICE_VEHICLES.map((k) => { const v = d.vehiclePricing?.[k] || {}; return [k, { base: num(v.base, 0, 0, 1e6), perKm: num(v.perKm, 0, 0, 10000), minPrice: num(v.minPrice, 0, 0, 1e6), kmFee: num(v.kmFee, 0, 0, 10000) }]; })),
+    dcPerKm: num(d.dcPerKm, 0, 0, 10000), fineCreditToWallet: d.fineCreditToWallet === true,
     dcAutoCompleteHours: Math.floor(num(d.dcAutoCompleteHours, D.dcAutoCompleteHours, 0, 720)), jobsRadiusKm: Math.round(num(d.jobsRadiusKm, D.jobsRadiusKm, 0, 500) * 10) / 10,
     dcPay: { wallet: typeof d.dcPay?.wallet === 'string' ? d.dcPay.wallet.slice(0, 40) : '', walletName: typeof d.dcPay?.walletName === 'string' ? d.dcPay.walletName.slice(0, 80) : '' },
     companionAsk: d.companionAsk !== false, vehicleGuideOn: d.vehicleGuideOn !== false,
@@ -150,6 +180,7 @@ export async function loadSettings(env) {
     referralEnabled: d.referralEnabled === true,
     referralBonusReferrer: num(d.referralBonusReferrer, D.referralBonusReferrer, 0, 1e6),
     referralBonusReferred: num(d.referralBonusReferred, D.referralBonusReferred, 0, 1e6),
+    site: cleanSite(d.site),
   };
 }
 
@@ -173,17 +204,38 @@ export async function distanceKm(a, b, settings) {
 }
 
 /** السعر = (سعر الكم × المسافة) × معامل الفئة × معامل الحجم — مع حد أدنى ثابت، ومقرّب لأعلى جنيه */
-export function calcPrice(s, km, category, size) {
+/** أنواع العربيات اللي ليها تسعير مستقل (نفس مفاتيح دليل العربيات) */
+export const PRICE_VEHICLES = ['pickup', 'half_ton', 'truck', 'jumbo'];
+/** العربية المرتبطة بحجم معيّن في دليل العربيات (أول واحدة مفعّلة حجمها كده) */
+export const vehicleOfSize = (s, size) => PRICE_VEHICLES.find((k) => s.vehicleGuide?.[k]?.maxKg > 0 && s.vehicleGuide[k].size === size) || null;
+/** السعر: لو للعربية تسعير خاص (سعر كيلو > 0): (سعر الفتح + سعر الكيلو × المسافة) × معامل نوع الشحنة، وبحد أدنى العربية. وإلا المعادلة العامة (سعر الكيلو العام × معامل النوع × معامل الحجم). */
+export function calcPrice(s, km, category, size, vehicle = null) {
   const c = s.categories[category], z = s.sizes[size];
   if (!c || !z) throw new HttpError(400, 'bad_category');
+  const vk = vehicle || vehicleOfSize(s, size), vp = vk ? s.vehiclePricing?.[vk] : null;
+  if (vp && Number(vp.perKm) > 0) {
+    const raw = (Number(vp.base || 0) + Number(vp.perKm) * km) * Number(c.mult), min = Number(vp.minPrice) > 0 ? Number(vp.minPrice) : s.minPrice;
+    return { price: Math.max(Math.ceil(min), Math.ceil(raw)), raw: Math.round(raw), catMult: Number(c.mult), sizeMult: Number(z.mult), vehicle: vk };
+  }
   const raw = s.perKm * km * Number(c.mult) * Number(z.mult);
   return { price: Math.max(Math.ceil(s.minPrice), Math.ceil(raw)), raw: Math.round(raw), catMult: Number(c.mult), sizeMult: Number(z.mult) };
 }
 
 /** نظام الدفع المباشر: عمولة المنصة المستحقة على إجمالي مكسب السواق (جنيه صحيح، مقرّبة) */
 export const dcDue = (gross, pct) => Math.max(0, Math.round((Math.max(0, Number(gross) || 0) * (Number(pct) || 0)) / 100));
+/** تعويض المنصة للسواق = نسبة من الغرامة (أقل من الغرامة دايماً عشان السواق يفضّل يحصّلها من العميل مباشرة) */
+export const fineCredit = (amount, pct) => Math.max(0, Math.floor(((Number(amount) || 0) * Math.min(99, Math.max(0, Number(pct) || 0))) / 100)); // floor: التعويض أقل من الغرامة دايماً
+/** المبلغ المطلوب من السواق للمنصة = العمولة المستحقة − رصيد التعويض (بحد أقصى العمولة) + الغرامات اللي حصّلها ولسه ما حوّلهاش */
+export const dcPayable = (gross, pct, credit, held, kmFee = 0) => {
+  const commission = dcDue(gross, pct) + Math.max(0, Math.round(Number(kmFee) || 0)), creditUsed = Math.min(commission, Math.max(0, Math.floor(Number(credit) || 0))), fines = Math.max(0, Math.floor(Number(held) || 0));
+  return { commission, creditUsed, fines, amount: commission - creditUsed + fines };
+};
 /** السواق بيتوقف لما إجمالي مكسبه غير المسدَّد يوصل للحد أو يعدّيه (الحد نفسه = متوقف). النظام مقفول أو النسبة 0 = مفيش توقيف. */
-export const dcBlocked = (gross, s) => s.dcEnabled === true && s.dcPct > 0 && (Number(gross) || 0) >= s.dcLimit;
+/** فيه رسوم للمنصة على السواقين أصلاً؟ (نسبة أو رسوم كيلومتر عامة أو لأي عربية) */
+export const dcFeesOn = (s) => s.dcEnabled === true && (s.dcPct > 0 || s.dcPerKm > 0 || PRICE_VEHICLES.some((k) => s.vehiclePricing?.[k]?.kmFee > 0));
+/** رسوم المنصة على كيلومترات مشوار: كيلومتر × سعر الكيلو للعربية (أو العام)، بجنيه صحيح */
+export const kmFeeOf = (s, km, vehicle) => { const vp = vehicle ? s.vehiclePricing?.[vehicle] : null, rate = vp?.kmFee > 0 ? vp.kmFee : s.dcPerKm || 0; return Math.max(0, Math.round((Number(km) || 0) * rate)); };
+export const dcBlocked = (gross, s) => dcFeesOn(s) && (Number(gross) || 0) >= s.dcLimit;
 
 /** توزيع المبلغ: عمولة الموقع (مقرّبة لجنيه) والباقي للسواق — أرقام صحيحة دايماً */
 export function split(amount, pct) {
@@ -230,6 +282,14 @@ export function sanitizeSettings(b) {
     codPeriodDays: Math.floor(n(b.codPeriodDays ?? DEFAULTS.codPeriodDays, 1, 31)), codGraceDays: Math.floor(n(b.codGraceDays ?? DEFAULTS.codGraceDays, 0, 30)),
     codMaxAmount: Math.floor(n(b.codMaxAmount ?? DEFAULTS.codMaxAmount, 100, 1000000)), codBlockScope: b.codBlockScope === 'all' ? 'all' : 'cod',
     dcEnabled: b.dcEnabled === true, dcPct: Math.round(n(b.dcPct ?? DEFAULTS.dcPct, 0, 50) * 10) / 10, dcLimit: Math.floor(n(b.dcLimit ?? DEFAULTS.dcLimit, 1, 1e8)),
+    finesEnabled: b.finesEnabled === true, fineFreeCancelMin: Math.floor(n(b.fineFreeCancelMin ?? DEFAULTS.fineFreeCancelMin, 0, 1440)), fineWaitMin: Math.floor(n(b.fineWaitMin ?? DEFAULTS.fineWaitMin, 0, 1440)),
+    fineEnRouteAmount: Math.floor(n(b.fineEnRouteAmount ?? DEFAULTS.fineEnRouteAmount, 0, 100000)), fineArrivedAmount: Math.floor(n(b.fineArrivedAmount ?? DEFAULTS.fineArrivedAmount, 0, 100000)),
+    fineClaimHours: Math.floor(n(b.fineClaimHours ?? DEFAULTS.fineClaimHours, 0, 720)), fineObjectHours: Math.floor(n(b.fineObjectHours ?? DEFAULTS.fineObjectHours, 0, 720)),
+    fineDriverSharePct: n(b.fineDriverSharePct ?? DEFAULTS.fineDriverSharePct, 0, 99), fineCollectorPct: n(b.fineCollectorPct ?? DEFAULTS.fineCollectorPct, 0, 50),
+    fineMonthlyCap: Math.floor(n(b.fineMonthlyCap ?? DEFAULTS.fineMonthlyCap, 0, 1e6)), fineMaxClaimsPerDay: Math.floor(n(b.fineMaxClaimsPerDay ?? DEFAULTS.fineMaxClaimsPerDay, 0, 1000)), fineBlockLimit: Math.floor(n(b.fineBlockLimit ?? DEFAULTS.fineBlockLimit, 0, 1e6)),
+    samePickupMeters: Math.floor(n(b.samePickupMeters ?? DEFAULTS.samePickupMeters, 0, 5000)), samePickupMax: Math.floor(n(b.samePickupMax ?? DEFAULTS.samePickupMax, 0, 50)),
+    vehiclePricing: (() => { const vi = b.vehiclePricing && typeof b.vehiclePricing === 'object' ? b.vehiclePricing : {}; return Object.fromEntries(PRICE_VEHICLES.map((k) => { const v = vi[k] && typeof vi[k] === 'object' ? vi[k] : {}; return [k, { base: n(v.base ?? 0, 0, 1e6), perKm: n(v.perKm ?? 0, 0, 10000), minPrice: n(v.minPrice ?? 0, 0, 1e6), kmFee: n(v.kmFee ?? 0, 0, 10000) }]; })); })(),
+    dcPerKm: n(b.dcPerKm ?? 0, 0, 10000), fineCreditToWallet: b.fineCreditToWallet === true,
     dcAutoCompleteHours: Math.floor(n(b.dcAutoCompleteHours ?? DEFAULTS.dcAutoCompleteHours, 0, 720)), jobsRadiusKm: Math.round(n(b.jobsRadiusKm ?? DEFAULTS.jobsRadiusKm, 0, 500) * 10) / 10,
     dcPay: { wallet: String(b.dcPay?.wallet ?? '').trim().slice(0, 40), walletName: String(b.dcPay?.walletName ?? '').trim().slice(0, 80) },
     companionAsk: b.companionAsk !== false, vehicleGuideOn: b.vehicleGuideOn !== false,
@@ -256,6 +316,7 @@ export function sanitizeSettings(b) {
     referralEnabled: b.referralEnabled === true,
     referralBonusReferrer: Math.floor(n(b.referralBonusReferrer ?? 0, 0, 1e6)),
     referralBonusReferred: Math.floor(n(b.referralBonusReferred ?? 0, 0, 1e6)),
+    site: cleanSite(b.site),
   };
 }
 

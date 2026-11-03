@@ -13,9 +13,13 @@ export function straightKm(a, b) {
   const R = 6371, d = Math.PI / 180, h = Math.sin(((b[2] - a[2]) * d) / 2) ** 2 + Math.cos(a[2] * d) * Math.cos(b[2] * d) * Math.sin(((b[3] - a[3]) * d) / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(h));
 }
-/** نفس معادلة السيرفر (calcPrice): سعر الكيلومتر × المسافة × معامل النوع × معامل الحجم، وبحد أدنى */
-export function priceFromKm(S, km, category, size) {
+/** نفس معادلة السيرفر (calcPrice): لو للعربية تسعير خاص (سعر كيلو > 0): (سعر الفتح + سعر الكيلو × المسافة) × معامل النوع بحد أدنى العربية؛ وإلا سعر الكيلومتر العام × المسافة × معامل النوع × معامل الحجم بحد أدنى */
+const PRICE_VEHICLES = ['pickup', 'half_ton', 'truck', 'jumbo'];
+export const vehicleOfSize = (S, size) => PRICE_VEHICLES.find((k) => S.vehicleGuide?.[k]?.maxKg > 0 && S.vehicleGuide[k].size === size) || null;
+export function priceFromKm(S, km, category, size, vehicle = null) {
   const c = S.categories?.[category], z = S.sizes?.[size]; if (!c || !z) return null;
+  const vk = vehicle || vehicleOfSize(S, size), vp = vk ? S.vehiclePricing?.[vk] : null;
+  if (vp && Number(vp.perKm) > 0) return Math.max(Math.ceil(Number(vp.minPrice) > 0 ? Number(vp.minPrice) : S.minPrice), Math.ceil((Number(vp.base || 0) + Number(vp.perKm) * km) * Number(c.mult)));
   return Math.max(Math.ceil(S.minPrice), Math.ceil(S.perKm * km * Number(c.mult) * Number(z.mult)));
 }
 export function estimate(S, from, to, category, size) {

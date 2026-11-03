@@ -4,8 +4,8 @@ import { state } from '../state.js';
 import { CITIES, estimate } from '../estimate.js';
 
 // كارت تقدير السعر في الصفحة الرئيسية للزوار
-export function initEstimate(el) {
-  const S = state.settings; if (!el || !S?.categories || !S?.sizes) return;
+export function initEstimate(el, pub) {
+  const S = pub || state.settings; if (!el || !S?.categories || !S?.sizes) return;
   const en = getLang() === 'en', nm = (k) => CITIES[k][en ? 1 : 0];
   const opt = (obj) => Object.keys(obj).map((k) => html`<option value="${k}">${label(obj[k], k)}</option>`);
   render(el, html`<div class="wrap"><div class="card stack est"><h2>${t('est.title')}</h2><p class="muted">${t('est.sub')}</p>

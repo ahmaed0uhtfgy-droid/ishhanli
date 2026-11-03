@@ -1,10 +1,11 @@
 import { APP } from './config.js';
+import { LP_ROWS } from './landing-content.js';
 
 // [المفتاح, عربي, English] — جدول واحد بيضمن إن اللغتين متطابقتين. لتعديل أي نص عدّل هنا فقط.
 const ROWS = [
   // ---------- عام ----------
   ['brand', 'اشحنلي', 'Ishhanli'],
-  ['meta.title', 'اشحنلي | نقل بضائع في مصر بسعر فوري وفلوس محجوزة لحد التسليم', 'Ishhanli | Freight in Egypt — instant price, payment held until delivery'],
+  ['meta.title', 'اشحنلي | منصة نقل بضائع في مصر — اطلب سواق نقل بسعر فوري', 'Ishhanli | Freight platform in Egypt — book a transport driver at an instant price'],
   ['footer.note', 'منصة نقل بضائع — مصر', 'Freight platform — Egypt'],
   ['footer.terms', 'شروط الاستخدام', 'Terms of Use'], ['footer.privacy', 'سياسة الخصوصية', 'Privacy Policy'],
 
@@ -652,6 +653,110 @@ const ROWS = [
   ['order.directCancel', 'إلغاء الطلب (من غير رسوم)', 'Cancel order (no fee)'],
   ['receipt.direct', 'دفع مباشر للسواق', 'Paid directly to the driver'],
   ['admin.tab.dc', 'عمولات السواقين', 'Driver commissions'],
+  // ===== تعويض السواق وغرامة العميل =====
+  ['err.fines_off', 'الميزة دي مقفولة حالياً.', 'This feature is currently off.'],
+  ['err.not_arrived', 'لازم تسجّل وصولك الأول.', 'Record your arrival first.'],
+  ['err.wait_more', 'لسه في مهلة الانتظار — استنى لحد ما تخلص قبل ما تبلّغ.', 'Still within the waiting period — wait until it ends before reporting.'],
+  ['err.claims_limit', 'وصلت للحد اليومي لطلبات التعويض.', 'You reached the daily limit of compensation claims.'],
+  ['err.already_objected', 'اعترضت على الغرامة دي قبل كده.', 'You already objected to this fine.'],
+  ['err.objection_closed', 'فترة الاعتراض خلصت.', 'The objection period has ended.'],
+  ['err.fine_blocked', 'عليك غرامات لازم تتسوّى قبل ما تطلب طلب جديد. تواصل مع الإدارة.', 'You have fines that must be settled before a new order. Contact support.'],
+  ['err.fine_one_order', 'عليك غرامة بتتحصّل مع طلب واحد: خلّص طلبك الحالي الأول.', 'You have a fine collected with a single order: finish your current order first.'],
+  ['err.same_pickup_limit', 'عندك طلب شغّال من نفس نقطة الاستلام. استنى لحد ما يتنفّذ أو ألغيه قبل ما تطلب تاني.', 'You already have an active order from this pickup point. Wait for it or cancel it first.'],
+  ['err.phone_required', 'لازم يكون عندك رقم تواصل في حسابك عشان تطلب.', 'You need a contact number on your account to order.'],
+  ['fine.arriveHint', 'وصلت نقطة الاستلام؟ سجّل وصولك (لازم تكون في المكان) عشان يتحفظ حقك لو العميل مش موجود.', 'At the pickup point? Record your arrival (you must be there) so your right is protected if the customer is absent.'],
+  ['fine.arrived', 'وصلت', 'I arrived'],
+  ['fine.arrivedToast', 'اتسجّل وصولك.', 'Your arrival was recorded.'],
+  ['fine.arrivedAt', 'سجّلت وصولك الساعة {time}.', 'You arrived at {time}.'],
+  ['fine.waitUntil', 'تقدر تبلّغ إن العميل مش موجود بعد {time}.', 'You can report the customer as absent after {time}.'],
+  ['fine.noshow', 'العميل مش موجود', 'Customer not here'],
+  ['fine.noshowAsk', 'تبلّغ إن العميل مش موجود؟ الطلب هيتلغي وهتتفتح مطالبة تعويض {amount}. لو العميل عوّضك مباشرة سجّل «اتحصّل»، ولو ماقدرتش تحصّل المنصة هتتنازل عن {credit} من عمولتك — وده أقل من {amount} اللي ممكن تاخدها من العميل مباشرة.', 'Report the customer as absent? The order will be cancelled and a {amount} compensation claim opens. If the customer compensates you directly mark it collected; if you can’t collect, the platform waives {credit} of your commission — less than the {amount} you could take from the customer directly.'],
+  ['fine.noshowToast', 'اتبلّغ. الطلب اتلغى وهتلاقي المطالبة في تعويضاتك.', 'Reported. The order was cancelled and the claim is on your compensation page.'],
+  ['fine.driverExplain', 'العميل مش موجود؟ التعويض {amount}. لو ما عوّضكش مباشرة المنصة هتتنازل عن {credit} من عمولتك (أقل من {amount})، والباقي بيتحصّل من العميل في طلبه الجاي.', 'Customer absent? Compensation is {amount}. If they don’t pay you directly the platform waives {credit} of your commission (less than {amount}); the rest is collected from the customer on their next order.'],
+  ['fine.customerArrived', 'السواق وصل نقطة الاستلام. اطلع له.', 'The driver reached the pickup point. Please meet them.'],
+  ['fine.cancelWarn', 'لو لغيت دلوقتي هتتسجّل عليك غرامة {amount} تعويضاً للسواق (تقدر تعوّضه مباشرة وتسجّل ده خلال {hours} ساعة). هتلغي؟', 'If you cancel now a {amount} fine is recorded as compensation for the driver (you can pay them directly and record it within {hours} hours). Cancel?'],
+  ['fine.cancelNote', 'الإلغاء دلوقتي عليه غرامة {amount}.', 'Cancelling now carries a {amount} fine.'],
+  ['fine.orderFineDriver', 'على العميل غرامة {fine} هتتحصّل معاك وبتتحوّل للمنصة. إجمالي المطلوب تحصيله: {total}.', 'The customer owes a {fine} fine collected with you and forwarded to the platform. Total to collect: {total}.'],
+  ['fine.openFine', 'على العميل ده غرامة {fine} هتتحصّلها مع سعر الشحنة وبتتحوّل للمنصة.', 'This customer owes a {fine} fine you collect with the price and forward to the platform.'],
+  ['fine.chip', 'غرامة على العميل', 'Customer fine'],
+  ['fine.orderFineCustomer', 'عليك غرامة {fine} هتتحصّل مع سعر الطلب.', 'You owe a {fine} fine collected with the order price.'],
+  ['order.youCollected', 'حصّلت من العميل', 'You collected'],
+  ['fine.collectedFine', 'غرامة اتحصّلت', 'Fine collected'],
+  ['fine.title', 'التعويضات والغرامات', 'Compensation & fines'],
+  ['fine.driverCredit', 'رصيد تعويض المنصة', 'Platform compensation credit'],
+  ['fine.driverHeld', 'غرامات حصّلتها وبتتحوّل للمنصة', 'Fines you collected (to forward)'],
+  ['fine.commission', 'عمولة المنصة قبل التعويض', 'Platform commission before credit'],
+  ['fine.creditUsed', 'تعويض متخصم', 'Credit deducted'],
+  ['fine.payable', 'المطلوب تحويله', 'Amount to transfer'],
+  ['fine.claim.open', 'مفتوحة', 'Open'], ['fine.claim.customer_paid', 'العميل بيقول إنه عوّض', 'Customer says they paid'], ['fine.claim.applied', 'اتطبّقت', 'Applied'],
+  ['fine.claim.settled', 'اتسوّت مباشرة', 'Settled directly'], ['fine.claim.waived', 'اتعفى', 'Waived'], ['fine.claim.rejected', 'مرفوضة', 'Rejected'],
+  ['fine.claim.paid_platform', 'اتسدّدت للمنصة', 'Paid to platform'], ['fine.claim.collected', 'اتحصّلت', 'Collected'],
+  ['fine.kind.no_show', 'العميل مش موجود', 'Customer absent'], ['fine.kind.cancel_arrived', 'إلغاء بعد وصول السواق', 'Cancelled after driver arrived'], ['fine.kind.cancel_enroute', 'إلغاء والسواق في الطريق', 'Cancelled while driver en route'],
+  ['fine.collectedBtn', 'اتحصّل (العميل عوّضني)', 'Collected (customer paid me)'],
+  ['fine.applyBtn', 'ماتحصّلش — طبّق التعويض', 'Not collected — apply compensation'],
+  ['fine.applyAsk', 'المنصة هتتنازل عن {credit} من عمولتك (أقل من الغرامة {amount}) والغرامة كاملة هتتسجّل على العميل. متأكد؟', 'The platform waives {credit} of your commission (less than the {amount} fine) and the full fine is recorded on the customer. Sure?'],
+  ['fine.declareBtn', 'عوّضت السواق', 'I compensated the driver'],
+  ['fine.declareAsk', 'هتسجّل إنك عوّضت السواق؟ السواق لازم يأكّد استلامه، وإلا الغرامة هتتطبّق بعد انتهاء المهلة.', 'Record that you compensated the driver? They must confirm receipt, otherwise the fine applies when the grace period ends.'],
+  ['fine.objectBtn', 'اعتراض', 'Object'], ['fine.objectAsk', 'سبب الاعتراض', 'Reason for objection'],
+  ['fine.objected', 'اتقدّم اعتراض', 'Objection filed'],
+  ['fine.done', 'تم', 'Done'],
+  ['fine.customerDue', 'غراماتك المستحقة', 'Fines you owe'],
+  ['fine.customerHint', 'بتتحصّل مع سعر طلبك الجاي (السواق بيشوفها). تقدر تسدّدها مباشرة للسواق.', 'Collected with your next order’s price (the driver sees it). You can pay the driver directly.'],
+  ['fine.none', 'مفيش مطالبات.', 'No claims.'],
+  ['fine.applyAt', 'تتطبّق تلقائي: {time}', 'Applies automatically: {time}'],
+  ['fine.newOrderNote', 'عليك غرامة {fine} هتتحصّل مع سعر الطلب.', 'You owe a {fine} fine collected with the order price.'],
+  ['admin.tab.fines', 'الغرامات', 'Fines'],
+  ['admin.fines.title', 'غرامات العملاء وتعويض السواقين', 'Customer fines & driver compensation'],
+  ['admin.fines.objected', 'اعتراضات على غرامات', 'Fine objections'],
+  ['admin.fines.noObjected', 'مفيش اعتراضات.', 'No objections.'],
+  ['admin.fines.customers', 'عملاء عليهم غرامات', 'Customers with fines'],
+  ['admin.fines.noCustomers', 'مفيش عملاء عليهم غرامات.', 'No customers with fines.'],
+  ['admin.fines.recent', 'آخر المطالبات', 'Recent claims'],
+  ['admin.fines.reject', 'ادعاء غير صحيح', 'False claim'], ['admin.fines.waive', 'إعفاء العميل', 'Waive customer'], ['admin.fines.settle', 'سدّد للمنصة', 'Paid to platform'], ['admin.fines.adjust', 'تصحيح', 'Adjust'],
+  ['admin.fines.reasonAsk', 'سبب القرار', 'Reason'], ['admin.fines.adjustAsk', 'الغرامة الجديدة (جنيه)', 'New fine amount (EGP)'], ['admin.fines.adjustNote', 'سبب التصحيح (إجباري)', 'Adjustment reason (required)'],
+  ['admin.fines.hint', 'ادعاء غير صحيح: بيشيل الغرامة والتعويض ويسجّل إنذار للسواق. إعفاء: العميل بيتعفى والسواق بيحتفظ بتعويضه (المنصة بتتحمّل).', 'False claim removes the fine and the credit and warns the driver. Waive clears the customer’s fine while the driver keeps the credit (platform absorbs).'],
+  ['admin.fines.settingsTitle', 'تعويض السواق وغرامة العميل', 'Driver compensation & customer fine'],
+  ['admin.fines.settingsHint', 'السواق اللي وصل ومالقاش العميل (أو العميل لغى بعد ما السواق تحرّك) بيبلّغ، والعميل ممكن يعوّضه مباشرة. لو ما اتسوّاش، المنصة بتتنازل عن نسبة من عمولة السواق (أقل من الغرامة) والغرامة الكاملة بتتسجّل على العميل وبتتحصّل مع طلبه الجاي. كل المدد والمبالغ هنا. بتشتغل مع الدفع المباشر بس.', 'When a driver arrives and the customer is absent (or the customer cancels after the driver set off) the driver reports it and the customer may pay them directly. Otherwise the platform waives a share of the driver’s commission (less than the fine) and the full fine is recorded on the customer, collected with their next order. All durations and amounts are set here. Works with direct payment only.'],
+  ['admin.s.finesEnabled', 'تفعيل التعويض والغرامات', 'Enable compensation & fines'],
+  ['admin.s.fineFreeCancelMin', 'إلغاء مجاني بعد قبول السواق (دقيقة)', 'Free cancellation after acceptance (min)'],
+  ['admin.s.fineWaitMin', 'مهلة انتظار السواق بعد وصوله (دقيقة)', 'Driver wait after arriving (min)'],
+  ['admin.s.fineEnRouteAmount', 'غرامة إلغاء والسواق في الطريق (جنيه)', 'Fine: cancelled while driver en route (EGP)'],
+  ['admin.s.fineArrivedAmount', 'غرامة عدم الحضور/الإلغاء بعد الوصول (جنيه)', 'Fine: no-show / cancelled after arrival (EGP)'],
+  ['admin.s.fineClaimHours', 'مهلة التسوية المباشرة قبل التطبيق (ساعة)', 'Direct settlement window before applying (h)'],
+  ['admin.s.fineObjectHours', 'مهلة اعتراض العميل (ساعة، 0 = بدون)', 'Customer objection window (h, 0 = none)'],
+  ['admin.s.fineDriverSharePct', 'تعويض المنصة للسواق % من الغرامة (أقل من 100)', 'Platform compensation % of the fine (below 100)'],
+  ['admin.s.fineCollectorPct', 'نسبة يحتفظ بيها السواق اللي حصّل الغرامة %', 'Share the collecting driver keeps %'],
+  ['admin.s.fineMonthlyCap', 'سقف إعفاء المنصة للسواق في 30 يوم (جنيه، 0 = بدون)', 'Platform waiver cap per driver / 30 days (EGP, 0 = none)'],
+  ['admin.s.fineMaxClaimsPerDay', 'أقصى مطالبات للسواق في اليوم (0 = بدون)', 'Max claims per driver per day (0 = none)'],
+  ['admin.s.fineBlockLimit', 'منع العميل من الطلب لو غراماته وصلت (جنيه، 0 = بدون)', 'Block customer from ordering when fines reach (EGP, 0 = off)'],
+  ['admin.s.samePickupMeters', 'نطاق «نفس نقطة الاستلام» (متر)', '“Same pickup” radius (m)'],
+  ['admin.s.samePickupMax', 'أقصى طلبات شغّالة للعميل من نفس النقطة (0 = بدون)', 'Max active orders per customer at the same pickup (0 = none)'],
+  // ===== قواعد: الدفع المباشر والعمولة والتعويضات والتسعير =====
+  ['rules.a10.t', 'الدفع المباشر للسواق', 'Direct payment to the driver'], ['rules.a10.d', 'ثمن الشحنة بيتدفع للسواق مباشرة (كاش أو تحويل) عند الاستلام/التسليم. المنصة مش بتستلم فلوس الشحنة، ومفيش ضمان ولا كوبونات ولا نزاعات على المبلغ. لو فيه مشكلة تواصل مع الإدارة.', 'The shipment price is paid directly to the driver (cash or transfer) at pickup/delivery. The platform holds no shipment money, and there is no escrow, coupons or payment disputes. Contact support if there is a problem.'],
+  ['rules.a11.t', 'السعر بيختلف حسب نوع العربية', 'Price depends on the vehicle type'], ['rules.a11.d', 'سعر الشحنة بيتحدد حسب نوع العربية (ربع نقل، نص نقل، نقل، جامبو) والمسافة ونوع الشحنة. العربية الأكبر سعرها غير الأصغر، والسعر النهائي بيظهر قبل ما تأكّد الطلب.', 'The price depends on the vehicle type (pickup, half-ton, truck, jumbo), the distance and the cargo type. A larger vehicle is priced differently, and the final price is shown before you confirm.'],
+  ['rules.c16.t', 'تأكيد الاستلام', 'Confirming receipt'], ['rules.c16.d', 'بعد ما السواق يستلم شحنتك تقدر تأكّد الاستلام من صفحة الطلب، أو السواق يأكّد التسليم، وأي تأكيد من الاتنين بيكفي لإكمال الطلب.', 'Once the driver picks up your shipment you can confirm receipt from the order page, or the driver confirms delivery; either confirmation is enough to complete the order.'],
+  ['rules.c16a.t', 'إكمال الطلب تلقائياً', 'Automatic completion'], ['rules.c16a.d', 'لو الشحنة اتستلمت وفضل الطلب مفتوح {autoH} ساعة من غير تأكيد، الطلب بيتحسب مسلَّم وبيتكمّل تلقائياً.', 'If the shipment was picked up and the order stays open for {autoH} hours with no confirmation, it is treated as delivered and completes automatically.'],
+  ['rules.c17.t', 'إلغاء الطلب بعد قبول السواق', 'Cancelling after a driver accepts'], ['rules.c17.d', 'الإلغاء مجاني في أول {fFree} دقيقة من قبول السواق. بعدها لو السواق اتحرّك ليك: غرامة {fEn} جنيه، ولو وصل لنقطة الاستلام أو مالقاكش بعد انتظار {fWait} دقيقة: غرامة {fAr} جنيه. تقدر تعوّض السواق مباشرة وتسجّل ده خلال {fClaim} ساعة، وإلا الغرامة بتتسجّل على حسابك وبتتحصّل مع طلبك الجاي (وتقدر تعترض خلال {fObj} ساعة).', 'Cancelling is free during the first {fFree} minutes after a driver accepts. After that, if the driver set off: a {fEn} EGP fine; if they reached the pickup or found no one after waiting {fWait} minutes: a {fAr} EGP fine. You can compensate the driver directly and record it within {fClaim} hours; otherwise the fine is added to your account and collected with your next order (you can object within {fObj} hours).'],
+  ['rules.c18.t', 'طلب واحد من نفس النقطة', 'One order per pickup point'], ['rules.c18.d', 'مينفعش يكون عندك أكتر من {samePickup} طلب شغّال (قبل الاستلام) من نفس نقطة الاستلام (في حدود {sameM} متر) في نفس الوقت، عشان ما يروحش سواقين لنفس المكان على الفاضي.', 'You cannot have more than {samePickup} active order(s) (before pickup) from the same pickup point (within {sameM} m) at once, so drivers are not sent to the same place for nothing.'],
+  ['rules.c19.t', 'رقم التواصل إجباري', 'Contact number is required'], ['rules.c19.d', 'لازم يكون عندك رقم تواصل صحيح في حسابك. السواق بيشوفه بعد قبول طلبك عشان يوصلك، ومن غيره مش هتقدر تطلب.', 'You must have a valid contact number on your account. The driver sees it after accepting your order so they can reach you, and you cannot order without it.'],
+  ['rules.d16.t', 'عمولة المنصة (الدفع المباشر)', 'Platform commission (direct payment)'], ['rules.d16.d', 'بتحصّل فلوس الشحنة من العميل بنفسك وبتسدّد للمنصة {dcPct}% من مكسبك. لما إجمالي مكسبك غير المسدَّد يوصل {dcLimit} جنيه بتتوقف عن قبول طلبات جديدة لحد ما تسدّد (الطلب الشغّال بيكمّل عادي). السداد بالمحفظة أو إنستا باي وبتبعت صورة التحويل ورقم المرجع، والإدارة بتأكّد.', 'You collect the shipment money from the customer yourself and pay the platform {dcPct}% of your earnings. When your unpaid earnings reach {dcLimit} EGP you stop receiving new orders until you pay (an active job continues). Pay by wallet or InstaPay, send the transfer screenshot and reference, and the admin confirms.'],
+  ['rules.d16k.t', 'رسوم الكيلومترات', 'Kilometre fee'], ['rules.d16k.d', 'المنصة بتاخد كمان {perKm} جنيه على كل كيلومتر من مشاويرك المكتملة (ممكن يختلف حسب نوع العربية). عدد الكيلومترات والرسوم ظاهرين في لوحتك وبيتضافوا للمبلغ المطلوب منك.', 'The platform also takes {perKm} EGP per kilometre of your completed trips (it may differ by vehicle type). Your kilometres and fees are shown on your dashboard and added to the amount you owe.'],
+  ['rules.d16z.t', 'مفيش عمولة حالياً', 'No commission at the moment'], ['rules.d16z.d', 'المنصة حالياً مش بتاخد عمولة على الطلبات المباشرة. لو اتغيّر ده هتلاقيه هنا.', 'The platform currently takes no commission on direct orders. If this changes you will see it here.'],
+  ['rules.d17.t', 'وصلت والعميل مش موجود', 'You arrived and the customer is absent'], ['rules.d17.d', 'لما توصل نقطة الاستلام اضغط «وصلت» (لازم تكون في المكان). لو العميل مش موجود بعد {fWait} دقيقة اضغط «العميل مش موجود»: الطلب بيتلغي وتتفتح مطالبة تعويض {fAr} جنيه. لو العميل عوّضك مباشرة سجّل «اتحصّل». ولو ماقدرتش تحصّل، المنصة بتتنازل عن {fShare}% من التعويض (بتتخصم من اللي عليك أو بتتحط في محفظتك) — وده أقل من اللي تاخده من العميل مباشرة، فحاول تحصّله منه الأول. فيه حد يومي للمطالبات وسقف شهري ({fCap} جنيه، 0 = بدون سقف).', 'When you reach the pickup tap “I arrived” (you must be there). If the customer is absent after {fWait} minutes tap “Customer not here”: the order is cancelled and a {fAr} EGP compensation claim opens. If the customer pays you directly, mark it collected. If you cannot collect, the platform waives {fShare}% of the compensation (deducted from what you owe or paid into your wallet) — less than you can take from the customer directly, so try them first. There is a daily claim limit and a monthly cap ({fCap} EGP, 0 = no cap).'],
+  ['rules.d18.t', 'غرامة العميل بتتحصّل معاك', 'A customer’s fine is collected with you'], ['rules.d18.d', 'لو على العميل غرامة بتظهر في الطلب قبل ما تقبل، وبتحصّلها معاه مع سعر الشحنة وتحوّلها للمنصة مع دفعتك (وبتحتفظ بنسبة {fKeep}% منها لو الإدارة حددت نسبة).', 'If a customer owes a fine it is shown on the order before you accept; you collect it with the shipment price and forward it to the platform with your payment (keeping {fKeep}% of it if the admin set a share).'],
+  ['rules.d19.t', 'نطاق الطلبات', 'Order area'], ['rules.d19.d', 'بتشوف الطلبات اللي نقطة استلامها في نطاق {radius} كم من موقعك. فعّل الموقع (GPS) عشان تظهرلك الطلبات القريبة.', 'You see orders whose pickup is within {radius} km of your location. Enable location (GPS) so nearby orders appear.'],
+  ['rules.d20.t', 'إكمال الطلب تلقائياً', 'Automatic completion'], ['rules.d20.d', 'لو استلمت الشحنة وفضل الطلب مفتوح {autoH} ساعة من غير تأكيد التسليم، بيتكمّل تلقائياً ويتحسب في عمولتك. الأحسن تأكّد التسليم أول ما تسلّم.', 'If you picked up the shipment and the order stays open for {autoH} hours without a delivery confirmation it completes automatically and counts toward your commission. Better to confirm delivery as soon as you deliver.'],
+  ['rules.k5.t', 'الدفع المباشر والتعويضات للشركات', 'Direct payment & compensation for companies'], ['rules.k5.d', 'نفس قواعد السواقين بتنطبق على حساب الشركة: التحصيل من العميل مباشرة، وسداد عمولة المنصة، وتعويض عدم الحضور، ونطاق الطلبات.', 'The same rules as drivers apply to a company account: direct collection from the customer, paying the platform commission, no-show compensation and the order area.'],
+  ['admin.vp.title', 'تسعير كل نوع عربية', 'Pricing per vehicle type'],
+  ['admin.vp.hint', 'لكل عربية (ربع نقل / نص نقل / نقل / جامبو) سعر فتح وسعر كيلو وحد أدنى خاص بيها. سعر الكيلو 0 = بتستخدم المعادلة العامة (سعر الكيلو العام × معامل الحجم). رسوم الكيلومتر = اللي المنصة بتاخده من السواق على كل كيلو (0 = الرسوم العامة تحت). السعر = (سعر الفتح + سعر الكيلو × المسافة) × معامل نوع الشحنة.', 'Each vehicle (pickup / half-ton / truck / jumbo) gets its own start fare, per-km rate and minimum. Per-km 0 = use the general formula (general per-km × size multiplier). Km fee = what the platform takes from the driver per km (0 = the general fee below). Price = (start fare + per-km × distance) × cargo type multiplier.'],
+  ['admin.vp.current', 'المعادلة العامة حالياً: {perKm} جنيه/كم، حد أدنى {min}', 'Current general formula: {perKm} EGP/km, minimum {min}'],
+  ['admin.vp.base', 'سعر الفتح (جنيه)', 'Start fare (EGP)'], ['admin.vp.perKm', 'سعر الكيلو (جنيه)', 'Per-km rate (EGP)'], ['admin.vp.minPrice', 'الحد الأدنى (جنيه)', 'Minimum (EGP)'], ['admin.vp.kmFee', 'رسوم المنصة على الكيلو (جنيه)', 'Platform fee per km (EGP)'],
+  ['admin.s.dcPerKm', 'رسوم المنصة العامة على كل كيلومتر (جنيه، 0 = مقفولة)', 'General platform fee per kilometre (EGP, 0 = off)'],
+  ['admin.s.fineCreditToWallet', 'تعويض السواق من المنصة كرصيد محفظة قابل للسحب (بدل خصم من العمولة — مفيد لو العمولة 0)', 'Pay driver compensation as withdrawable wallet balance (instead of a commission waiver — useful when commission is 0)'],
+  ['admin.dc.km', 'كم لسه ما اتسدّدش', 'Unsettled km'], ['admin.dc.kmTotal', 'إجمالي الكيلومترات', 'Total km'],
+  ['dc.kmLine', 'الكيلومترات غير المسدَّدة: {km} كم (رسوم {fee}) · إجمالي كيلومتراتك: {total} كم', 'Unsettled km: {km} km (fee {fee}) · your total km: {total} km'],
+  ['admin.dc.credit', 'رصيد التعويض', 'Compensation credit'],
+  ['admin.dc.held', 'غرامات محصّلة', 'Collected fines'],
   ['err.out_of_range', 'الطلب ده بعيد عن موقعك الحالي (برا نطاق الطلبات).', 'This order is outside your current area.'],
   ['driver.needLocation', 'فعّل الموقع (GPS) وصلاحيته للمتصفح عشان تشوف الطلبات القريبة منك.', 'Enable location (GPS) permission to see orders near you.'],
   ['driver.radiusNote', 'بتشوف الطلبات اللي نقطة استلامها في نطاق {km} كم من موقعك.', 'You see orders whose pickup is within {km} km of your location.'],
@@ -709,6 +814,7 @@ const ROWS = [
   ['dc.send', 'إرسال للمراجعة', 'Send for review'],
   ['dc.sent', 'اتبعت للمراجعة', 'Sent for review'],
   ['dc.needProof', 'ارفع صورة التحويل واكتب رقم المرجع.', 'Upload the transfer screenshot and enter the reference number.'],
+  ['dc.cover', 'سوّي العمولة برصيد التعويض (من غير تحويل)', 'Settle commission with compensation credit (no transfer)'],
   ['dc.noDue', 'مفيش عمولة مستحقة دلوقتي.', 'No commission due right now.'],
   ['dc.history', 'آخر السدادات', 'Recent payments'],
   ['dc.entries', 'آخر الشحنات المحسوبة', 'Recently counted jobs'],
@@ -1048,6 +1154,7 @@ const ROWS = [
   ['rate.q.polite', 'السواق اتعامل كويس؟', 'Was the driver well-behaved?'],
 ];
 
+ROWS.push(...LP_ROWS); // نصوص الصفحة الرئيسية الجديدة (landing-content.js)
 const D = { ar: {}, en: {} };
 for (const [k, ar, en] of ROWS) { D.ar[k] = ar; D.en[k] = en; }
 
@@ -1069,7 +1176,14 @@ export function t(key, vars) {
 }
 /** يترجم أي عنصر عليه data-i18n (الصفحة الرئيسية والفوتر) */
 export function applyI18n(root) {
-  root.querySelectorAll('[data-i18n]').forEach((el) => { const s = D[lang][el.dataset.i18n]; if (s !== undefined) el.textContent = s; });
-  document.title = t('meta.title');
+  const E = (x) => x.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  root.querySelectorAll('[data-i18n]').forEach((el) => {
+    let s = D[lang][el.dataset.i18n]; if (s === undefined) return;
+    if (el.dataset.i18nVars) { try { const v = JSON.parse(el.dataset.i18nVars); s = s.replace(/\{(\w+)\}/g, (_, k) => v[k] ?? ''); } catch { /* ignore */ } }
+    if (el.hasAttribute('data-i18n-em')) el.innerHTML = E(s).replace(/\*([^*]+)\*/g, '<em>$1</em>'); else el.textContent = s; // *كلمة* = إبراز (الصفحة الرئيسية)
+  });
+  root.querySelectorAll('[data-i18n-alt]').forEach((el) => { el.alt = t(el.dataset.i18nAlt); });
+  root.querySelectorAll('[data-i18n-aria]').forEach((el) => { el.setAttribute('aria-label', t(el.dataset.i18nAria)); });
+  if (!(lang === 'ar' && document.documentElement.hasAttribute('data-lp-title'))) document.title = t('meta.title'); // العنوان العربي جاي من السيرفر (SEO + تعديل الأدمن)
 }
 export const DICT = D; // للاختبار

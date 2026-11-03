@@ -2,20 +2,39 @@ import { api, poll } from '../api.js';
 import { gpoll } from '../sync.js';
 import { state } from '../state.js';
 import { t } from '../i18n.js';
-import { $, $$, html, raw, render, toast, errMsg, busy, spinner, skeleton, waybill, orderNo, fmtMoney, fmtNum, label } from '../ui.js';
+import { $, $$, html, raw, render, toast, errMsg, busy, spinner, skeleton, waybill, orderNo, fmtMoney, fmtNum, fmtDate, label, confirmDialog, promptDialog } from '../ui.js';
 import { createMap, pinIcon, geocode, reverse } from '../map.js';
 import { uploadImage } from '../storage.js';
 import { recommendVehicle, VEHICLE_KEYS } from '../estimate.js';
 import { vehicleSvg } from '../vehicles.js';
 
+// غراماتي: الغرامة المستحقة (بتتحصّل مع الطلب الجاي) + مطالبات التعويض: «عوّضت السواق» أو «اعتراض» خلال المهلة
+const finesCustomer = (f) => !f || !(f.due > 0 || f.claims.length) ? '' : html`<section class="card stack"><h3>${t('fine.title')}</h3>
+  ${f.due > 0 ? html`<div class="action bad"><b>${t('fine.customerDue')}: ${fmtMoney(f.due)}</b><p class="small">${t('fine.customerHint')}</p></div>` : ''}
+  <ul class="plain">${f.claims.map((x) => html`<li class="stack" style="padding:.5rem 0;border-bottom:1px solid var(--rule)">
+    <div class="row"><a class="grow" href="#/order/${x.orderId}">${orderNo(x.orderId)}</a><b>${fmtMoney(x.status === 'applied' ? x.remaining : x.amount)}</b><span class="${['settled', 'collected', 'waived', 'rejected', 'paid_platform'].includes(x.status) ? 'ok-t' : 'no-t'}"><b>${t('fine.claim.' + x.status)}</b></span></div>
+    <div class="muted small">${t('fine.kind.' + x.kind)} · ${fmtDate(x.createdAt)}${x.status === 'open' ? html` · ${t('fine.applyAt', { time: fmtDate(x.applyAt) })}` : ''}${x.objected ? html` · ${t('fine.objected')}` : ''}</div>
+    <div class="row">${x.status === 'open' ? html`<button class="btn ok sm" data-fine="declare" data-id="${x.orderId}">${t('fine.declareBtn')}</button>` : ''}${x.status === 'applied' && !x.objected && f.objectHours > 0 && Date.now() - x.appliedAt <= f.objectHours * 3600000 ? html`<button class="btn ghost sm" data-fine="object" data-id="${x.orderId}">${t('fine.objectBtn')}</button>` : ''}</div></li>`)}</ul></section>`;
+
 export function renderCustomerHome(el) {
-  render(el, html`<div class="page-head"><h1>${t('nav.myOrders')}</h1><a class="btn primary" href="#/customer/new">${t('nav.newOrder')}</a></div><div id="list" class="stack">${skeleton(3)}</div>`);
+  render(el, html`<div class="page-head"><h1>${t('nav.myOrders')}</h1><a class="btn primary" href="#/customer/new">${t('nav.newOrder')}</a></div><div id="fines" class="stack"></div><div id="list" class="stack">${skeleton(3)}</div>`);
   const list = $('#list', el), prev = new Map(); let first = true;
-  return gpoll(['orders'], () => api('orders/list', state.profile.role === 'admin' ? { scope: 'mine' } : {}), 15000, ({ orders }) => {
+  const loadFines = async () => { if (state.profile.role === 'admin') return; try { render($('#fines', el), finesCustomer(await api('fines/mine', {}))); } catch { /* مش حرج: القائمة تكمل */ } };
+  const onFine = async (e) => {
+    const b = e.target.closest('[data-fine]'); if (!b) return;
+    try {
+      if (b.dataset.fine === 'declare') { if (!(await confirmDialog(t('fine.declareAsk'), { ok: t('fine.declareBtn') }))) return; await api('fines/declare', { orderId: b.dataset.id }); }
+      else { const note = await promptDialog(t('fine.objectAsk'), { required: true }); if (!note) return; await api('fines/object', { orderId: b.dataset.id, note }); }
+      toast(t('fine.done')); loadFines();
+    } catch (err) { toast(errMsg(err), true); }
+  };
+  el.addEventListener('click', onFine); loadFines();
+  const stop = gpoll(['orders'], () => api('orders/list', state.profile.role === 'admin' ? { scope: 'mine' } : {}), 15000, ({ orders }) => {
     for (const o of orders) { const p = prev.get(o.id); if (!first && p && p !== o.status) toast(`${orderNo(o.id)} — ${t('status.' + o.status)}`); prev.set(o.id, o.status); }
     first = false;
     render(list, orders.length ? html`${orders.map((o) => waybill(o))}` : html`<div class="empty"><p>${t('customer.empty')}</p><a class="btn primary" href="#/customer/new">${t('nav.newOrder')}</a></div>`);
   }, { dedupe: true, onError: (e) => toast(errMsg(e), true) });
+  return () => { el.removeEventListener('click', onFine); if (typeof stop === 'function') stop(); };
 }
 
 const localInput = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -28,7 +47,7 @@ export function renderNewOrder(el) {
   const pts = {}; let mode = 'pickup', service = 'cargo', quote = null, qTimer = null, qSeq = 0;
   const saved = Array.isArray(state.profile?.addresses) ? state.profile.addresses : [];
 
-  render(el, html`<div class="page-head"><h1>${t('nav.newOrder')}</h1></div>
+  render(el, html`<div class="page-head"><h1>${t('nav.newOrder')}</h1></div>${state.profile?.fineDue > 0 ? html`<div class="action bad"><p>${t('fine.newOrderNote', { fine: fmtMoney(state.profile.fineDue) })}</p></div>` : ''}
   <div class="order-layout">
     <form id="f" class="card stack" novalidate>
       ${S.passengersEnabled && classes.length ? html`<div><div class="seg" role="group" aria-label="${t('new.serviceLabel')}"><button type="button" data-svc="cargo" class="on">${t('service.cargo')}</button><button type="button" data-svc="passengers">${t('service.passengers')}</button></div></div>` : ''}
@@ -129,7 +148,7 @@ export function renderNewOrder(el) {
     try {
       const r = await api('quote', service === 'passengers'
         ? { service, pickup: pts.pickup, dropoff: pts.dropoff, vehicleClass: f.vehicleClass.value, coupon: f.coupon.value.trim() }
-        : { pickup: pts.pickup, dropoff: pts.dropoff, category: f.category.value, size: f.size.value, coupon: f.coupon.value.trim() });
+        : { pickup: pts.pickup, dropoff: pts.dropoff, category: f.category.value, size: f.size.value, ...(vpick ? { vehiclePick: vpick } : {}), coupon: f.coupon.value.trim() });
       if (seq !== qSeq) return; quote = r;
       const disc = r.discount ? html`<p class="hint" style="margin:.4rem 0 0;color:var(--nile)">${t('coupon.applied')} ${fmtMoney(r.discount)} · ${t('coupon.due')} <b>${fmtMoney(r.amountDue)}</b></p>` : '';
       const cerr = r.couponError ? html`<p class="hint" style="margin:.4rem 0 0;color:var(--brick)">${t('err.' + r.couponError)}</p>` : '';

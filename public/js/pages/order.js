@@ -13,6 +13,23 @@ const HELD = ['paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered'];
 const RECEIPT_STATUS = ['paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered', 'completed', 'resolved'];
 const STEPS = ['open', 'accepted', 'paid', 'picked_up', 'in_transit', 'delivered', 'completed'];
 const STEPS_PRE = ['pay', 'visible', 'accepted', 'picked_up', 'in_transit', 'delivered', 'completed'];
+// غرامة إلغاء العميل دلوقتي (نفس منطق السيرفر): مجاني في أول دقايق، بعدها حسب مرحلة السواق (في الطريق / وصل)
+const fineOnC = () => state.settings.finesEnabled === true && state.settings.dcEnabled === true;
+const fineStage = (o) => {
+  const S = state.settings;
+  if (!(fineOnC() && o.direct === true && ['paid', 'heading_pickup'].includes(o.status))) return 0;
+  if (o.acceptedAt && Date.now() - o.acceptedAt <= (S.fineFreeCancelMin || 0) * 60000) return 0;
+  return o.arrivedAt ? S.fineArrivedAmount || 0 : o.status === 'heading_pickup' ? S.fineEnRouteAmount || 0 : 0;
+};
+const fineCreditC = (amount) => Math.floor((amount * Math.min(99, state.settings.fineDriverSharePct || 0)) / 100);
+// السواق: «وصلت» ثم «العميل مش موجود» بعد المهلة (السيرفر هو اللي بيفرض الوقت والموقع)
+const arrivalHtml = (o) => {
+  const S = state.settings;
+  if (!(fineOnC() && o.direct === true && ['paid', 'heading_pickup'].includes(o.status))) return '';
+  if (!o.arrivedAt) return html`<div class="action info"><p class="small">${t('fine.arriveHint')}</p><button class="btn ghost sm" data-act="arrived">${t('fine.arrived')}</button></div>`;
+  return html`<div class="action info"><p class="small">${t('fine.arrivedAt', { time: fmtDate(o.arrivedAt) })} ${t('fine.waitUntil', { time: fmtDate(o.arrivedAt + (S.fineWaitMin || 0) * 60000) })}</p>
+    <p class="small">${t('fine.driverExplain', { amount: fmtMoney(S.fineArrivedAmount), credit: fmtMoney(fineCreditC(S.fineArrivedAmount)) })}</p><button class="btn danger sm" data-act="noshow">${t('fine.noshow')}</button></div>`;
+};
 const STEPS_DIRECT = ['open', 'accepted', 'picked_up', 'in_transit', 'completed']; // الدفع المباشر: مفيش خطوة دفع ولا ضمان — بيتكمّل بمجرد تأكيد السواق للتسليم
 const STEP_OF_DIRECT = { open: 0, paid: 1, heading_pickup: 1, picked_up: 2, in_transit: 3, delivered: 4, completed: 4, resolved: 4 };
 const STEP_OF_PRE = { awaiting_payment: 0, payment_review: 0, open: 1, paid: 2, heading_pickup: 2, picked_up: 3, in_transit: 4, delivered: 5, completed: 6, resolved: 6 };
@@ -123,7 +140,7 @@ export function renderOrder(el, id) {
     if (o.payMode === 'before') return html`<div class="action good"><p>${t('order.prepaidFixed', { price: fmtMoney(o.price) })}</p>${manifestHtml(o)}<button class="btn primary block" data-act="accept">${t('order.acceptPrepaid')}</button></div>`;
     const S = state.settings, canInstant = o.instant !== false, my = o.myOffer?.status === 'pending' ? o.myOffer : null;
     const lo = Math.max(Math.ceil(S.minPrice || 0), Math.ceil((o.price * (S.offerMinPct || 70)) / 100)), hi = Math.ceil((o.price * (S.offerMaxPct || 200)) / 100);
-    return html`<div class="action"><p>${t('order.driverOpenMsg')}</p>${manifestHtml(o)}
+    return html`<div class="action"><p>${t('order.driverOpenMsg')}</p>${o.fineDue > 0 ? html`<p class="small no-t"><b>${t('fine.openFine', { fine: fmtMoney(o.fineDue) })}</b></p>` : ''}${manifestHtml(o)}
       ${canInstant ? html`<button class="btn primary block" data-act="accept">${t('order.acceptAt', { price: fmtMoney(o.price) })}</button>` : html`<p class="hint">${t('offer.offersOnly')}</p>`}
       ${S.offersEnabled === false ? '' : html`<div class="offer-box">
         ${my ? html`<p style="margin:0">${t('offer.yours')}: <b>${fmtMoney(my.price)}</b> — ${t('offer.waiting')}</p>` : ''}
@@ -161,7 +178,7 @@ export function renderOrder(el, id) {
           ${state.settings.testPayments && state.settings.testPaymentsAllowed ? html`<div class="action warn" style="margin-top:.8rem"><p class="small">${t('order.testBanner')}</p><button class="btn ok block" data-act="payTest">${t('order.payTest')}</button></div>` : ''}</div>`;
       }
       if (s === 'payment_review') return html`<div class="action info">${t('order.reviewing')}</div>`;
-      if (o.direct === true && ['paid', 'heading_pickup', 'picked_up', 'in_transit'].includes(s)) return html`<div class="action info"><p>${t('order.directPay')}</p>${['picked_up', 'in_transit'].includes(s) ? html`<p class="small">${t('order.directAuto', { hours: fmtNum(state.settings.dcAutoCompleteHours || 24) })}</p><div class="row"><button class="btn ok grow" data-act="confirm">${t('order.directConfirm')}</button></div>` : html`<div class="row"><button class="btn ghost sm" data-act="cancel">${t('order.directCancel')}</button></div>`}</div>`;
+      if (o.direct === true && ['paid', 'heading_pickup', 'picked_up', 'in_transit'].includes(s)) return html`<div class="action info"><p>${t('order.directPay')}</p>${o.arrivedAt && ['paid', 'heading_pickup'].includes(s) ? html`<p class="small"><b>${t('fine.customerArrived')}</b></p>` : ''}${o.fineDue > 0 ? html`<p class="small no-t"><b>${t('fine.orderFineCustomer', { fine: fmtMoney(o.fineDue) })}</b></p>` : ''}${fineStage(o) > 0 ? html`<p class="small no-t">${t('fine.cancelNote', { amount: fmtMoney(fineStage(o)) })}</p>` : ''}${['picked_up', 'in_transit'].includes(s) ? html`<p class="small">${t('order.directAuto', { hours: fmtNum(state.settings.dcAutoCompleteHours || 24) })}</p><div class="row"><button class="btn ok grow" data-act="confirm">${t('order.directConfirm')}</button></div>` : html`<div class="row"><button class="btn ghost sm" data-act="cancel">${t('order.directCancel')}</button></div>`}</div>`;
       if (HELD.includes(s) && s !== 'delivered') return html`<div class="action info"><p>${t('order.held')}</p><div class="row">${dispute}${['paid', 'heading_pickup'].includes(s) && o.escrowStatus === 'held' ? html`<button class="btn ghost sm" data-act="cancel">${t('order.cancelFee')}</button>` : ''}</div></div>`;
       if (s === 'delivered') return html`<div class="action good"><h3>${t(isP(o) ? 'order.deliveredTitleP' : 'order.deliveredTitle')}</h3><p>${t(isP(o) ? 'order.deliveredMsgP' : 'order.deliveredMsg')}</p><div class="row"><button class="btn ok grow" data-act="confirm">${t(isP(o) ? 'order.confirmReceiptP' : 'order.confirmReceipt')}</button>${dispute}</div></div>`;
     }
@@ -173,7 +190,7 @@ export function renderOrder(el, id) {
       const nx = NEXT_OF[s];
       if (nx) {
         const needPhoto = nx === 'picked_up' || nx === 'delivered';
-        return html`<div class="action"><h3>${t('order.nextStep')}</h3>${o.direct === true ? html`<p class="small">${t('order.directDriver', { amount: fmtMoney(dueOf(o)) })}</p>` : ''}
+        return html`<div class="action"><h3>${t('order.nextStep')}</h3>${o.direct === true ? html`<p class="small">${t('order.directDriver', { amount: fmtMoney(dueOf(o) + (o.fineDue || 0)) })}</p>${o.fineDue > 0 ? html`<p class="small no-t"><b>${t('fine.orderFineDriver', { fine: fmtMoney(o.fineDue), total: fmtMoney(dueOf(o) + o.fineDue) })}</b></p>` : ''}${arrivalHtml(o)}` : ''}
           ${nx === 'delivered' && !isP(o) && (state.settings.deliveryCode || o.guard === 'high') && state.settings.deliveryCodeAvailable ? html`<label class="f">${t('code.driverAsk')}<input id="dcode" inputmode="numeric" autocomplete="off" maxlength="7" dir="ltr" placeholder="000 000"></label><label class="row" style="gap:.5rem"><input type="checkbox" id="nocode"> <span class="small">${t('code.noCode')}</span></label>` : ''}
           ${nx === 'picked_up' && !isP(o) && state.settings.startCode && state.settings.deliveryCodeAvailable ? html`<label class="f">${t('code.startAsk')}<input id="scode" inputmode="numeric" autocomplete="off" maxlength="7" dir="ltr" placeholder="000 000"></label><label class="row" style="gap:.5rem"><input type="checkbox" id="snocode"> <span class="small">${t('code.startNoCode')}</span></label>` : ''}
           ${needPhoto ? html`<label class="f">${isP(o) ? t('order.photoOptional') : t(nx === 'picked_up' ? 'order.photoPickup' : 'order.photoDelivery')}<input type="file" id="handover" accept="image/*" capture="environment"></label><p class="hint">${t('order.gpsRule')}</p>` : ''}
@@ -195,7 +212,7 @@ export function renderOrder(el, id) {
     if (s === 'completed') {
       const my = role === 'customer' ? o.rateByCustomer : role === 'driver' ? o.rateByDriver : null;
       return html`<div class="action good"><h3>${t('order.done')}</h3>
-        ${role === 'driver' ? html`<p>${t('order.youEarned')}: <b>${fmtMoney(o.driverNet)}</b> <span class="muted small">(${t('order.commission')}: ${fmtMoney(o.commission)})</span></p>` : ''}
+        ${role === 'driver' && o.direct === true ? html`<p>${t('order.youCollected')}: <b>${fmtMoney(o.directGross || 0)}</b>${o.fineCollected ? html` · ${t('fine.collectedFine')}: <b>${fmtMoney(o.fineCollected)}</b>` : ''}</p>` : role === 'driver' ? html`<p>${t('order.youEarned')}: <b>${fmtMoney(o.driverNet)}</b> <span class="muted small">(${t('order.commission')}: ${fmtMoney(o.commission)})</span></p>` : ''}
         ${role === 'admin' ? html`<p>${t('order.commission')}: <b>${fmtMoney(o.commission)}</b> — ${t('order.driverNet')}: ${fmtMoney(o.driverNet)}</p>` : ''}
         ${role !== 'admin' && !my ? html`<div class="stack"><div>${t('order.rate')}</div><div id="stars" class="stars"></div>${role === 'customer' ? html`<div class="quick-q" id="quickq">${['onTime', 'intact', 'polite'].map((k) => html`<div class="qrow"><span>${t('rate.q.' + k)}</span><span class="yn" role="radiogroup" aria-label="${t('rate.q.' + k)}"><label><input type="radio" name="q_${k}" value="1" checked> ${t('common.yes')}</label><label><input type="radio" name="q_${k}" value="0"> ${t('common.no')}</label></span></div>`)}</div>` : ''}<textarea id="rcomment" maxlength="300" placeholder="${t('order.rateHint')}"></textarea><button class="btn primary" data-act="rate">${t('order.sendRating')}</button></div>`
           : my ? html`<p>${t('order.yourRating')}: ${'★'.repeat(my.stars)}</p>` : ''}
@@ -393,6 +410,15 @@ export function renderOrder(el, id) {
   const actions = {
     accept: () => { if (!isP(order) && !$('#agree', left)?.checked) { toast(t('err.must_agree'), true); return; } return call('orders/accept', { agree: true, loc: cachedPos() }, 'order.acceptedToast'); },
     offer: () => { if (!isP(order) && !$('#agree', left)?.checked) { toast(t('err.must_agree'), true); return; } return call('offers/create', { agree: true, loc: cachedPos(), price: $('#offerPrice', left).value, note: $('#offerNote', left).value }, 'offer.sent'); },
+    async arrived() { // «وصلت»: بنبعت موقع السواق والسيرفر بيتحقق إنه جوه نطاق نقطة الاستلام
+      let loc; try { loc = await getPos(); } catch (e) { toast(errMsg(e), true); return; }
+      await call('orders/arrived', { loc }, 'fine.arrivedToast');
+    },
+    async noshow() {
+      const S = state.settings, a = S.fineArrivedAmount || 0;
+      if (!(await confirmDialog(t('fine.noshowAsk', { amount: fmtMoney(a), credit: fmtMoney(fineCreditC(a)) }), { danger: true, ok: t('fine.noshow') }))) return;
+      await call('orders/noshow', {}, 'fine.noshowToast'); location.hash = '#/driver/dashboard';
+    },
     async mismatch() { // الشحنة مش زي الوصف: السواق يرفض الاستلام ويخد التعويض والباقي يترد للعميل
       const reason = await promptDialog(t('mismatch.ask', { amount: fmtMoney(state.settings.mismatchCompensation || 0) }), { area: true, required: true });
       if (!reason || reason.trim().length < 5) return;
@@ -444,6 +470,11 @@ export function renderOrder(el, id) {
         const d = Math.round((paid * dp) / 100), pl = Math.min(paid - d, Math.round((paid * pp) / 100));
         if (!(await confirmDialog(t('order.cancelFeeAsk', { driver: fmtMoney(d), platform: fmtMoney(pl), refund: fmtMoney(paid - d - pl) }), { danger: true, ok: t('order.cancelFee') }))) return;
         await call('orders/cancel', {}, 'order.cancelFeeToast'); return;
+      }
+      if (role === 'customer' && order.direct === true && ['paid', 'heading_pickup'].includes(order.status)) { // الدفع المباشر: تحذير بالغرامة لو السواق اتحرّك
+        const f = fineStage(order);
+        if (f > 0 && !(await confirmDialog(t('fine.cancelWarn', { amount: fmtMoney(f), hours: fmtNum(state.settings.fineClaimHours || 0) }), { danger: true, ok: t('order.cancel') }))) return;
+        if (f > 0) { await call('orders/cancel', {}, 'order.cancelledToast'); return; }
       }
       if (role === 'customer' && order.escrowStatus === 'held') { // مدفوع مقدماً => استرجاع
         if (!(await confirmDialog(t('order.cancelRefundAsk', { amount: fmtMoney(dueOf(order)) }), { danger: true, ok: t('order.cancelRefund') }))) return;

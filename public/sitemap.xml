@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://ishhanli.pages.dev/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
-  <url><loc>https://ishhanli.pages.dev/drivers</loc><changefreq>daily</changefreq><priority>0.8</priority></url>
+  <url><loc>https://ishhanli.pages.dev/</loc><lastmod>2026-11-02</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>https://ishhanli.pages.dev/how-it-works</loc><lastmod>2026-11-02</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://ishhanli.pages.dev/pricing</loc><lastmod>2026-11-02</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://ishhanli.pages.dev/vehicles</loc><lastmod>2026-11-02</lastmod><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://ishhanli.pages.dev/for-drivers</loc><lastmod>2026-11-02</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://ishhanli.pages.dev/for-companies</loc><lastmod>2026-11-02</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
 </urlset>

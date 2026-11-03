@@ -1,12 +1,13 @@
 import { api, poll } from '../api.js';
 import { gpoll } from '../sync.js';
 import { state } from '../state.js';
-import { t } from '../i18n.js';
+import { t, getLang } from '../i18n.js';
+import { cleanSite, lpFacts, lpSlots, lpText, LP_FIELDS, LP_GROUPS, LP_SECTIONS } from '../landing-content.js';
 import { $, $$, html, raw, render, toast, errMsg, busy, spinner, stamp, orderNo, fmtMoney, fmtNum, fmtDate, fmtDay, ratingText, trustBadge, confirmDialog, promptDialog, openModal, label } from '../ui.js';
 import { hydrate, imgTag } from '../storage.js';
 import { toCsv, downloadCsv, downloadJson } from '../csv.js';
 
-const TABS = ['overview', 'finance', 'payments', 'users', 'joins', 'orders', 'withdrawals', 'disputes', 'refunds', 'reports', 'coupons', 'referrals', 'cod', 'dc', 'settings', 'blacklist', 'audit', 'monitoring'];
+const TABS = ['overview', 'finance', 'payments', 'users', 'joins', 'orders', 'withdrawals', 'disputes', 'refunds', 'reports', 'coupons', 'referrals', 'cod', 'dc', 'fines', 'settings', 'blacklist', 'audit', 'monitoring'];
 const onError = (e) => toast(errMsg(e), true);
 const imgs = (refs) => html`<div class="photos">${(refs || []).filter(Boolean).map((r) => raw(imgTag(r)))}</div>`;
 const roleKey = (u) => (u.accountType === 'company' ? 'auth.roleCompany' : 'auth.role' + (u.role === 'driver' ? 'Driver' : 'Customer'));
@@ -21,7 +22,7 @@ export function renderAdmin(el, tab) {
     const dj = $('[data-tab="joins"] .dot', el); if (dj) { dj.textContent = b.users || 0; dj.hidden = !b.users; } // طلبات الانضمام = الحسابات المعلّقة
   }, { dedupe: true });
   const body = $('#body', el);
-  const stop = { overview, finance, payments, users, joins, orders, withdrawals, disputes, refunds, reports, coupons, referrals, cod, dc, settings, blacklist, audit, monitoring }[tab](body, badges);
+  const stop = { overview, finance, payments, users, joins, orders, withdrawals, disputes, refunds, reports, coupons, referrals, cod, dc, fines, settings, blacklist, audit, monitoring }[tab](body, badges);
   return () => { badges(); stop?.(); };
 }
 
@@ -352,6 +353,41 @@ function disputes(body) {
 
 // =====================================================================  الإعدادات (تسعير + عمولة) — الفحص النهائي على السيرفر
 // =====================================================================  الدفع عند الاستلام (كشوف السواقين + التحويل للمرسلين)
+// =====================================================================  غرامات العملاء وتعويض السواقين: اعتراضات + قرارات + تصحيح
+function fines(body) {
+  let dead = false;
+  const claimRow = (x, actions) => html`<div class="card stack"><div class="row"><b class="grow">${orderNo(x.orderId)} · ${t('fine.kind.' + x.kind)}</b><b>${fmtMoney(x.amount)}</b><span class="${['applied', 'open', 'customer_paid'].includes(x.status) ? 'no-t' : 'ok-t'}"><b>${t('fine.claim.' + x.status)}</b></span></div>
+    <p class="muted small">${t('admin.dc.title')}: <b>${x.driverName || x.driverId}</b> → <b>${x.customerName || x.customerId}</b> · ${fmtDate(x.createdAt)}${x.status === 'applied' ? html` · ${t('fine.driverCredit')}: ${fmtMoney(x.credit)} · ${fmtMoney(x.remaining)}` : ''}</p>${x.objectNote ? html`<p class="small"><b>${t('fine.objectBtn')}:</b> ${x.objectNote}</p>` : ''}
+    ${actions ? html`<div class="row">${actions}</div>` : ''}</div>`;
+  const btns = (x) => html`${x.status === 'applied' ? html`<button class="btn ok sm" data-fn="waive" data-id="${x.id}">${t('admin.fines.waive')}</button><button class="btn ghost sm" data-fn="settle" data-id="${x.id}">${t('admin.fines.settle')}</button>` : ''}${['open', 'customer_paid', 'applied'].includes(x.status) ? html`<button class="btn danger sm" data-fn="reject" data-id="${x.id}">${t('admin.fines.reject')}</button>` : ''}`;
+  async function load() {
+    let d; try { d = await api('admin/fines/list', {}); } catch (e) { if (!dead) render(body, html`<div class="card"><p>${errMsg(e)}</p></div>`); return; }
+    if (dead) return;
+    render(body, html`<div class="card stack"><h3>${t('admin.fines.title')}</h3><p class="hint">${t('admin.fines.hint')}</p></div>
+      <div class="card stack"><h3>${t('admin.fines.objected')}</h3>${d.objected.length ? d.objected.map((x) => claimRow(x, btns(x))) : html`<div class="empty">${t('admin.fines.noObjected')}</div>`}</div>
+      <div class="card stack"><h3>${t('admin.fines.customers')}</h3>${d.customers.length ? d.customers.map((u) => html`<div class="row" style="padding:.4rem 0;border-bottom:1px solid var(--rule)"><b class="grow">${u.name || u.id}<br><span class="muted small" dir="ltr">${u.phone || ''}</span></b><b>${fmtMoney(u.due)}</b><button class="btn sm ghost" data-fn="adjust" data-uid="${u.id}" data-due="${u.due}">${t('admin.fines.adjust')}</button></div>`) : html`<div class="empty">${t('admin.fines.noCustomers')}</div>`}</div>
+      <div class="card stack"><h3>${t('admin.fines.recent')}</h3>${d.recent.length ? d.recent.map((x) => claimRow(x, btns(x))) : html`<div class="empty">${t('fine.none')}</div>`}</div>`);
+    hydrate(body);
+  }
+  const onClick = async (e) => {
+    const b = e.target.closest('[data-fn]'); if (!b) return;
+    try {
+      if (b.dataset.fn === 'adjust') {
+        const v = await promptDialog(t('admin.fines.adjustAsk') + ` (${b.dataset.due})`, { required: true }); if (v === null) return;
+        const due = Number(v); if (!Number.isInteger(due) || due < 0) { toast(t('err.bad_input'), true); return; }
+        const note = await promptDialog(t('admin.fines.adjustNote'), { required: true }); if (!note) return;
+        await api('admin/fines/adjust', { uid: b.dataset.uid, due, note });
+      } else {
+        const note = await promptDialog(t('admin.fines.reasonAsk'), { required: b.dataset.fn === 'reject' }); if (note === null || (b.dataset.fn === 'reject' && !note)) return;
+        await api('admin/fines/decide', { id: b.dataset.id, action: b.dataset.fn, note: note || '' });
+      }
+      toast(t('admin.dc.done')); load();
+    } catch (err) { onError(err); }
+  };
+  body.addEventListener('click', onClick); load();
+  return () => { dead = true; body.removeEventListener('click', onClick); };
+}
+
 // =====================================================================  عمولات السواقين (الدفع المباشر): مراجعة صور التحويل + أرصدة السواقين + تصحيح يدوي
 function dc(body) {
   let dead = false;
@@ -367,7 +403,7 @@ function dc(body) {
         <div class="row"><button class="btn ok" data-dc="confirm" data-id="${p.id}" data-amount="${p.amount}" data-gross="${p.gross}">${t('admin.dc.confirm')}</button><button class="btn danger" data-dc="reject" data-id="${p.id}">${t('admin.dc.reject')}</button></div></div>`) : html`<div class="empty">${t('admin.dc.none')}</div>`}</div>
       <div class="card stack"><h3>${t('admin.dc.drivers')}</h3>
       ${d.drivers.length ? d.drivers.map((x) => html`<div class="row" style="padding:.4rem 0;border-bottom:1px solid var(--rule)"><b class="grow">${x.name || x.id}${x.blocked ? html` <span class="no-t"><b>${t('admin.dc.blocked')}</b></span>` : ''}<br><span class="muted small" dir="ltr">${x.phone || ''}</span></b>
-        <span class="small">${t('admin.dc.earned')}: <b>${fmtMoney(x.gross)}</b> · ${t('admin.dc.due')}: <b>${fmtMoney(x.due)}</b></span><button class="btn sm ghost" data-dc="adjust" data-uid="${x.id}" data-gross="${x.gross}">${t('admin.dc.adjust')}</button></div>`) : html`<div class="empty">${t('admin.dc.noDrivers')}</div>`}</div>
+        <span class="small">${t('admin.dc.earned')}: <b>${fmtMoney(x.gross)}</b> · ${t('admin.dc.due')}: <b>${fmtMoney(x.due)}</b>${x.km > 0 ? html` · ${t('admin.dc.km')}: <b>${fmtNum(x.km)}</b>${x.kmFee > 0 ? html` (${fmtMoney(x.kmFee)})` : ''}` : ''}${x.kmTotal > 0 ? html` · ${t('admin.dc.kmTotal')}: <b>${fmtNum(x.kmTotal)}</b>` : ''}${x.credit > 0 ? html` · ${t('admin.dc.credit')}: <b>${fmtMoney(x.credit)}</b>` : ''}${x.finesHeld > 0 ? html` · ${t('admin.dc.held')}: <b>${fmtMoney(x.finesHeld)}</b>` : ''}</span><button class="btn sm ghost" data-dc="adjust" data-uid="${x.id}" data-gross="${x.gross}">${t('admin.dc.adjust')}</button></div>`) : html`<div class="empty">${t('admin.dc.noDrivers')}</div>`}</div>
       <div class="card stack"><h3>${t('admin.dc.recent')}</h3>
       ${d.recent.length ? d.recent.map((p) => html`<div class="row small"><span class="grow"><b>${p.name || p.driverId}</b> · ${fmtMoney(p.amount)} · ${t('dc.method.' + p.method)} · <bdi>${p.reference}</bdi> · ${fmtDate(p.decidedAt || p.createdAt)}${p.note ? ' · ' + p.note : ''}</span><span class="${p.status === 'paid' ? 'ok-t' : 'no-t'}"><b>${t('dc.st.' + p.status)}</b></span></div>`) : html`<div class="empty">${t('admin.dc.none')}</div>`}</div>`);
     hydrate(body);
@@ -450,6 +486,29 @@ function referrals(body) {
   }, { dedupe: true, onError });
 }
 
+// ---- واجهة الموقع (الصفحة الرئيسية): التصميم الفعّال، الوضع الافتراضي، الأقسام، النصوص، السيو ----
+const SITE_SEC = { estimate: ['حاسبة السعر', 'Price estimator'], services: ['الخدمات', 'Services'], trust: ['الثقة', 'Trust'], join: ['السواقين والشركات', 'Drivers and companies'], faq: ['الأسئلة الشائعة', 'FAQ'], contact: ['التواصل (بيظهر لو فيه بيانات)', 'Contact (shown when data exists)'] };
+export function siteCard(S) {
+  const en = getLang() === 'en', site = cleanSite(S.site), L = (ar, e) => (en ? e : ar);
+  const slots = lpSlots(lpFacts(S, { DELIVERY_CODE_SECRET: S.deliveryCodeAvailable }));
+  const dflt = (id) => (slots[id] ? lpText(slots[id].key, slots[id].vars, 'ar').replace(/\*/g, '') : '');
+  return html`<div class="card stack" id="siteCard"><h3>${L('واجهة الموقع (الصفحة الرئيسية)', 'Website front page')}</h3>
+    <p class="hint">${L('اختار التصميم الفعّال ووضعه الافتراضي، واظهر/اخفي الأقسام، وعدّل النصوص. الحقل الفاضي = النص التلقائي من النظام (وبيتغيّر لوحده لو غيّرت إعدادات الدفع أو الخدمات). التعديل بيظهر خلال دقيقة تقريباً.', 'Choose the active design and its default mode, show or hide sections and edit texts. An empty field uses the automatic text from the system (it follows your payment and service settings). Changes show within about a minute.')}</p>
+    <div class="grid-3"><label class="f">${L('التصميم الفعّال', 'Active design')}<select name="site.design"><option value="a" ${site.design === 'a' ? 'selected' : ''}>${L('التصميم 1 (فاتح)', 'Design 1 (light)')}</option><option value="b" ${site.design === 'b' ? 'selected' : ''}>${L('التصميم 2 (ليلي)', 'Design 2 (dark)')}</option></select></label>
+      <label class="f">${L('الوضع الافتراضي للزائر', 'Default visitor mode')}<select name="site.mode"><option value="auto" ${site.mode === 'auto' ? 'selected' : ''}>${L('تلقائي (وضع التصميم الأصلي)', 'Auto (the design’s own mode)')}</option><option value="light" ${site.mode === 'light' ? 'selected' : ''}>${L('نهاري', 'Light')}</option><option value="dark" ${site.mode === 'dark' ? 'selected' : ''}>${L('ليلي', 'Dark')}</option></select></label>
+      <label class="f">${L('رابط اللوجو (https، اختياري)', 'Logo URL (https, optional)')}<input name="site.logoUrl" dir="ltr" maxlength="300" value="${site.logoUrl}" placeholder="/img/logo.png"></label></div>
+    <p class="hint"><a href="/?preview=a" target="_blank" rel="noopener">${L('معاينة التصميم 1', 'Preview design 1')}</a> · <a href="/?preview=b" target="_blank" rel="noopener">${L('معاينة التصميم 2', 'Preview design 2')}</a> ${L('(من غير تفعيل، وبدون فهرسة)', '(without activating; not indexed)')}</p>
+    <div class="row" style="flex-wrap:wrap;gap:1rem">${LP_SECTIONS.map((id) => html`<label class="row"><input type="checkbox" name="site.show.${id}" ${site.hide.includes(id) ? '' : 'checked'}> <span>${L(SITE_SEC[id][0], SITE_SEC[id][1])}</span></label>`)}</div>
+    <div class="grid-2"><label class="f">${L('عنوان الصفحة في جوجل (حتى 70 حرف)', 'Google title (up to 70 chars)')}<input name="site.seo.title" maxlength="70" value="${site.seo.title}"></label>
+      <label class="f">${L('وصف الصفحة في جوجل (حتى 200 حرف)', 'Google description (up to 200 chars)')}<input name="site.seo.description" maxlength="200" value="${site.seo.description}"></label></div>
+    <div class="grid-2"><label class="f">${L('رمز توثيق Google Search Console (قيمة content فقط)', 'Google Search Console verification token (the content value only)')}<input name="site.seo.google" dir="ltr" maxlength="100" value="${site.seo.google}"></label>
+      <label class="f">${L('رمز توثيق Bing Webmaster (قيمة content فقط)', 'Bing Webmaster verification token (the content value only)')}<input name="site.seo.bing" dir="ltr" maxlength="100" value="${site.seo.bing}"></label></div>
+    ${LP_GROUPS.map(([g, ar, e]) => html`<details><summary>${L(ar, e)}</summary><div class="stack" style="margin-top:.6rem">${LP_FIELDS.filter((x) => x.group === g).map((x) => html`<label class="f">${L(x.ar, x.en)}${x.long ? html`<textarea name="site.t.${x.id}" rows="3" maxlength="600" placeholder="${dflt(x.id)}">${site.texts[x.id] || ''}</textarea>` : html`<input name="site.t.${x.id}" maxlength="160" placeholder="${dflt(x.id)}" value="${site.texts[x.id] || ''}">`}</label>`)}</div></details>`)}
+    <p class="hint">${L('نصيحة: حط *كلمة* بين نجمتين لإبرازها. النص المعدّل بيظهر بنفس الشكل في العربي والإنجليزي.', 'Tip: wrap *a word* in stars to highlight it. An edited text is shown as typed in both languages.')}</p></div>`;
+}
+export const readSite = (f) => ({ design: f.elements['site.design'].value, mode: f.elements['site.mode'].value, logoUrl: f.elements['site.logoUrl'].value.trim(), hide: LP_SECTIONS.filter((id) => !f.elements['site.show.' + id].checked),
+  seo: { title: f.elements['site.seo.title'].value.trim(), description: f.elements['site.seo.description'].value.trim(), google: f.elements['site.seo.google'].value.trim(), bing: f.elements['site.seo.bing'].value.trim() }, texts: Object.fromEntries(LP_FIELDS.map((x) => [x.id, f.elements['site.t.' + x.id].value.trim()])) });
+
 function settings(body) {
   const S = state.settings;
   const kvRow = (k, v = {}, seats = false) => html`<tr><td><input data-k value="${k}" ${k ? 'readonly' : ''} placeholder="key" style="min-width:110px"></td><td><input data-ar value="${v.ar || ''}"></td><td><input data-en value="${v.en || ''}" dir="ltr"></td><td><input data-m type="number" step="0.05" min="0.1" value="${v.mult ?? 1}" style="width:90px"></td>${seats ? html`<td><input data-seats type="number" min="1" max="100" value="${v.seats ?? 4}" style="width:80px"></td>` : ''}<td><button type="button" class="btn ghost sm" data-del>✕</button></td></tr>`;
@@ -474,6 +533,15 @@ function settings(body) {
         <label class="f">${t('admin.s.codPeriod')}<input type="number" name="codPeriodDays" min="1" max="31" step="1" inputmode="numeric" value="${S.codPeriodDays ?? 7}" required></label>
         <label class="f">${t('admin.s.codGrace')}<input type="number" name="codGraceDays" min="0" max="30" step="1" inputmode="numeric" value="${S.codGraceDays ?? 3}" required></label></div>
       <label class="f">${t('admin.s.codScope')}<select name="codBlockScope"><option value="cod" ${S.codBlockScope !== 'all' ? 'selected' : ''}>${t('admin.s.codScope.cod')}</option><option value="all" ${S.codBlockScope === 'all' ? 'selected' : ''}>${t('admin.s.codScope.all')}</option></select></label></div>
+    <div class="card stack"><h3>${t('admin.vp.title')}</h3><p class="hint">${t('admin.vp.hint')}</p>
+      ${['pickup', 'half_ton', 'truck', 'jumbo'].map((k) => { const cur = S.vehiclePricing?.[k] || {}, gz = S.sizes?.[S.vehicleGuide?.[k]?.size]; return html`<div class="stack" style="gap:.3rem;border-top:1px solid var(--rule);padding-top:.5rem"><b>${t('vehicle.' + k)}</b>
+        <p class="hint">${t('admin.vp.current', { perKm: fmtNum((S.perKm || 0) * Number(gz?.mult || 1)), min: fmtNum(S.minPrice || 0) })}</p>
+        <div class="grid-2">${[['base', cur.base], ['perKm', cur.perKm], ['minPrice', cur.minPrice], ['kmFee', cur.kmFee]].map(([f, v]) => html`<label class="f">${t('admin.vp.' + f)}<input type="number" name="vp.${k}.${f}" min="0" max="${f === 'perKm' || f === 'kmFee' ? 10000 : 1000000}" step="0.1" inputmode="decimal" value="${v ?? 0}" required></label>`)}</div></div>`; })}
+      <label class="f">${t('admin.s.dcPerKm')}<input type="number" name="dcPerKm" min="0" max="10000" step="0.1" inputmode="decimal" value="${S.dcPerKm ?? 0}" required></label>
+      <label class="row"><input type="checkbox" name="fineCreditToWallet" ${S.fineCreditToWallet === true ? 'checked' : ''}> <span>${t('admin.s.fineCreditToWallet')}</span></label></div>
+    <div class="card stack"><h3>${t('admin.fines.settingsTitle')}</h3><p class="hint">${t('admin.fines.settingsHint')}</p>
+      <label class="row"><input type="checkbox" name="finesEnabled" ${S.finesEnabled === true ? 'checked' : ''}> <span>${t('admin.s.finesEnabled')}</span></label>
+      <div class="grid-2">${[['fineFreeCancelMin', 1440, 1], ['fineWaitMin', 1440, 1], ['fineEnRouteAmount', 100000, 1], ['fineArrivedAmount', 100000, 1], ['fineClaimHours', 720, 1], ['fineObjectHours', 720, 1], ['fineDriverSharePct', 99, 0.5], ['fineCollectorPct', 50, 0.5], ['fineMonthlyCap', 1000000, 1], ['fineMaxClaimsPerDay', 1000, 1], ['fineBlockLimit', 1000000, 1], ['samePickupMeters', 5000, 1], ['samePickupMax', 50, 1]].map(([k, max, step]) => html`<label class="f">${t('admin.s.' + k)}<input type="number" name="${k}" min="0" max="${max}" step="${step}" inputmode="decimal" value="${S[k] ?? 0}" required></label>`)}</div></div>
     <div class="card stack"><h3>${t('admin.radius.title')}</h3><p class="hint">${t('admin.radius.hint')}</p>
       <label class="f">${t('admin.s.jobsRadiusKm')}<input type="number" name="jobsRadiusKm" min="0" max="500" step="0.5" inputmode="decimal" value="${S.jobsRadiusKm ?? 15}" required></label></div>
     <div class="card stack"><h3>${t('admin.dc.settingsTitle')}</h3><p class="hint">${t('admin.dc.settingsHint')}</p>
@@ -508,6 +576,7 @@ function settings(body) {
     <div class="card stack"><h3>${t('admin.company.title')}</h3><p class="hint">${t('admin.company.hint')}</p>
       ${['name', 'phone', 'whatsapp', 'email', 'address', 'hours', 'facebook', 'instagram', 'tiktok', 'youtube'].map((k) => html`<label class="f">${t('admin.company.' + k)}<input name="company.${k}" maxlength="160" ${['phone', 'whatsapp', 'email', 'facebook', 'instagram', 'tiktok', 'youtube'].includes(k) ? 'dir="ltr"' : ''} value="${S.company?.[k] || ''}"></label>`)}
       <label class="f">${t('admin.company.about')}<textarea name="company.about" rows="4" maxlength="800">${S.company?.about || ''}</textarea></label></div>
+    ${siteCard(S)}
     <div class="card stack"><h3>${t('admin.instapay')}</h3><div class="grid-2"><label class="f">${t('admin.s.handle')}<input name="instapay.handle" dir="ltr" value="${S.instapay?.handle || ''}"></label><label class="f">${t('admin.s.holder')}<input name="instapay.name" value="${S.instapay?.name || ''}"></label></div></div>
     <div class="card stack"><h3>${t('admin.profileEdit')}</h3><p class="hint">${t('admin.profileEditHint')}</p>
       <label class="row"><input type="checkbox" name="profileEditEnabled" ${S.profileEditEnabled !== false ? 'checked' : ''}> <span>${t('admin.s.profileEditEnabled')}</span></label>
@@ -547,10 +616,13 @@ function settings(body) {
           cancelPaidDriverPct: n('cancelPaidDriverPct'), cancelPaidPlatformPct: n('cancelPaidPlatformPct'), cancelHeadingDriverPct: n('cancelHeadingDriverPct'), cancelHeadingPlatformPct: n('cancelHeadingPlatformPct'),
           newDriver: { orders: n('newDriver.orders'), commissionPct: n('newDriver.commissionPct') },
           instapay: { handle: f.elements['instapay.handle'].value.trim(), name: f.elements['instapay.name'].value.trim() },
+          site: readSite(f),
           company: Object.fromEntries(['name', 'about', 'phone', 'whatsapp', 'email', 'address', 'hours', 'facebook', 'instagram', 'tiktok', 'youtube'].map((k) => [k, f.elements['company.' + k].value.trim()])),
           categories: readKv('categories'), sizes: readKv('sizes'),
           companionAsk: f.elements.companionAsk.checked, vehicleGuideOn: f.elements.vehicleGuideOn.checked,
           codEnabled: f.elements.codEnabled.checked, codCommissionPct: n('codCommissionPct'), codMaxAmount: n('codMaxAmount'), codPeriodDays: n('codPeriodDays'), codGraceDays: n('codGraceDays'), codBlockScope: f.elements.codBlockScope.value,
+          dcPerKm: n('dcPerKm'), fineCreditToWallet: f.elements.fineCreditToWallet.checked, vehiclePricing: Object.fromEntries(['pickup', 'half_ton', 'truck', 'jumbo'].map((k) => [k, Object.fromEntries(['base', 'perKm', 'minPrice', 'kmFee'].map((f) => [f, n(`vp.${k}.${f}`)]))])),
+          finesEnabled: f.elements.finesEnabled.checked, ...Object.fromEntries(['fineFreeCancelMin', 'fineWaitMin', 'fineEnRouteAmount', 'fineArrivedAmount', 'fineClaimHours', 'fineObjectHours', 'fineDriverSharePct', 'fineCollectorPct', 'fineMonthlyCap', 'fineMaxClaimsPerDay', 'fineBlockLimit', 'samePickupMeters', 'samePickupMax'].map((k) => [k, n(k)])),
           dcEnabled: f.elements.dcEnabled.checked, dcPct: n('dcPct'), dcLimit: n('dcLimit'), dcAutoCompleteHours: n('dcAutoCompleteHours'), jobsRadiusKm: n('jobsRadiusKm'), dcPay: { wallet: f.elements['dcPay.wallet'].value.trim(), walletName: f.elements['dcPay.walletName'].value.trim() },
           vehicleGuide: Object.fromEntries(['pickup', 'half_ton', 'truck', 'jumbo'].map((k) => [k, { maxKg: n(`vg.${k}.maxKg`), size: f.elements[`vg.${k}.size`].value }])),
           passengersEnabled: f.elements.passengersEnabled.checked, passengerClasses: readKv('passengerClasses'),

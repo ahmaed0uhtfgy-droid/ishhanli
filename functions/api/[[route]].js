@@ -4,7 +4,7 @@ import { HttpError, verifyIdToken, newId } from '../_lib/core.js';
 import { F, STAMP_KINDS, STAMP_PATH, now, rateLimit, rateTake, walletCredit, walletTx, userOut, fleetOut, withdrawalOut, txOut, disputeOut, loadOrder, hydrateOrder, orderUpdate, orderOut, auditLog } from '../_lib/db.js';
 import { randomBase32, verifyTotp, otpauthURL } from '../_lib/totp.js';
 import { loadSettings, clearSettingsCache, sanitizeSettings, distanceKm, calcPrice, calcPassengerPrice, effectiveCommissionPct, canServe, cancelSplit, couponDiscount, haversineM, split, dueOf, lateKinds, guardOf, codPeriodOf, codPeriodBounds, codSplit, codStatements, codBlocked } from '../_lib/logic.js';
-import { dcDue, dcBlocked } from '../_lib/logic.js';
+import { dcDue, dcBlocked, dcPayable, dcFeesOn, kmFeeOf, vehicleOfSize, fineCredit } from '../_lib/logic.js';
 import { saveFile, ownFiles, readFile } from '../_lib/files.js';
 import { notify, dispatchNewOrder, adminIds, orderNo, pushEnabled } from '../_lib/push.js';
 import { trustOf } from '../_lib/trust.js';
@@ -75,9 +75,14 @@ const codGate = async (env, uid, s, o) => {
 // ----- نظام الدفع المباشر + عمولة المنصة (dc) -----
 /** السواق اللي إجمالي مكسبه غير المسدَّد وصل للحد (أو عدّاه) ما ياخدش طلبات جديدة لحد ما يسدّد. الطلبات الشغّالة بتكمّل عادي. النظام مقفول أو النسبة 0 = مفيش توقيف. */
 const dcGate = async (env, uid, s) => {
-  if (!(s.dcEnabled === true && s.dcPct > 0)) return;
+  if (!dcFeesOn(s)) return; // مفيش رسوم (نسبة أو كيلومتر) = مفيش توقيف
   if (dcBlocked((await F.get(env, `users/${uid}`))?.dc_gross || 0, s)) throw new HttpError(403, 'dc_blocked');
 };
+// ----- تعويض السواق وغرامة العميل (الدفع المباشر) -----
+const parseJson = (v) => { try { const a = JSON.parse(v || '[]'); return Array.isArray(a) ? a : []; } catch { return []; } };
+const fineOn = (s) => s.finesEnabled === true && s.dcEnabled === true; // الغرامات مرتبطة بنظام الدفع المباشر
+const curFine = async (env, uid) => Math.max(0, Math.floor((await F.get(env, `users/${uid}`))?.fine_due || 0));
+const claimOut = (r) => ({ id: r.id, orderId: r.order_id, driverId: r.driver_id, driverName: r.driver_name, customerId: r.customer_id, customerName: r.customer_name, kind: r.kind, amount: r.amount, credit: r.credit || 0, remaining: r.remaining || 0, status: r.status, createdAt: r.created_at, applyAt: r.apply_at, appliedAt: r.applied_at || null, declaredAt: r.declared_at || null, objected: r.objected === true, objectNote: r.object_note || null, note: r.note || null });
 /** موقع السواق: اللي بعته مع الطلب لو صالح، وإلا آخر موقع متسجّل في «متاح لاستقبال الطلبات» */
 const driverLoc = async (c) => {
   if (c.body?.loc) { try { return point(c.body.loc, false); } catch { /* موقع غلط: نرجع لآخر موقع معروف */ } }
@@ -92,7 +97,7 @@ const radiusGate = async (c, s, o) => {
 };
 const s0Block = (s, row) => dcBlocked(row?.dc_gross || 0, s);
 const dcRefKey = (method, ref) => sha256hex(`${method}:${String(ref).toLowerCase().replace(/\s+/g, '')}`); // نفس رقم المرجع ما يتستخدمش مرتين (منع تكرار إثبات التحويل)
-const dcPayOut = (r) => ({ id: r.id, driverId: r.driver_id, name: r.driver_name, gross: r.gross, pct: r.pct, amount: r.amount, method: r.method, reference: r.reference, proof: r.proof, status: r.status, note: r.note, createdAt: r.created_at, decidedAt: r.decided_at });
+const dcPayOut = (r) => ({ id: r.id, driverId: r.driver_id, name: r.driver_name, gross: r.gross, pct: r.pct, amount: r.amount, commission: r.commission ?? r.amount, km: r.km || 0, kmFee: r.km_fee || 0, creditUsed: r.credit_used || 0, finesHeld: r.fines_held || 0, method: r.method, reference: r.reference, proof: r.proof, status: r.status, note: r.note, createdAt: r.created_at, decidedAt: r.decided_at });
 const offerId = (v) => { const s = String(v ?? ''); const m = /^([A-Za-z0-9]{10,40})_([A-Za-z0-9_-]{4,128})$/.exec(s); if (!m) throw new HttpError(400, 'bad_id'); return { key: s, orderId: m[1], uid: m[2] }; };
 const byDesc = (f) => (a, b) => (b[f] ?? 0) - (a[f] ?? 0);
 const RL_SKIP = new Set(['sync', 'me', 'settings', 'health']); // مسارات كتير ومتكررة (Polling) — ما تتحسبش في الحدّ المركزي
@@ -156,15 +161,31 @@ async function releaseStmts(env, o, s, by, note) {
   ] };
 }
 
-// إكمال طلب الدفع المباشر لما السواق يأكّد التسليم: مفيش ضمان ولا محفظة (العميل دفع للسواق مباشرة). بنسجّل مكسب السواق في دفتر العمولة (لو النظام شغّال والنسبة > 0).
+// إكمال طلب الدفع المباشر (تأكيد السواق/العميل أو الإكمال التلقائي): مفيش ضمان ولا محفظة (العميل دفع للسواق مباشرة). بنسجّل مكسب السواق في دفتر العمولة (لو النظام شغّال والنسبة > 0).
 // مستند الدفتر معرّفه = رقم الطلب و create بيفشل لو موجود => الطلب ما يتحسبش مرتين.
-function directDoneStmts(env, o, s, patch, log) {
-  const gross = collectedOf(o), rec = s.dcEnabled === true && s.dcPct > 0 && gross > 0, t = now();
+// غرامة العميل اللي السواق حصّلها مع الطلب (الرقم اللي كان شايفه وقت القبول، بحد أقصى المتبقي على العميل فعلاً) بتتوزّع على مطالباته من الأقدم،
+// وبتبقى مبلغ مطلوب تحويله للمنصة (dc_fines_held) بعد نسبة المحصِّل (fineCollectorPct).
+async function directDoneStmts(env, o, s, patch, log) {
+  const gross = collectedOf(o), t = now(), km = Math.max(0, Math.round((Number(o.distanceKm) || 0) * 10) / 10), vk = o.vehiclePick || vehicleOfSize(s, o.size);
+  const kmFee = kmFeeOf(s, km, vk), rec = dcFeesOn(s) && (gross > 0 || kmFee > 0); // بنسجّل في الدفتر لو فيه رسوم (نسبة أو كيلومترات)
+  let take = 0, claims = [];
+  if ((o.fineDue || 0) > 0) {
+    take = Math.min(Math.floor(o.fineDue), await curFine(env, o.customerId));
+    if (take > 0) claims = (await F.query(env, 'fines', { eq: { customer_id: o.customerId }, limit: 50 })).filter((x) => x.status === 'applied' && (x.remaining || 0) > 0).sort((x, y) => (x.applied_at || 0) - (y.applied_at || 0));
+  }
+  const keep = Math.floor((take * (s.fineCollectorPct || 0)) / 100), owe = take - keep, claimWrites = [];
+  let left = take;
+  for (const x of claims) {
+    if (left <= 0) break;
+    const use = Math.min(left, x.remaining); left -= use;
+    claimWrites.push(F.patch(`fines/${x.id}`, { remaining: x.remaining - use, status: x.remaining - use === 0 ? 'collected' : 'applied', collected_by: JSON.stringify([...parseJson(x.collected_by), { order_id: o.id, driver_id: o.driverId, amount: use, at: t }]) }, x._ut)); // المصفوفات بتتخزّن كنص JSON
+  }
   return [
-    ...orderUpdate(env, o, { ...patch, status: 'completed', completedAt: t, directGross: gross }, log),
-    F.inc(`users/${o.driverId}`, { completed_orders: 1, ...(rec ? { dc_gross: gross } : {}) }),
-    F.inc(`users/${o.customerId}`, { completed_orders: 1 }),
-    ...(rec ? [F.create(`dc_ledger/${o.driverId}/entries/${o.id}`, { id: o.id, order_id: o.id, driver_id: o.driverId, gross, at: t })] : []),
+    ...orderUpdate(env, o, { ...patch, status: 'completed', completedAt: t, directGross: gross, directKm: km, ...(rec && kmFee > 0 ? { kmFee } : {}), ...(take > 0 ? { fineCollected: take, fineKept: keep } : {}) }, log),
+    F.inc(`users/${o.driverId}`, { completed_orders: 1, km_total: km, ...(rec ? { dc_gross: gross, dc_km: km, dc_kmfee: kmFee } : {}), ...(owe > 0 ? { dc_fines_held: owe } : {}) }),
+    F.inc(`users/${o.customerId}`, { completed_orders: 1, ...(take > 0 ? { fine_due: -take } : {}) }),
+    ...claimWrites,
+    ...(rec ? [F.create(`dc_ledger/${o.driverId}/entries/${o.id}`, { id: o.id, order_id: o.id, driver_id: o.driverId, gross, km, km_fee: kmFee, vehicle: vk || null, at: t })] : []),
   ];
 }
 
@@ -249,10 +270,38 @@ async function sweepExpired(env) {
     const stale = moving.filter((o) => o.direct === true && ['picked_up', 'in_transit'].includes(o.status) && (o.pickedUpAt || o.startedAt) && (o.pickedUpAt || o.startedAt) < cutD).slice(0, 10);
     for (const o of stale) { staleIds.add(o.id); await autoDirectDone(env, o, s).catch((e) => console.error('auto_direct_failed', e?.message)); }
   }
+  if (fineOn(s)) { // مطالبات التعويض اللي مهلتها خلصت من غير تسوية مباشرة: بتتطبّق (إعفاء للسواق + غرامة على العميل)
+    const t0 = now(), due = [...(await F.query(env, 'fines', { eq: { status: 'open' }, limit: 20 })), ...(await F.query(env, 'fines', { eq: { status: 'customer_paid' }, limit: 20 }))].filter((x) => (x.apply_at || 0) <= t0).slice(0, 10);
+    for (const cl of due) await applyClaim(env, cl, s, 'system').catch((e) => console.error('apply_claim_failed', e?.message));
+  }
   for (const o of moving) if (!staleIds.has(o.id)) await watchOrder(env, o, s).catch((e) => console.error('watch_failed', e?.message));
 }
+/** مطالبة تعويض على العميل: مفتوحة لحد ما السواق والعميل يتسوّوا مباشرة أو المهلة تخلص فتتطبّق. بترجع { stmt } أو { limited } (حد المطالبات اليومي) أو {} (مفيش مبلغ) */
+async function claimStmt(env, o, kind, amount, s) {
+  if (!(amount > 0)) return {};
+  const t = now(), mine = await F.query(env, 'fines', { eq: { driver_id: o.driverId }, limit: 100 });
+  if (s.fineMaxClaimsPerDay > 0 && mine.filter((x) => (x.created_at || 0) > t - 86400000).length >= s.fineMaxClaimsPerDay) return { limited: true };
+  return { stmt: F.create(`fines/${o.id}`, { id: o.id, order_id: o.id, driver_id: o.driverId, driver_name: o.driverName || null, customer_id: o.customerId, customer_name: o.customerName || null, kind, amount, credit: 0, remaining: 0, status: 'open', created_at: t, apply_at: t + s.fineClaimHours * 3600000, applied_at: null, declared_at: null, objected: false, object_note: null, note: null }) };
+}
+/** تطبيق المطالبة: المنصة بتتنازل عن جزء من عمولة السواق (نسبة من الغرامة، بسقف شهري) والغرامة الكاملة بتتسجّل على العميل. الشرط الذرّي على المطالبة بيمنع التطبيق مرتين. */
+async function applyClaim(env, cl, s, by) {
+  const t = now();
+  let credit = fineCredit(cl.amount, s.fineDriverSharePct);
+  if (credit > 0 && s.fineMonthlyCap > 0) {
+    const used = (await F.query(env, 'fines', { eq: { driver_id: cl.driver_id }, limit: 100 })).filter((x) => x.id !== cl.id && (x.credit || 0) > 0 && (x.applied_at || 0) > t - 30 * 86400000).reduce((a, x) => a + x.credit, 0);
+    credit = Math.max(0, Math.min(credit, s.fineMonthlyCap - used));
+  }
+  await F.run(env, [
+    F.patch(`fines/${cl.id}`, { status: 'applied', credit, credit_mode: s.fineCreditToWallet === true ? 'wallet' : 'commission', remaining: cl.amount, applied_at: t, applied_by: by }, cl._ut),
+    F.inc(`users/${cl.customer_id}`, { fine_due: cl.amount }),
+    ...(credit > 0 ? [s.fineCreditToWallet === true ? walletCredit(cl.driver_id, credit) : F.inc(`users/${cl.driver_id}`, { dc_credit: credit })] : []),
+  ]);
+  await notify(env, [cl.customer_id], 'fine_applied', { amount: cl.amount, no: orderNo(cl.order_id) }, { url: '/#/customer' }).catch(() => {});
+  if (credit > 0) await notify(env, [cl.driver_id], 'credit_granted', { credit, no: orderNo(cl.order_id) }, { url: '/#/driver/dashboard' }).catch(() => {});
+  return { credit };
+}
 async function autoDirectDone(env, o, s) {
-  await F.run(env, directDoneStmts(env, o, s, { deliveredAt: now(), deliveryVerified: 'auto' }, L('completed', 'system', { note: 'direct_auto' }))); // الشرط الذرّي في orderUpdate بيمنع التكرار لو اتأكد في نفس اللحظة
+  await F.run(env, await directDoneStmts(env, o, s, { deliveredAt: now(), deliveryVerified: 'auto' }, L('completed', 'system', { note: 'direct_auto' }))); // الشرط الذرّي في orderUpdate بيمنع التكرار لو اتأكد في نفس اللحظة
   const v = { no: orderNo(o.id), hours: s.dcAutoCompleteHours };
   await notify(env, [o.customerId], 'direct_auto', v, { url: `/#/order/${o.id}` }).catch(() => {});
   await notify(env, [o.driverId], 'direct_auto', v, { url: '/#/driver/dashboard' }).catch(() => {});
@@ -434,7 +483,8 @@ const ROUTES = {
       if (!s.passengersEnabled) throw new HttpError(403, 'service_disabled');
       out = { distanceKm: d.km, source: d.source, ...calcPassengerPrice(s, Math.max(d.km, 0.5), c.body.vehicleClass) };
     } else {
-      out = { distanceKm: d.km, source: d.source, ...calcPrice(s, Math.max(d.km, 0.5), c.body.category, c.body.size) };
+      const qv = s.vehicleGuideOn !== false && c.body.vehiclePick && s.vehicleGuide?.[String(c.body.vehiclePick)]?.size === c.body.size ? String(c.body.vehiclePick) : null; // العربية المختارة (لو متطابقة مع الحجم) بتحدد التسعير
+      out = { distanceKm: d.km, source: d.source, ...calcPrice(s, Math.max(d.km, 0.5), c.body.category, c.body.size, qv) };
     }
     const code = normCode(c.body.coupon); // الكوبون اختياري: بنرجّع الخصم أو سبب رفضه (من غير ما نمنع عرض السعر)
     if (code && s.dcEnabled) out = { ...out, couponError: 'coupon_unavailable' }; // الدفع المباشر: مفيش كوبونات (الخصم كان هيتحمله السواق)
@@ -604,13 +654,26 @@ const ROUTES = {
   async 'orders/create'(c) {
     const u = await need(c, ['customer']);
     const s = await loadSettings(c.env), b = c.body;
-    const mineOpen = (await F.query(c.env, 'orders', { eq: { customer_id: c.uid }, limit: 100 })).filter((r) => ['open', 'accepted', 'payment_review', 'awaiting_payment'].includes(r.status)).length;
+    if (u.role === 'customer' && !u.phone) throw new HttpError(400, 'phone_required'); // رقم التواصل إجباري (السواق محتاج يوصل للعميل)
+    const mine = await F.query(c.env, 'orders', { eq: { customer_id: c.uid }, limit: 100 });
+    const mineOpen = mine.filter((r) => ['open', 'accepted', 'payment_review', 'awaiting_payment'].includes(r.status)).length;
     if (mineOpen >= 10) throw new HttpError(429, 'too_many_open');
     const trip = b.service === 'passengers'; // نقل ركاب (مقفول افتراضياً) أو شحن بضاعة/توصيل
     if (trip && !s.passengersEnabled) throw new HttpError(403, 'service_disabled');
     const pickup = point(b.pickup), dropoff = point(b.dropoff);
     const photos = fileRefs(b.photos ?? [], 5, trip ? 0 : 1);
     await ownFiles(c.env, c.uid, photos);
+    // طلبين مع بعض من نفس النقطة: حد أقصى للطلبات الشغّالة (قبل الاستلام) من نفس العميل جوه النطاق — عشان سواقين ما يروحوش لنفس المكان على الفاضي
+    if (s.samePickupMax > 0 && s.samePickupMeters > 0) {
+      const near = mine.filter((r) => ['open', 'accepted', 'awaiting_payment', 'paid', 'heading_pickup'].includes(r.status)).map(hydrateOrder).filter((x) => x.pickup && haversineM(x.pickup, pickup) <= s.samePickupMeters).length;
+      if (near >= s.samePickupMax) throw new HttpError(409, 'same_pickup_limit');
+    }
+    let fineDue = 0; // غرامات على العميل بتتحصّل مع سعر الطلب (السواق بيشوفها قبل ما يقبل)
+    if (fineOn(s)) {
+      fineDue = await curFine(c.env, c.uid);
+      if (s.fineBlockLimit > 0 && fineDue >= s.fineBlockLimit) throw new HttpError(403, 'fine_blocked');
+      if (fineDue > 0 && mine.some((r) => ['open', 'accepted', 'awaiting_payment', 'paid', 'heading_pickup', 'picked_up', 'in_transit'].includes(r.status))) throw new HttpError(409, 'fine_one_order'); // الغرامة بتتحصّل مع طلب واحد بس
+    }
     const d = await distanceKm(pickup, dropoff, s), km = Math.max(d.km, 0.5);
     let price, spec;
     if (trip) {
@@ -620,10 +683,10 @@ const ROUTES = {
       if (b.codAmount !== undefined && b.codAmount !== null && b.codAmount !== '') throw new HttpError(400, 'bad_cod');
       spec = { service: 'passengers', vehicleClass: b.vehicleClass, passengers: int(b.passengers, 1, cls.seats, 'bad_passengers') };
     } else {
-      ({ price } = calcPrice(s, km, b.category, b.size));
-      // العربية المختارة (اختياري): لازم تكون مفعّلة وحجمها هو نفس الحجم المبعوت (السعر بيتحسب من الحجم زي الأول)
+      // العربية المختارة (اختياري): لازم تكون مفعّلة وحجمها هو نفس الحجم المبعوت. وهي اللي بتحدد التسعير الخاص بيها (لو الأدمن حدد لها سعر)
       const vp = s.vehicleGuideOn !== false && b.vehiclePick ? String(b.vehiclePick) : null;
       if (vp && !(s.vehicleGuide?.[vp]?.maxKg > 0 && s.vehicleGuide[vp].size === b.size)) throw new HttpError(400, 'bad_vehicle');
+      ({ price } = calcPrice(s, km, b.category, b.size, vp));
       spec = { service: 'cargo', category: b.category, size: b.size, weightKg: int(b.weightKg, 1, 50000), itemsCount: int(b.itemsCount ?? 1, 1, 10000), declaredValue: int(b.declaredValue ?? 0, 0, 100000000),
         vehiclePick: vp, companion: s.companionAsk !== false && typeof b.companion === 'boolean' ? b.companion : null,
         cod: codOf(b.codAmount, s) }; // الدفع عند الاستلام: المستلم بيدفع المبلغ ده للسواق (null = مفيش) // companion: العميل هيرافق الشحنة؟ (null = ما اتسألش)
@@ -647,7 +710,7 @@ const ROUTES = {
     const data = {
       customerName: u.name, customerPhone: u.phone, ...spec,
       description: trip ? str(b.description ?? '', 0, 500) : str(b.description ?? '', 10, 1000), photos, pickup, dropoff, distanceKm: d.km, distanceSource: d.source,
-      graceMin, deliveryAt, guard, priceOriginal: price, couponCode: code || null, discount, amountDue, instant: prepay ? true : b.instant !== false, payMode: direct ? 'direct' : prepay ? 'before' : 'after', direct, commissionPct: s.commissionPct, log: [{ ...L(first, c.uid), at: t }],
+      graceMin, deliveryAt, guard, priceOriginal: price, couponCode: code || null, discount, amountDue, instant: prepay ? true : b.instant !== false, payMode: direct ? 'direct' : prepay ? 'before' : 'after', direct, ...(direct && fineDue > 0 ? { fineDue } : {}), commissionPct: s.commissionPct, log: [{ ...L(first, c.uid), at: t }],
     };
     await F.run(c.env, [
       F.create(`orders/${id}`, { id, customer_id: c.uid, driver_id: null, status: first, escrow_status: 'none', price, commission: null, driver_net: null, customer_refund: null, scheduled_at: when.getTime(), created_at: t, updated_at: t, version: 1, data: JSON.stringify(data) }),
@@ -675,9 +738,10 @@ const ROUTES = {
     await radiusGate(c, await loadSettings(c.env), o); // الطلب لازم يكون في نطاق السواق
     const slot = await driverSlot(c.env, c.uid, await loadSettings(c.env), o.id);
     const direct = o.direct === true, prepaid = o.escrowStatus === 'held'; // مدفوع مقدماً أو دفع مباشر: السواق يبدأ فوراً (الحالة paid)
+    const fineNow = direct && fineOn(await loadSettings(c.env)) ? await curFine(c.env, o.customerId) : null; // غرامة العميل وقت القبول (اللقطة اللي هتتحصّل)
     const pend = (await F.query(c.env, 'offers', { eq: { order_id: o.id }, limit: 100 })).filter((f) => f.status === 'pending');
     await F.run(c.env, [
-      ...orderUpdate(c.env, o, { status: prepaid || direct ? 'paid' : 'accepted', driverId: c.uid, driverName: u.name, driverPhone: u.phone, driverVehicle: u.vehicleType, driverVehiclePhoto: u.vehiclePhotoRef || null, acceptedAt: now(), ...(o.service !== 'passengers' ? { driverAgreedAt: now(), manifestHash: await manifestHash(o) } : {}) }, L(prepaid || direct ? 'paid' : 'accepted', c.uid, prepaid ? { note: 'accepted_prepaid' } : direct ? { note: 'accepted_direct' } : {})),
+      ...orderUpdate(c.env, o, { status: prepaid || direct ? 'paid' : 'accepted', ...(fineNow !== null ? { fineDue: fineNow } : {}), driverId: c.uid, driverName: u.name, driverPhone: u.phone, driverVehicle: u.vehicleType, driverVehiclePhoto: u.vehiclePhotoRef || null, acceptedAt: now(), ...(o.service !== 'passengers' ? { driverAgreedAt: now(), manifestHash: await manifestHash(o) } : {}) }, L(prepaid || direct ? 'paid' : 'accepted', c.uid, prepaid ? { note: 'accepted_prepaid' } : direct ? { note: 'accepted_direct' } : {})),
       ...(slot ? [slot] : []),
       ...pend.map((f) => F.patch(`offers/${f._id}`, { status: f.driver_id === c.uid ? 'withdrawn' : 'rejected', updated_at: now() })),
     ]);
@@ -733,7 +797,7 @@ const ROUTES = {
     const amountDue = Math.max(0, f.price - Math.min(o.discount || 0, f.price)); // لو فيه كوبون: الخصم يفضل مطبّق على السعر المتفق عليه
     await F.run(c.env, [
       F.patch(`offers/${f._id}`, { status: 'accepted', updated_at: now() }, f._ut), // شرط: العرض لسه معلّق
-      ...orderUpdate(c.env, o, { status: o.direct === true ? 'paid' : 'accepted', driverId: d.uid, driverName: d.name, driverPhone: d.phone, driverVehicle: d.vehicle_type, driverVehiclePhoto: d.vehicle_photo_ref || null, acceptedAt: now(), price: f.price, amountDue, priceNegotiated: true, driverAgreedAt: f.agreed_at || null, manifestHash: f.manifest_hash || null }, L(o.direct === true ? 'paid' : 'accepted', c.uid, { note: 'offer', price: f.price })),
+      ...orderUpdate(c.env, o, { status: o.direct === true ? 'paid' : 'accepted', ...(o.direct === true && fineOn(await loadSettings(c.env)) ? { fineDue: await curFine(c.env, o.customerId) } : {}), driverId: d.uid, driverName: d.name, driverPhone: d.phone, driverVehicle: d.vehicle_type, driverVehiclePhoto: d.vehicle_photo_ref || null, acceptedAt: now(), price: f.price, amountDue, priceNegotiated: true, driverAgreedAt: f.agreed_at || null, manifestHash: f.manifest_hash || null }, L(o.direct === true ? 'paid' : 'accepted', c.uid, { note: 'offer', price: f.price })),
       ...others.map((r) => F.patch(`offers/${r._id}`, { status: 'rejected', updated_at: now() })),
       ...(slot ? [slot] : []),
     ]);
@@ -863,7 +927,7 @@ const ROUTES = {
     const lateNow = lateKinds({ ...o, ...patch }, now()); // السواق وصل/سلّم بعد الميعاد + المدة → العميل يتسأل (يسجّل نقطة أو يسامح)
     if (lateNow.length) patch.lateMarks = { ...(o.lateMarks || {}), ...Object.fromEntries(lateNow.map((k) => [k, { state: 'asked', at: now() }])) };
     const direct = o.direct === true && next === 'delivered'; // الدفع المباشر: تأكيد السواق للتسليم = إكمال الطلب وتسجيل مكسبه في دفتر العمولة
-    await F.run(c.env, direct ? directDoneStmts(c.env, o, s, patch, L('completed', c.uid, { note: 'direct_delivered', ...(loc ? { lat: loc.lat, lng: loc.lng } : {}) }))
+    await F.run(c.env, direct ? await directDoneStmts(c.env, o, s, patch, L('completed', c.uid, { note: 'direct_delivered', ...(loc ? { lat: loc.lat, lng: loc.lng } : {}) }))
       : orderUpdate(c.env, o, patch, L(next, c.uid, loc ? { lat: loc.lat, lng: loc.lng } : {})));
     // مكافآت الإحالة مش بتتصرف على طلبات الدفع المباشر: مفيش فلوس متحقق منها عند المنصة، فكانت هتبقى ثغرة لزراعة المكافآت بحسابات وهمية
     for (const k of lateNow) bg(c, notify(c.env, [o.customerId], `late_ask_${k}`, { no: orderNo(o.id) }, { url: `/#/order/${o.id}` }));
@@ -879,7 +943,7 @@ const ROUTES = {
     if (o.customerId !== c.uid) throw new HttpError(403, 'forbidden');
     if (o.direct === true) { // الدفع المباشر: تأكيد العميل بعد الاستلام بيكفي (زي تأكيد السواق للتسليم) — الطلب بيتكمّل ومكسب السواق بيتسجّل
       if (!['picked_up', 'in_transit'].includes(o.status)) throw new HttpError(409, 'bad_state');
-      await F.run(c.env, directDoneStmts(c.env, o, await loadSettings(c.env), { deliveredAt: now(), deliveryVerified: 'customer' }, L('completed', c.uid, { note: 'direct_customer_confirm' })));
+      await F.run(c.env, await directDoneStmts(c.env, o, await loadSettings(c.env), { deliveredAt: now(), deliveryVerified: 'customer' }, L('completed', c.uid, { note: 'direct_customer_confirm' })));
       bg(c, notify(c.env, [o.driverId], 'direct_confirmed', { no: orderNo(o.id) }, { url: '/#/driver/dashboard' }));
       return { ok: true };
     }
@@ -1040,6 +1104,7 @@ const ROUTES = {
     // زيادة عدّاد الإلغاء وتجميد الحساب تلقائياً عند الوصول للحد
     const cancelCount = () => F.inc(`users/${c.uid}`, { cancel_count: 1 }, (me.cancelCount || 0) + 1 >= s.maxCancellations ? { status: 'suspended', status_reason: 'auto_cancellations' } : {});
 
+    let claim = null, claimInfo = null; // غرامة/تعويض السواق على إلغاء العميل بعد ما السواق تحرّك (الدفع المباشر)
     // (1) العميل بعد قبول سواق على طلب مدفوع: إلغاء برسوم — نسبة تعويض للسواق + نسبة للمنصة + الباقي للعميل (النسب من الأدمن)
     if (asCustomer && held && ['paid', 'heading_pickup'].includes(o.status)) {
       const heading = o.status === 'heading_pickup';
@@ -1063,6 +1128,13 @@ const ROUTES = {
       patch = { status: 'cancelled', cancelledBy: 'customer', cancelReason: reason, ...(refund ? { escrowStatus: 'refund_pending' } : {}) }; status = 'cancelled'; counts = o.status === 'accepted';
     } else if (asCustomer && o.direct === true && ['paid', 'heading_pickup'].includes(o.status)) { // الدفع المباشر: مفيش فلوس محجوزة، فالإلغاء بدون رسوم (بيتحسب عليه إلغاء)
       patch = { status: 'cancelled', cancelledBy: 'customer', cancelReason: reason }; status = 'cancelled'; counts = true;
+      if (fineOn(s)) { // بعد فترة الإلغاء المجاني: السواق في الطريق = غرامة أقل، بعد وصوله = غرامة أكبر (والمبالغ من الأدمن)
+        const free = o.acceptedAt && now() - o.acceptedAt <= s.fineFreeCancelMin * 60000;
+        const kind = free ? null : o.arrivedAt ? 'cancel_arrived' : o.status === 'heading_pickup' ? 'cancel_enroute' : null;
+        const amount = kind === 'cancel_arrived' ? s.fineArrivedAmount : kind === 'cancel_enroute' ? s.fineEnRouteAmount : 0;
+        const r = kind ? await claimStmt(c.env, o, kind, amount, s) : {};
+        if (r.stmt) { claim = r.stmt; claimInfo = { kind, amount }; }
+      }
     } else if (asDriver && ['accepted', 'paid', 'heading_pickup'].includes(o.status)) {
       // السواق اعتذر: الطلب بيرجع مفتوح لسواقين تانيين (ولو مدفوع، المبلغ بيفضل محجوز) وبيتحسب عليه إلغاء
       patch = { status: 'open', driverId: null, driverName: null, driverPhone: null, driverVehicle: null, driverVehiclePhoto: null, acceptedAt: null, agreed: null, timeProposal: null, proposalCount: 0, lateMarks: null, ...(held ? { instant: true } : {}) }; status = 'open'; counts = true;
@@ -1071,13 +1143,15 @@ const ROUTES = {
     if (refund) stmts.push(refundInsert(c.env, o, 'cancelled'));
     if (status === 'cancelled') for (const f of (await F.query(c.env, 'offers', { eq: { order_id: o.id }, limit: 100 })).filter((r) => r.status === 'pending')) stmts.push(F.patch(`offers/${f._id}`, { status: 'rejected', updated_at: now() }));
     if (counts) stmts.push(cancelCount());
+    if (claim) stmts.push(claim);
     await F.run(c.env, stmts);
+    if (claimInfo) bg(c, notify(c.env, [o.customerId], 'cancel_claim', { no: orderNo(o.id), amount: claimInfo.amount, hours: s.fineClaimHours }, { url: '/#/customer' }));
     if (refund) afterRefundRequest(c, o);
     if (asDriver && (held || o.direct === true)) { // الطلب (مدفوع/دفع مباشر) رجع مفتوح: نبلّغ العميل ونعيد توزيعه على سواقين تانيين
       bg(c, notify(c.env, [o.customerId], 'driver_cancelled', { no: orderNo(o.id) }, { url: `/#/order/${o.id}` }));
       bg(c, dispatchNewOrder(c.env, { id: o.id, service: o.service, size: o.size, vehicleClass: o.vehicleClass, passengers: o.passengers, pickup: o.pickup, dropoff: o.dropoff, price: o.price }, s));
     }
-    return { ok: true, refund };
+    return { ok: true, refund, ...(claimInfo ? { fine: claimInfo.amount } : {}) };
   },
 
   // ---------- تقييم ----------
@@ -1874,10 +1948,10 @@ const ROUTES = {
       F.query(c.env, 'dc_pay', { eq: { driver_id: c.uid }, limit: 100 }),
       F.query(c.env, `dc_ledger/${c.uid}/entries`, { order: ['at', 'desc'], limit: 15 }),
     ]);
-    const gross = r?.dc_gross || 0, list = pays.sort(byDesc('created_at'));
+    const gross = r?.dc_gross || 0, list = pays.sort(byDesc('created_at')), pb = dcPayable(gross, s.dcPct, r?.dc_credit, r?.dc_fines_held, r?.dc_kmfee);
     const pending = list.find((x) => x.status === 'pending') || null;
     return {
-      enabled: s.dcEnabled, pct: s.dcPct, limit: s.dcLimit, gross, due: dcDue(gross, s.dcPct), blocked: dcBlocked(gross, s),
+      enabled: s.dcEnabled, pct: s.dcPct, limit: s.dcLimit, perKm: s.dcPerKm, km: r?.dc_km || 0, kmFee: r?.dc_kmfee || 0, kmTotal: r?.km_total || 0, gross, due: pb.amount, commission: pb.commission, credit: r?.dc_credit || 0, creditUsed: pb.creditUsed, finesHeld: pb.fines, blocked: dcBlocked(gross, s),
       pay: { instapay: s.instapay, wallet: s.dcPay }, pending: pending && dcPayOut(pending),
       history: list.filter((x) => x.status !== 'pending').slice(0, 10).map(dcPayOut),
       entries: entries.map((e) => ({ orderId: e.order_id, gross: e.gross, at: e.at })),
@@ -1887,20 +1961,31 @@ const ROUTES = {
     const u = await need(c, ['driver']);
     const s = await loadSettings(c.env);
     if (!s.dcEnabled) throw new HttpError(403, 'dc_off');
+    const r = await F.get(c.env, `users/${c.uid}`), gross = r?.dc_gross || 0, pb = dcPayable(gross, s.dcPct, r?.dc_credit, r?.dc_fines_held, r?.dc_kmfee), amount = pb.amount;
+    if (amount <= 0) {
+      if (gross <= 0 && !(r?.dc_kmfee > 0) && !(r?.dc_fines_held > 0)) throw new HttpError(409, 'nothing_due');
+      // العمولة كلها اتغطّت برصيد التعويض: بتتسوّى فوراً من غير تحويل (والحساب يرجع يقبل طلبات)
+      const idc = newId(), tc = now();
+      try {
+        await F.run(c.env, [
+          F.patch(`users/${c.uid}`, { dc_gross: 0, dc_km: 0, dc_kmfee: 0, dc_credit: Math.max(0, (r.dc_credit || 0) - pb.creditUsed), updated_at: tc }, r._ut),
+          F.create(`dc_pay/${idc}`, { id: idc, driver_id: c.uid, driver_name: u.companyName || u.name, gross, km: r.dc_km || 0, km_fee: r.dc_kmfee || 0, pct: s.dcPct, amount: 0, commission: pb.commission, credit_used: pb.creditUsed, fines_held: 0, method: 'credit', reference: 'credit', ref_key: null, proof: null, status: 'paid', note: 'covered_by_credit', created_at: tc, decided_at: tc, decided_by: 'system' }),
+        ]);
+      } catch (e) { throw e.code === 'conflict' ? new HttpError(409, 'dc_conflict') : e; }
+      return { ok: true, covered: true, amount: 0 };
+    }
     const method = c.body.method;
     if (!['instapay', 'wallet'].includes(method)) throw new HttpError(400, 'bad_method');
     const proof = fileRef(c.body.proofRef); await ownFiles(c.env, c.uid, [proof]);
     const reference = str(c.body.reference, 4, 40);
     await rateTake(c.env, 'dcpay', c.uid, 3600e3, 6, 'too_many_requests');
-    const r = await F.get(c.env, `users/${c.uid}`), gross = r?.dc_gross || 0, amount = dcDue(gross, s.dcPct);
-    if (amount <= 0) throw new HttpError(409, 'nothing_due');
     if ((await F.query(c.env, 'dc_pay', { eq: { driver_id: c.uid }, limit: 100 })).some((x) => x.status === 'pending')) throw new HttpError(409, 'dc_pending'); // طلب سداد واحد معلّق في المرة
     const id = newId(), refKey = await dcRefKey(method, reference), t = now();
     try {
       await F.run(c.env, [
         F.guard(r, `users/${c.uid}`), // لو طلب خلص في نفس اللحظة والإجمالي اتغيّر: العملية تفشل ويعيد السواق (المبلغ يفضل مطابق للي اتحسب)
         F.create(`dc_ref/${refKey}`, { pay_id: id, uid: c.uid, at: t }), // رقم المرجع مرة واحدة بس
-        F.create(`dc_pay/${id}`, { id, driver_id: c.uid, driver_name: u.companyName || u.name, gross, pct: s.dcPct, amount, method, reference, ref_key: refKey, proof, status: 'pending', note: null, created_at: t, decided_at: null, decided_by: null }),
+        F.create(`dc_pay/${id}`, { id, driver_id: c.uid, driver_name: u.companyName || u.name, gross, km: r?.dc_km || 0, km_fee: r?.dc_kmfee || 0, pct: s.dcPct, amount, commission: pb.commission, credit_used: pb.creditUsed, fines_held: pb.fines, method, reference, ref_key: refKey, proof, status: 'pending', note: null, created_at: t, decided_at: null, decided_by: null }),
       ]);
     } catch (e) { throw e.code === 'conflict' ? new HttpError(409, 'dc_conflict') : e; }
     toAdmins(c, 'dc_review', { name: u.companyName || u.name, amount }, '/#/admin/dc');
@@ -1915,7 +2000,7 @@ const ROUTES = {
       F.query(c.env, 'dc_pay', { order: ['created_at', 'desc'], limit: 30 }),
       F.query(c.env, 'users', { range: [['dc_gross', '>', 0]], limit: 300 }),
     ]);
-    const drivers = owing.filter((u) => u.role === 'driver').map((u) => ({ id: u.uid, name: u.company_name || u.name, phone: u.phone, gross: u.dc_gross || 0, due: dcDue(u.dc_gross, s.dcPct), blocked: dcBlocked(u.dc_gross, s) })).sort((a, b) => b.gross - a.gross);
+    const drivers = owing.filter((u) => u.role === 'driver').map((u) => ({ id: u.uid, name: u.company_name || u.name, phone: u.phone, gross: u.dc_gross || 0, due: dcPayable(u.dc_gross, s.dcPct, u.dc_credit, u.dc_fines_held, u.dc_kmfee).amount, km: u.dc_km || 0, kmFee: u.dc_kmfee || 0, kmTotal: u.km_total || 0, credit: u.dc_credit || 0, finesHeld: u.dc_fines_held || 0, blocked: dcBlocked(u.dc_gross, s) })).sort((a, b) => b.gross - a.gross);
     return { enabled: s.dcEnabled, pct: s.dcPct, limit: s.dcLimit, drivers, pending: pending.sort((a, b) => a.created_at - b.created_at).map(dcPayOut), recent: recent.filter((x) => x.status !== 'pending').map(dcPayOut) };
   },
   async 'admin/dc/confirm'(c) {
@@ -1930,8 +2015,8 @@ const ROUTES = {
       const left = Math.max(0, (ur.dc_gross || 0) - p.gross); // بنخصم المبلغ اللي اتحسب وقت الطلب بالظبط (أي طلب خلص بعده يفضل محسوب)
       await F.run(c.env, [
         F.patch(`dc_pay/${p.id}`, { status: 'paid', note, decided_at: t, decided_by: admin.uid }, p._ut),
-        F.patch(`users/${p.driver_id}`, { dc_gross: left, dc_paid_total: (ur.dc_paid_total || 0) + p.amount, updated_at: t }, ur._ut),
-        auditLog(admin, 'dc.confirm', { targetType: 'user', targetId: p.driver_id, note, meta: { payId: p.id, gross: p.gross, pct: p.pct, amount: p.amount, left } }),
+        F.patch(`users/${p.driver_id}`, { dc_gross: left, dc_km: Math.max(0, Math.round(((ur.dc_km || 0) - (p.km || 0)) * 10) / 10), dc_kmfee: Math.max(0, (ur.dc_kmfee || 0) - (p.km_fee || 0)), dc_credit: Math.max(0, (ur.dc_credit || 0) - (p.credit_used || 0)), dc_fines_held: Math.max(0, (ur.dc_fines_held || 0) - (p.fines_held || 0)), dc_paid_total: (ur.dc_paid_total || 0) + p.amount, updated_at: t }, ur._ut),
+        auditLog(admin, 'dc.confirm', { targetType: 'user', targetId: p.driver_id, note, meta: { payId: p.id, gross: p.gross, pct: p.pct, amount: p.amount, creditUsed: p.credit_used || 0, finesHeld: p.fines_held || 0, left } }),
       ]);
       bg(c, notify(c.env, [p.driver_id], 'dc_paid', { amount: p.amount }, { url: '/#/driver/dashboard' }));
       return { ok: true, left };
@@ -1958,6 +2043,141 @@ const ROUTES = {
       F.patch(`users/${uid}`, { dc_gross: gross, updated_at: now() }, ur._ut),
       auditLog(admin, 'dc.adjust', { targetType: 'user', targetId: uid, note, meta: { from: ur.dc_gross || 0, to: gross } }),
     ]);
+    return { ok: true };
+  },
+
+  // =====================  وصول السواق / عدم حضور العميل / تعويض وغرامة (الدفع المباشر)  =====================
+  // «وصلت»: بيتسجّل وقت ومكان وصول السواق (لازم يكون جوه نطاق نقطة الاستلام) — ده الإثبات اللي بيتبني عليه أي تعويض.
+  async 'orders/arrived'(c) {
+    await need(c, ['driver']);
+    const o = await loadOrder(c.env, docId(c.body.orderId));
+    if (o.driverId !== c.uid) throw new HttpError(403, 'forbidden');
+    const s = await loadSettings(c.env);
+    if (!fineOn(s) || o.direct !== true) throw new HttpError(409, 'fines_off');
+    if (!['paid', 'heading_pickup'].includes(o.status)) throw new HttpError(409, 'bad_state');
+    if (o.arrivedAt) return { ok: true, arrivedAt: o.arrivedAt };
+    const loc = point(c.body.loc, false);
+    if (s.geofenceMeters > 0 && haversineM(loc, o.pickup) > s.geofenceMeters) throw new HttpError(403, 'too_far');
+    const t = now();
+    await F.run(c.env, orderUpdate(c.env, o, { arrivedAt: t, arrivedLoc: { lat: loc.lat, lng: loc.lng } }, L(o.status, c.uid, { note: 'arrived', lat: loc.lat, lng: loc.lng })));
+    bg(c, notify(c.env, [o.customerId], 'driver_arrived', { no: orderNo(o.id) }, { url: `/#/order/${o.id}` }));
+    return { ok: true, arrivedAt: t };
+  },
+  // «العميل مش موجود»: بعد وصول مثبّت + مهلة انتظار (من الأدمن). الطلب بيتلغي بسبب العميل وبتتفتح مطالبة تعويض (تسوية مباشرة أو تعويض المنصة + غرامة)
+  async 'orders/noshow'(c) {
+    await need(c, ['driver']);
+    const o = await loadOrder(c.env, docId(c.body.orderId));
+    if (o.driverId !== c.uid) throw new HttpError(403, 'forbidden');
+    const s = await loadSettings(c.env);
+    if (!fineOn(s) || o.direct !== true) throw new HttpError(409, 'fines_off');
+    if (!['paid', 'heading_pickup'].includes(o.status)) throw new HttpError(409, 'bad_state');
+    if (!o.arrivedAt) throw new HttpError(409, 'not_arrived');
+    if (o.arrivedAt + s.fineWaitMin * 60000 > now()) throw new HttpError(409, 'wait_more');
+    const cu = await F.get(c.env, `users/${o.customerId}`);
+    const r = await claimStmt(c.env, o, 'no_show', s.fineArrivedAmount, s);
+    if (r.limited) throw new HttpError(429, 'claims_limit');
+    const stmts = [
+      ...orderUpdate(c.env, o, { status: 'cancelled', cancelledBy: 'customer', cancelReason: 'no_show', noShow: true }, L('cancelled', c.uid, { note: 'no_show' })),
+      F.inc(`users/${o.customerId}`, { cancel_count: 1 }, (cu?.cancel_count || 0) + 1 >= s.maxCancellations ? { status: 'suspended', status_reason: 'auto_cancellations' } : {}),
+    ];
+    if (r.stmt) stmts.push(r.stmt);
+    await F.run(c.env, stmts);
+    if (r.stmt) bg(c, notify(c.env, [o.customerId], 'noshow_claim', { no: orderNo(o.id), amount: s.fineArrivedAmount, hours: s.fineClaimHours }, { url: '/#/customer' }));
+    return { ok: true, amount: r.stmt ? s.fineArrivedAmount : 0, credit: r.stmt ? fineCredit(s.fineArrivedAmount, s.fineDriverSharePct) : 0 };
+  },
+
+  async 'fines/mine'(c) {
+    const u = await need(c, ['customer', 'driver']);
+    const s = await loadSettings(c.env);
+    const [rows, me] = await Promise.all([F.query(c.env, 'fines', { eq: { [u.role === 'driver' ? 'driver_id' : 'customer_id']: c.uid }, limit: 100 }), F.get(c.env, `users/${c.uid}`)]);
+    rows.sort(byDesc('created_at'));
+    return { enabled: fineOn(s), role: u.role, due: me?.fine_due || 0, credit: me?.dc_credit || 0, held: me?.dc_fines_held || 0, objectHours: s.fineObjectHours, sharePct: s.fineDriverSharePct, claims: rows.slice(0, 30).map(claimOut) };
+  },
+  // السواق: «اتحصّل» — العميل عوّضه مباشرة (كاش/تحويل) فالمطالبة بتتقفل من غير إعفاء ولا غرامة
+  async 'fines/collected'(c) {
+    await need(c, ['driver']);
+    const cl = await F.get(c.env, `fines/${docId(c.body.orderId)}`);
+    if (!cl) throw new HttpError(404, 'not_found');
+    if (cl.driver_id !== c.uid) throw new HttpError(403, 'forbidden');
+    if (!['open', 'customer_paid'].includes(cl.status)) throw new HttpError(409, 'bad_state');
+    await F.run(c.env, [F.patch(`fines/${cl.id}`, { status: 'settled', note: 'collected', decided_at: now(), decided_by: c.uid }, cl._ut)]);
+    return { ok: true };
+  },
+  // العميل: «عوّضت السواق» — بتستنى تأكيد السواق (من غير تأكيده المطالبة بتتطبّق لما المهلة تخلص)
+  async 'fines/declare'(c) {
+    await need(c, ['customer']);
+    const cl = await F.get(c.env, `fines/${docId(c.body.orderId)}`);
+    if (!cl) throw new HttpError(404, 'not_found');
+    if (cl.customer_id !== c.uid) throw new HttpError(403, 'forbidden');
+    if (cl.status !== 'open') throw new HttpError(409, 'bad_state');
+    await F.run(c.env, [F.patch(`fines/${cl.id}`, { status: 'customer_paid', declared_at: now() }, cl._ut)]);
+    bg(c, notify(c.env, [cl.driver_id], 'fine_declared', { no: orderNo(cl.order_id) }, { url: '/#/driver/dashboard' }));
+    return { ok: true };
+  },
+  // السواق: «ماتحصّلش» — تطبيق التعويض والغرامة دلوقتي من غير ما يستنى المهلة
+  async 'fines/apply'(c) {
+    await need(c, ['driver']);
+    const cl = await F.get(c.env, `fines/${docId(c.body.orderId)}`);
+    if (!cl) throw new HttpError(404, 'not_found');
+    if (cl.driver_id !== c.uid) throw new HttpError(403, 'forbidden');
+    if (!['open', 'customer_paid'].includes(cl.status)) throw new HttpError(409, 'bad_state');
+    return { ok: true, ...(await applyClaim(c.env, cl, await loadSettings(c.env), 'driver')) };
+  },
+  async 'fines/object'(c) {
+    const u = await need(c, ['customer']);
+    const cl = await F.get(c.env, `fines/${docId(c.body.orderId)}`);
+    if (!cl) throw new HttpError(404, 'not_found');
+    if (cl.customer_id !== c.uid) throw new HttpError(403, 'forbidden');
+    const s = await loadSettings(c.env), note = str(c.body.note, 3, 300);
+    if (cl.status !== 'applied') throw new HttpError(409, 'bad_state');
+    if (cl.objected === true) throw new HttpError(409, 'already_objected');
+    if (!(s.fineObjectHours > 0) || now() - (cl.applied_at || 0) > s.fineObjectHours * 3600000) throw new HttpError(409, 'objection_closed');
+    await F.run(c.env, [F.patch(`fines/${cl.id}`, { objected: true, object_note: note, objected_at: now() }, cl._ut)]);
+    toAdmins(c, 'fine_objection', { name: u.name, amount: cl.remaining || cl.amount }, '/#/admin/fines');
+    return { ok: true };
+  },
+
+  async 'admin/fines/list'(c) {
+    await need(c, ['admin']);
+    const [objected, recent, owing] = await Promise.all([
+      F.query(c.env, 'fines', { eq: { objected: true }, limit: 100 }),
+      F.query(c.env, 'fines', { order: ['created_at', 'desc'], limit: 60 }),
+      F.query(c.env, 'users', { range: [['fine_due', '>', 0]], limit: 200 }),
+    ]);
+    return { objected: objected.filter((x) => x.status === 'applied').map(claimOut), recent: recent.map(claimOut), customers: owing.filter((u) => u.role === 'customer').map((u) => ({ id: u.uid, name: u.name, phone: u.phone, due: u.fine_due || 0 })).sort((a, b) => b.due - a.due) };
+  },
+  // قرار الأدمن في مطالبة: waive = إعفاء العميل (المنصة بتتحمّل وتعويض السواق بيفضل)، reject = ادعاء غير صحيح (بيتشال الغرامة والتعويض وإنذار للسواق)، settle = العميل سدّد للمنصة مباشرة
+  async 'admin/fines/decide'(c) {
+    const admin = await need(c, ['admin']);
+    const cl = await F.get(c.env, `fines/${docId(c.body.id)}`);
+    if (!cl) throw new HttpError(404, 'not_found');
+    const action = c.body.action, note = str(c.body.note ?? '', action === 'reject' ? 3 : 0, 300), t = now();
+    if (!['waive', 'reject', 'settle'].includes(action)) throw new HttpError(400, 'bad_action');
+    const applied = cl.status === 'applied';
+    if (action === 'reject' ? !['open', 'customer_paid', 'applied'].includes(cl.status) : !applied) throw new HttpError(409, 'bad_state');
+    const rem = applied ? cl.remaining || 0 : 0, credit = applied && action === 'reject' ? cl.credit || 0 : 0;
+    const stmts = [F.patch(`fines/${cl.id}`, { status: action === 'waive' ? 'waived' : action === 'reject' ? 'rejected' : 'paid_platform', remaining: 0, ...(action === 'reject' ? { credit: 0 } : {}), note, decided_at: t, decided_by: admin.uid }, cl._ut)];
+    if (rem > 0) { const cu = await F.get(c.env, `users/${cl.customer_id}`); if (cu) stmts.push(F.patch(`users/${cl.customer_id}`, { fine_due: Math.max(0, (cu.fine_due || 0) - rem) }, cu._ut)); }
+    if (action === 'reject') {
+      const dr = await F.get(c.env, `users/${cl.driver_id}`);
+      if (cl.credit_mode === 'wallet' && credit > 0) { // التعويض اتصرف لمحفظة السواق: بنسحب اللي لسه موجود منه (لو كان اتسحب مابنخلّيش الرصيد سالب)
+        const w = await F.get(c.env, `wallets/${cl.driver_id}`), back = Math.min(credit, Math.max(0, Math.floor(w?.balance || 0)));
+        if (back > 0) stmts.push(walletCredit(cl.driver_id, -back));
+        if (dr) stmts.push(F.patch(`users/${cl.driver_id}`, { false_claims: (dr.false_claims || 0) + 1 }, dr._ut));
+      } else if (dr) stmts.push(F.patch(`users/${cl.driver_id}`, { dc_credit: Math.max(0, (dr.dc_credit || 0) - credit), false_claims: (dr.false_claims || 0) + 1 }, dr._ut));
+    }
+    stmts.push(auditLog(admin, `fine.${action}`, { targetType: 'order', targetId: cl.order_id, note, meta: { claim: cl.id, remaining: rem, credit, customer: cl.customer_id, driver: cl.driver_id } }));
+    await F.run(c.env, stmts);
+    if (rem > 0) bg(c, notify(c.env, [cl.customer_id], 'fine_cleared', { amount: rem }, { url: '/#/customer' }));
+    return { ok: true };
+  },
+  // تصحيح يدوي لغرامات عميل (بسبب إجباري + سجل تدقيق)
+  async 'admin/fines/adjust'(c) {
+    const admin = await need(c, ['admin']);
+    const uid = uidOf(c.body.uid), due = int(c.body.due, 0, 1000000), note = str(c.body.note, 3, 200);
+    const cu = await F.get(c.env, `users/${uid}`);
+    if (!cu || cu.role !== 'customer') throw new HttpError(404, 'not_found');
+    await F.run(c.env, [F.patch(`users/${uid}`, { fine_due: due }, cu._ut), auditLog(admin, 'fine.adjust', { targetType: 'user', targetId: uid, note, meta: { from: cu.fine_due || 0, to: due } })]);
     return { ok: true };
   },
 

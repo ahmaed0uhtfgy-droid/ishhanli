@@ -1,12 +1,12 @@
 {
   "name": "اشحنلي",
   "short_name": "اشحنلي",
-  "description": "منصة نقل بضائع في مصر — سعر فوري وفلوس محجوزة لحد التسليم",
+  "description": "منصة نقل بضائع في مصر — سعر فوري وسواقين موثّقين",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#1e2a3a",
-  "theme_color": "#1e2a3a",
+  "background_color": "#F7F4EC",
+  "theme_color": "#173B48",
   "lang": "ar",
   "dir": "rtl",
   "icons": [

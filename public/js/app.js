@@ -17,6 +17,7 @@ import { renderLegal } from './pages/legal.js';
 import { renderRules } from './pages/rules.js';
 import { renderTrack } from './pages/track.js';
 import { initEstimate } from './pages/estimate-widget.js';
+import { showLanding, hideLanding, lpPublicPricing } from './landing.js';
 import { renderDriverDash } from './pages/driver-dash.js';
 import { initErrorReporting } from './report.js';
 
@@ -31,6 +32,7 @@ const parseHash = () => {
   return { parts: path.split('/').filter(Boolean), query: new URLSearchParams(qs || '') };
 };
 const go = (path) => { location.hash = '#' + path; };
+const LP_IDS = new Set(['top', 'how', 'services', 'price', 'trust', 'faq', 'contact']); // روابط الصفحة الرئيسية الداخلية (#/how …)
 
 // ---------- التحقق بخطوتين للأدمن (TOTP) ----------
 function askTotp() {
@@ -132,11 +134,12 @@ function route() {
   const { parts, query } = parseHash(), [a, b] = parts, p = state.profile;
   renderTopbar();
   // عنصر <main> جديد في كل تنقّل: بيمسح أي event listeners قديمة تلقائياً
-  const show = () => { const v = document.createElement('main'); v.id = 'view'; v.className = 'wrap'; view.replaceWith(v); view = v; landing.hidden = true; window.scrollTo(0, 0); };
+  const show = () => { const v = document.createElement('main'); v.id = 'view'; v.className = 'wrap'; view.replaceWith(v); view = v; landing.hidden = true; hideLanding(); window.scrollTo(0, 0); };
+  const showLand = () => { landing.hidden = false; view.hidden = true; showLanding({ user: state.user, home: HOME[state.profile?.role] || '/' }); initEstimate($('#estimate'), lpPublicPricing()); };
 
-  if (a === 'about') { landing.hidden = false; view.hidden = true; fillCompany(); requestAnimationFrame(() => document.getElementById('about')?.scrollIntoView()); return; } // صفحة تعريفية لكل الناس (زائر أو مسجّل)
+  if (a === 'about' || (a && LP_IDS.has(a) && !b)) { showLand(); fillCompany(); requestAnimationFrame(() => document.getElementById(a === 'about' ? 'contact' : a)?.scrollIntoView()); return; } // صفحة تعريفية لكل الناس (زائر أو مسجّل)
   if (!state.user) { // زائر
-    if (!a) { landing.hidden = false; view.hidden = true; fillCompany(); initEstimate($('#estimate')); return; }
+    if (!a) { showLand(); fillCompany(); return; }
     show();
     if (a === 'login') return void (cleanup = renderLogin(view));
     if (a === 'register') return void (cleanup = renderRegister(view, query));
@@ -190,10 +193,13 @@ if (/^YOUR_/.test(firebaseConfig.apiKey) || /^YOUR_/.test(firebaseConfig.project
   b.textContent = '⚠️ ' + 'config.js — Firebase config not set / لم يتم ضبط إعدادات Firebase'; document.body.prepend(b);
 }
 // الوضع الليلي (اختياري من الزرار، مش تلقائي): بيغيّر متغيّرات الألوان في app.css (html[data-theme=dark])، والصور والدبابيس والمسار بألوانها الطبيعية
-let theme = 'light'; try { theme = localStorage.getItem('theme') === 'dark' ? 'dark' : 'light'; } catch { /* ignore */ }
-const applyTheme = () => { document.documentElement.dataset.theme = theme; document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#0a111b' : '#1e2a3a'); }; // لون شريط المتصفح في الموبايل
+let theme = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'; // الافتراضي من السيرفر (إعداد الأدمن) لحد ما الزائر يختار
+try { const sv = localStorage.getItem('theme'); if (sv === 'dark' || sv === 'light') theme = sv; } catch { /* ignore */ }
+const applyTheme = () => { document.documentElement.dataset.theme = theme; const land = document.body.classList.contains('on-landing'); document.querySelector('meta[name="theme-color"]')?.setAttribute('content', land ? (theme === 'dark' ? '#0B1F27' : '#F7F4EC') : (theme === 'dark' ? '#0a111b' : '#1e2a3a')); }; // لون شريط المتصفح في الموبايل
 function setTheme(v) { theme = v === 'dark' ? 'dark' : 'light'; try { localStorage.setItem('theme', theme); } catch { /* ignore */ } applyTheme(); }
 applyTheme();
+window.addEventListener('app:set-theme', (e) => { setTheme(e.detail); renderTopbar(); }); // من أزرار الصفحة الرئيسية
+window.addEventListener('app:theme-refresh', applyTheme);
 // حجم الخط (للقراءة المريحة): 4 مستويات بتتحفظ على الجهاز
 const FONT = [100, 112.5, 125, 140];
 let fontLv = 0; try { fontLv = Math.min(FONT.length - 1, Math.max(0, +localStorage.getItem('fontLv') || 0)); } catch { /* ignore */ }
