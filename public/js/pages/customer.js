@@ -60,7 +60,7 @@ export function renderNewOrder(el) {
       </div>` : ''}
       <label class="f">${t('order.pickup')}<input name="pAddr" placeholder="${t('new.addr')}"></label>
       <label class="f">${t('order.dropoff')}<input name="dAddr" placeholder="${t('new.addr')}"></label>
-      ${S.passengersEnabled && classes.length ? html`<div class="grid-2" data-only="passengers" hidden><label class="f">${t('new.vehicleClass')}<select name="vehicleClass">${classes.map(([k, c]) => html`<option value="${k}">${label(c, k)}</option>`)}</select></label><label class="f">${t('new.passengers')}<input type="number" name="passengers" min="1" max="${classes[0][1].seats}" value="2" inputmode="numeric"></label></div><p class="hint" data-only="passengers" hidden>${t('new.paxNote')} ${t('new.prepayPax')}</p>` : ''}
+      ${S.passengersEnabled && classes.length ? html`<div class="grid-2" data-only="passengers" hidden><label class="f">${t('new.vehicleClass')}<select name="vehicleClass">${classes.map(([k, c]) => html`<option value="${k}">${label(c, k)}</option>`)}</select></label><label class="f">${t('new.passengers')}<input type="number" name="passengers" min="1" max="${classes[0][1].seats}" value="2" inputmode="numeric"></label></div><p class="hint" data-only="passengers" hidden>${t(S.dcEnabled === true ? 'new.paxNote.direct' : 'new.paxNote')} ${S.dcEnabled === true ? '' : t('new.prepayPax')}</p>` : ''}
       <div class="grid-2" data-only="cargo">
         <label class="f">${t('order.category')}<select name="category">${cats.map(([k, c]) => html`<option value="${k}">${label(c, k)}</option>`)}</select></label>
         <label class="f">${t('order.size')}<select name="size">${sizes.map(([k, c]) => html`<option value="${k}">${label(c, k)}</option>`)}</select></label>

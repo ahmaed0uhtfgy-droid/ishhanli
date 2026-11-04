@@ -4,6 +4,7 @@ const OUT = ['released', 'settled', 'refund_pending', 'refunded'];
 
 /** @returns {null | Array<{key:string, state:'done'|'now'|'wait', text:string}>} null = مفيش فلوس تتعرض (لسه ما اتدفعش) */
 export function moneySteps(o) {
+  if (o?.direct === true) return null; // الدفع المباشر: مفيش مبلغ محجوز عند المنصة، فمفيش كارت «فلوسك محجوزة»
   const esc = o?.escrowStatus || '';
   const paid = PAID.includes(o?.status) || ['held', ...OUT].includes(esc);
   if (!paid) return null;

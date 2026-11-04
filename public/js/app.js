@@ -24,7 +24,7 @@ import { initErrorReporting } from './report.js';
 let view = $('#view');
 const landing = $('#landing'), topbar = $('#topbar');
 const HOME = { customer: '/customer', driver: '/driver', admin: '/customer' }; // الأدمن بيدخل كمستخدم عادي، وزرار «لوحة التحكم» في الشريط يوديه للأدمن
-const LOGO = '<svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#f5b800"/><path d="M6 24 26 8" stroke="#1e2a3a" stroke-width="4" stroke-dasharray="5 4" stroke-linecap="round"/></svg>';
+const LOGO = '<img src="/icons/favicon-48.png" width="32" height="32" alt="" decoding="async">';
 let cleanup = null;
 
 const parseHash = () => {
@@ -195,7 +195,7 @@ if (/^YOUR_/.test(firebaseConfig.apiKey) || /^YOUR_/.test(firebaseConfig.project
 // الوضع الليلي (اختياري من الزرار، مش تلقائي): بيغيّر متغيّرات الألوان في app.css (html[data-theme=dark])، والصور والدبابيس والمسار بألوانها الطبيعية
 let theme = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'; // الافتراضي من السيرفر (إعداد الأدمن) لحد ما الزائر يختار
 try { const sv = localStorage.getItem('theme'); if (sv === 'dark' || sv === 'light') theme = sv; } catch { /* ignore */ }
-const applyTheme = () => { document.documentElement.dataset.theme = theme; const land = document.body.classList.contains('on-landing'); document.querySelector('meta[name="theme-color"]')?.setAttribute('content', land ? (theme === 'dark' ? '#0B1F27' : '#F7F4EC') : (theme === 'dark' ? '#0a111b' : '#1e2a3a')); }; // لون شريط المتصفح في الموبايل
+const applyTheme = () => { document.documentElement.dataset.theme = theme; const land = document.body.classList.contains('on-landing'); document.querySelector('meta[name="theme-color"]')?.setAttribute('content', land ? (theme === 'dark' ? '#0B1F27' : '#F7F4EC') : (theme === 'dark' ? '#07161c' : '#0F2E3A')); }; // لون شريط المتصفح في الموبايل
 function setTheme(v) { theme = v === 'dark' ? 'dark' : 'light'; try { localStorage.setItem('theme', theme); } catch { /* ignore */ } applyTheme(); }
 applyTheme();
 window.addEventListener('app:set-theme', (e) => { setTheme(e.detail); renderTopbar(); }); // من أزرار الصفحة الرئيسية

@@ -23,12 +23,12 @@ export async function drawRoute(map, a, b) {
     const rt = (await r.json()).routes?.[0]; if (!rt) throw new Error('no route');
     const pts = rt.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
     L.polyline(pts, { color: '#fff', weight: 11, opacity: 0.95, lineCap: 'round', lineJoin: 'round' }).addTo(map);
-    L.polyline(pts, { color: '#1e2a3a', weight: 7, opacity: 0.96, lineCap: 'round', lineJoin: 'round' }).addTo(map);
-    const line = L.polyline(pts, { color: '#f5b800', weight: 2.5, opacity: 1, dashArray: '10 12', className: 'route-flow' }).addTo(map);
+    L.polyline(pts, { color: '#173B48', weight: 7, opacity: 0.96, lineCap: 'round', lineJoin: 'round' }).addTo(map);
+    const line = L.polyline(pts, { color: '#DCC38A', weight: 2.5, opacity: 1, dashArray: '10 12', className: 'route-flow' }).addTo(map);
     map.fitBounds(line.getBounds(), { padding: [40, 40] });
     return { km: rt.distance / 1000, min: Math.max(1, Math.round(rt.duration / 60)) };
   } catch {
-    L.polyline([a, b], { color: '#c99400', weight: 4, dashArray: '8 10', className: 'route-flow' }).addTo(map);
+    L.polyline([a, b], { color: '#B8964E', weight: 4, dashArray: '8 10', className: 'route-flow' }).addTo(map);
     return null;
   }
 }

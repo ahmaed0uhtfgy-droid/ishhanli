@@ -460,7 +460,7 @@ export function renderOrder(el, id) {
     sos: () => openSos(),
     async cancel() {
       if (role === 'driver') { // السواق يعتذر: الطلب بيرجع لسواقين تانيين
-        if (!(await confirmDialog(t('order.driverWithdrawAsk'), { danger: true, ok: t('order.driverWithdraw') }))) return;
+        if (!(await confirmDialog(t(order.direct === true ? 'order.driverWithdrawAsk.direct' : 'order.driverWithdrawAsk'), { danger: true, ok: t('order.driverWithdraw') }))) return;
         await call('orders/cancel', {}, 'order.driverWithdrawn'); location.hash = '#/driver/jobs'; return;
       }
       if (role === 'customer' && ['paid', 'heading_pickup'].includes(order.status) && order.escrowStatus === 'held') { // إلغاء برسوم بعد قبول السواق

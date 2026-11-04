@@ -8,6 +8,11 @@
 @font-face{font-family:'LpCairo';font-weight:800;font-display:swap;src:url(/fonts/cairo-latin-800-normal.woff2) format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
 @font-face{font-family:'LpCairo';font-weight:900;font-display:swap;src:url(/fonts/cairo-latin-900-normal.woff2) format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
 
+@font-face{font-family:'LpCairo';font-weight:500;font-display:swap;src:url(/fonts/cairo-arabic-500-normal.woff2) format('woff2');unicode-range:U+0600-06FF,U+0750-077F,U+0870-088E,U+0890-0891,U+0898-08E1,U+08E3-08FF,U+200C-200E,U+2010-2011,U+204F,U+2E41,U+FB50-FDFF,U+FE70-FE74,U+FE76-FEFC}
+@font-face{font-family:'LpCairo';font-weight:500;font-display:swap;src:url(/fonts/cairo-latin-500-normal.woff2) format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:'LpCairo';font-weight:700;font-display:swap;src:url(/fonts/cairo-arabic-700-normal.woff2) format('woff2');unicode-range:U+0600-06FF,U+0750-077F,U+0870-088E,U+0890-0891,U+0898-08E1,U+08E3-08FF,U+200C-200E,U+2010-2011,U+204F,U+2E41,U+FB50-FDFF,U+FE70-FE74,U+FE76-FEFC}
+@font-face{font-family:'LpCairo';font-weight:700;font-display:swap;src:url(/fonts/cairo-latin-700-normal.woff2) format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+2000-206F,U+2074,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+
 body.on-landing #topbar{display:none}
 .lp{--gold:#B8964E;--gold2:#DCC38A;--teal:#2B515E;--teal2:#173B48;--deep:#0B1F27;--cream:#F7F4EC;--r:22px;font-family:'LpCairo','Cairo',system-ui,sans-serif;line-height:1.7;color:var(--ink);background:var(--bg);overflow-x:clip;font-size:16px}
 .lp *,.lp *::before,.lp *::after{box-sizing:border-box}

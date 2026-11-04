@@ -115,7 +115,7 @@ export function enableZoom(root) {
 
 // ---------- الطباعة (حفظ PDF من المتصفح) ----------
 const PRINT_CSS = `
-:root{--line:#d8dee7;--ink:#1e2a3a;--mut:#64748b;--gold:#c99400}
+:root{--line:#d8dee7;--ink:#173B48;--mut:#4a626c;--gold:#9A7A36}
 *{box-sizing:border-box} body{font:15px/1.6 system-ui,'Segoe UI',Tahoma,sans-serif;color:var(--ink);margin:0;padding:28px;background:#fff}
 h1{font-size:22px;margin:0 0 .2rem} h2{font-size:16px;margin:1.2rem 0 .4rem;border-bottom:1px solid var(--line);padding-bottom:.3rem}
 .rc-head{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;border-bottom:2px solid var(--ink);padding-bottom:.8rem;margin-bottom:1rem}
