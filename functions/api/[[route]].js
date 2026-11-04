@@ -1148,7 +1148,7 @@ const ROUTES = {
     if (claimInfo) bg(c, notify(c.env, [o.customerId], 'cancel_claim', { no: orderNo(o.id), amount: claimInfo.amount, hours: s.fineClaimHours }, { url: '/#/customer' }));
     if (refund) afterRefundRequest(c, o);
     if (asDriver && (held || o.direct === true)) { // الطلب (مدفوع/دفع مباشر) رجع مفتوح: نبلّغ العميل ونعيد توزيعه على سواقين تانيين
-      bg(c, notify(c.env, [o.customerId], 'driver_cancelled', { no: orderNo(o.id) }, { url: `/#/order/${o.id}` }));
+      bg(c, notify(c.env, [o.customerId], o.direct === true ? 'driver_cancelled_direct' : 'driver_cancelled', { no: orderNo(o.id) }, { url: `/#/order/${o.id}` }));
       bg(c, dispatchNewOrder(c.env, { id: o.id, service: o.service, size: o.size, vehicleClass: o.vehicleClass, passengers: o.passengers, pickup: o.pickup, dropoff: o.dropoff, price: o.price }, s));
     }
     return { ok: true, refund, ...(claimInfo ? { fine: claimInfo.amount } : {}) };

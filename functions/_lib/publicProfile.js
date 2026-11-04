@@ -62,7 +62,7 @@ ${jsonld ? `<script type="application/ld+json">${JSON.stringify(jsonld)}</script
 <style>${STYLE}</style></head>
 <body><header><a href="/" style="color:var(--fg);text-decoration:none;font-weight:800">اشحنلي</a></header>
 <main class="wrap">${body}<p style="margin-top:22px"><a class="btn" href="${esc(origin)}/#/register">سجّل مجاناً في اشحنلي</a></p></main>
-<footer>اشحنلي — نقل بضائع بسعر فوري وفلوس محجوزة لحد التسليم. البيانات المعروضة عامة ومختصرة.</footer>
+<footer>اشحنلي — نقل بضائع بسعر فوري وسواقين موثّقين. البيانات المعروضة عامة ومختصرة.</footer>
 </body></html>`;
 
 const html = (body, status = 200, extra = {}) => new Response(body, { status, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=600', ...extra } });
@@ -104,7 +104,7 @@ export function driverPage(env, u, origin, s) {
 /** صفحة فهرس السواقين العامين (أعلى 60 حسب الرحلات المكتملة). */
 export function driversIndexPage(drivers, origin) {
   const title = 'سواقين اشحنلي — أفضل السواقين الموثّقين';
-  const desc = 'تعرف على سواقين اشحنلي الموثّقين ومستوى ثقتهم وتقييماتهم، واطلب نقل بضائعك بأمان مع فلوس محجوزة لحد التسليم.';
+  const desc = 'تعرف على سواقين اشحنلي الموثّقين ومستوى ثقتهم وتقييماتهم، واطلب نقل بضائعك بسعر واضح قبل التأكيد.';
   const body = `<h1>سواقين اشحنلي</h1>
   <p class="mut">قائمة عامة بالسواقين المفعّلين (أعلى ${drivers.length} حسب الرحلات المكتملة). بدون أي بيانات تواصل.</p>
   <div class="card">${drivers.length ? `<ul class="clean">${drivers.map((d) => `<li><span><a href="/drivers/${esc(d.id)}">${esc(d.name)}</a>${d.vehicle ? ` <span class="mut">· ${esc(d.vehicle)}</span>` : ''}</span><span class="mut">★ ${d.rating || '—'} · ${d.trips} رحلة</span></li>`).join('')}</ul>` : '<p class="mut">مفيش سواقين معروضين حالياً.</p>'}</div>`;

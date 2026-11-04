@@ -61,6 +61,7 @@ const MSG = {
   missing_report: { ar: ['بلاغ فقدان شحنة', 'عميل بلّغ إن الشحنة في الطلب {no} مفقودة. محفظة السواق اتجمّدت لحد القرار.'], en: ['Missing cargo report', 'A customer reported the cargo missing on order {no}. The driver wallet is frozen until a decision.'] },
   cancel_comp: { ar: ['تم إلغاء الطلب', 'العميل لغى الطلب {no}. تم إضافة {amount} ج تعويض لمحفظتك'], en: ['Order cancelled', 'The customer cancelled {no}. EGP {amount} compensation was added to your wallet'] },
   cancel_plain: { ar: ['تم إلغاء الطلب', 'العميل لغى الطلب {no}'], en: ['Order cancelled', 'The customer cancelled {no}'] },
+  driver_cancelled_direct: { ar: ['السواق اعتذر عن الطلب', 'الطلب {no} رجع ظاهر لسواقين تانيين'], en: ['The driver withdrew', 'Order {no} is visible to other drivers again'] },
   driver_cancelled: { ar: ['السواق اعتذر عن الطلب', 'الطلب {no} رجع ظاهر لسواقين تانيين ومبلغك لسه محجوز'], en: ['The driver withdrew', 'Order {no} is visible to other drivers again and your payment is still held'] },
   report: { ar: ['بلاغ جديد', 'بلاغ من {name} على الطلب {no}'], en: ['New report', 'Report from {name} on order {no}'] },
   report_handled: { ar: ['تمت مراجعة بلاغك', 'الإدارة راجعت بلاغك على الطلب {no}'], en: ['Your report was reviewed', 'Support reviewed your report on order {no}'] },

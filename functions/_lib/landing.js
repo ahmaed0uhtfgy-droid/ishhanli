@@ -118,7 +118,7 @@ ${foot}</div>`;
   }
 
   // أرقام التسعير العامة لحاسبة السعر (نفس الأرقام اللي بتظهر للعميل وقت الطلب)
-  const pub = { categories: settings.categories, sizes: settings.sizes, perKm: settings.perKm, minPrice: settings.minPrice, roadFactor: settings.roadFactor, vehiclePricing: settings.vehiclePricing, vehicleGuide: settings.vehicleGuide };
+  const pub = { categories: settings.categories, sizes: settings.sizes, perKm: settings.perKm, minPrice: settings.minPrice, roadFactor: settings.roadFactor, vehiclePricing: settings.vehiclePricing, vehicleGuide: settings.vehicleGuide, facts: f };
   body += `<script type="application/json" id="lpPub">${JSON.stringify(pub).replace(/</g, '\\u003c')}</script>`;
 
   // ---------- SEO ----------
