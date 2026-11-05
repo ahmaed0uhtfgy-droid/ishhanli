@@ -17,8 +17,8 @@ export function rulesSections(S = {}) {
   };
   const code = S.deliveryCode === true && S.deliveryCodeAvailable === true;
   const guard = S.valueGuardOn === true && S.deliveryCodeAvailable === true; // حراسة القيمة شغّالة فعلاً (محتاجة سر الكود)
-  const direct = S.dcEnabled === true, fines = direct && S.finesEnabled === true, feesOn = direct && (v.dcPct > 0 || v.perKm > 0 || ['pickup', 'half_ton', 'truck', 'jumbo'].some((k) => S.vehiclePricing?.[k]?.kmFee > 0));
-  const vehPrice = ['pickup', 'half_ton', 'truck', 'jumbo'].some((k) => S.vehiclePricing?.[k]?.perKm > 0);
+  const direct = S.dcEnabled === true, fines = direct && S.finesEnabled === true, feesOn = direct && (v.dcPct > 0 || v.perKm > 0 || ['pickup', 'half_ton', 'jumbo', 'truck'].some((k) => S.vehiclePricing?.[k]?.kmFee > 0));
+  const vehPrice = ['pickup', 'half_ton', 'jumbo', 'truck'].some((k) => S.vehiclePricing?.[k]?.perKm > 0);
   const R = (id, show = true) => (show ? { id, vars: v } : null);
   return [
     { id: 'all', rules: [R('a1'), R('a2'), R('a3'), R('a4'), R('a5'), R('a6'), R('a8'), R('a9'), R('a7', v.autoHours > 0), R('a10', direct), R('a11', vehPrice)].filter(Boolean) },

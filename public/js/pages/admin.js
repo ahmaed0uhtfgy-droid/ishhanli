@@ -2,20 +2,24 @@ import { api, poll } from '../api.js';
 import { gpoll } from '../sync.js';
 import { state } from '../state.js';
 import { t, getLang } from '../i18n.js';
+import '../i18n-admin.js'; // نصوص الأدمن بتتحمّل مع صفحة الأدمن بس
 import { cleanSite, lpFacts, lpSlots, lpText, LP_FIELDS, LP_GROUPS, LP_SECTIONS } from '../landing-content.js';
 import { $, $$, html, raw, render, toast, errMsg, busy, spinner, stamp, orderNo, fmtMoney, fmtNum, fmtDate, fmtDay, ratingText, trustBadge, confirmDialog, promptDialog, openModal, label } from '../ui.js';
 import { hydrate, imgTag } from '../storage.js';
 import { toCsv, downloadCsv, downloadJson } from '../csv.js';
 
 const TABS = ['overview', 'finance', 'payments', 'users', 'joins', 'orders', 'withdrawals', 'disputes', 'refunds', 'reports', 'coupons', 'referrals', 'cod', 'dc', 'fines', 'settings', 'blacklist', 'audit', 'monitoring'];
+const LEGACY_TABS = ['payments', 'withdrawals', 'disputes', 'refunds', 'cod']; // تبويبات نظام الضمان القديم: مخفية لما الدفع المباشر شغّال (إلا لو الأدمن فعّل إظهارها)
+const legacyHidden = () => state.settings?.dcEnabled !== false && state.settings?.adminShowLegacy !== true;
 const onError = (e) => toast(errMsg(e), true);
 const imgs = (refs) => html`<div class="photos">${(refs || []).filter(Boolean).map((r) => raw(imgTag(r)))}</div>`;
 const roleKey = (u) => (u.accountType === 'company' ? 'auth.roleCompany' : 'auth.role' + (u.role === 'driver' ? 'Driver' : 'Customer'));
 
 export function renderAdmin(el, tab) {
-  if (!TABS.includes(tab)) tab = 'overview';
+  const shown = legacyHidden() ? TABS.filter((k) => !LEGACY_TABS.includes(k)) : TABS;
+  if (!shown.includes(tab)) tab = 'overview';
   render(el, html`<div class="page-head"><h1>${t('admin.title')}</h1></div>
-    <nav class="tabs">${TABS.map((k) => html`<a href="#/admin/${k}" data-tab="${k}" class="${k === tab ? 'on' : ''}">${t('admin.tab.' + k)}<span class="dot" hidden></span></a>`)}</nav><div id="body">${spinner()}</div>`);
+    <nav class="tabs">${shown.map((k) => html`<a href="#/admin/${k}" data-tab="${k}" class="${k === tab ? 'on' : ''}">${t('admin.tab.' + k)}<span class="dot" hidden></span></a>`)}</nav><div id="body">${spinner()}</div>`);
   // شارات الأعداد المعلّقة (استعلامات خفيفة على index الحالة) — كل 20 ثانية
   const badges = gpoll(['orders', 'users', 'withdrawals', 'disputes', 'refunds', 'reports'], () => api('admin/badges'), 20000, ({ badges: b }) => {
     for (const [k, n] of Object.entries(b)) { const d = $(`[data-tab="${k}"] .dot`, el); if (d) { d.textContent = n; d.hidden = !n; } }
@@ -39,8 +43,8 @@ function overview(body) {
         <div class="tile"><b>${T.active}</b><span>${t('admin.ordersActive')}</span></div>
         <div class="tile"><b>${money(T.revenue)}</b><span>${t('admin.revenue')}</span></div>
         <div class="tile"><b>${money(T.commission)}</b><span>${t('admin.commissions')}</span></div>
-        <div class="tile"><b>${money(T.held)}</b><span>${t('admin.escrowHeld')}</span></div>
-        <div class="tile"><b>${money(s.refundsDue)}</b><span>${t('admin.refundsDue')}</span></div>
+        ${legacyHidden() ? '' : html`<div class="tile"><b>${money(T.held)}</b><span>${t('admin.escrowHeld')}</span></div>
+        <div class="tile"><b>${money(s.refundsDue)}</b><span>${t('admin.refundsDue')}</span></div>`}
         <div class="tile"><b>${s.activeDrivers}</b><span>${t('admin.activeDrivers')}</span></div>
         <div class="tile"><b>${s.activeCustomers}</b><span>${t('admin.activeCustomers')}</span></div>
       </div>
@@ -124,7 +128,7 @@ function joins(body, badges) {
       <div class="row"><h3 class="grow">${u.accountType === 'company' ? (u.companyName || u.name) : u.name}</h3><span class="stamp s-pending">${t(roleKey(u))}</span></div>
       <dl class="kv"><dt>${t('auth.name')}</dt><dd>${u.name}</dd><dt>${t('auth.phone')}</dt><dd dir="ltr">${u.phone}</dd><dt>${t('auth.nationalId')}</dt><dd dir="ltr">${u.nationalId}</dd>
         ${u.role === 'driver' && u.vehicleType ? html`<dt>${t('auth.vehicleType')}</dt><dd>${t('vehicle.' + u.vehicleType)}</dd>` : ''}<dt>${t('admin.joinedAt')}</dt><dd>${fmtDate(u.createdAt)}</dd></dl>
-      ${imgs([u.idRef, u.licenseRef, u.vehicleRegRef, u.vehiclePhotoRef, u.commercialRegRef, u.taxCardRef].filter(Boolean))}
+      ${imgs([u.idRef, u.licenseRef, u.vehicleRegRef, u.vehiclePhotoRef, u.selfieRef, u.commercialRegRef, u.taxCardRef].filter(Boolean))}
       <div class="row"><button class="btn ok" data-d="active" data-id="${u.id}">${t('admin.approve')}</button><button class="btn danger" data-d="rejected" data-id="${u.id}">${t('admin.reject')}</button><button class="btn ghost sm" data-open="${u.id}">${t('admin.review')}</button></div></div>`)}</div>` : html`<div class="empty">${t('admin.noJoins')}</div>`);
     hydrate(body);
   }, { dedupe: true, onError });
@@ -146,7 +150,7 @@ function joins(body, badges) {
 
 function userModal(u, reload) {
   if (!u) return;
-  const docsRefs = [['auth.idPhoto', u.idRef], ['auth.license', u.licenseRef], ['auth.vehicleReg', u.vehicleRegRef], ['auth.vehiclePhoto', u.vehiclePhotoRef], ['auth.commercialReg', u.commercialRegRef], ['auth.taxCard', u.taxCardRef]].filter(([, r]) => r);
+  const docsRefs = [['auth.idPhoto', u.idRef], ['auth.license', u.licenseRef], ['auth.vehicleReg', u.vehicleRegRef], ['auth.vehiclePhoto', u.vehiclePhotoRef], ['auth.selfieId', u.selfieRef], ['auth.officialDoc', u.commercialRegRef], ['auth.taxCard', u.taxCardRef]].filter(([, r]) => r);
   const { el, close } = openModal(html`<div class="row"><h3 class="grow">${u.name}</h3>${stamp(u.status)}</div>
     <dl class="kv"><dt>${t('admin.role')}</dt><dd>${t(roleKey(u))}</dd><dt>${t('auth.phone')}</dt><dd dir="ltr">${u.phone} ${u.phoneVerified ? '✓' : ''}</dd>
       <dt>${t('auth.nationalId')}</dt><dd dir="ltr">${u.nationalId}</dd><dt>${t('auth.email')}</dt><dd dir="ltr">${u.email}</dd><dt>${t('auth.area')}</dt><dd>${u.area || '—'}</dd>
@@ -523,7 +527,7 @@ function settings(body) {
     <div class="card stack"><h3>${t('admin.vguide.title')}</h3><p class="hint">${t('admin.vguide.hint')}</p>
       <label class="row"><input type="checkbox" name="companionAsk" ${S.companionAsk !== false ? 'checked' : ''}> <span>${t('admin.s.companionAsk')}</span></label>
       <label class="row"><input type="checkbox" name="vehicleGuideOn" ${S.vehicleGuideOn !== false ? 'checked' : ''}> <span>${t('admin.s.vehicleGuideOn')}</span></label>
-      <div class="grid-2">${['pickup', 'half_ton', 'truck', 'jumbo'].map((k) => html`<div class="stack"><b>${t('vehicle.' + k)}</b>
+      <div class="grid-2">${['pickup', 'half_ton', 'jumbo', 'truck'].map((k) => html`<div class="stack"><b>${t('vehicle.' + k)}</b>
         <label class="f">${t('admin.vguide.maxKg')}<input type="number" name="vg.${k}.maxKg" min="0" max="100000" step="1" inputmode="numeric" value="${S.vehicleGuide?.[k]?.maxKg ?? 0}" required></label>
         <label class="f">${t('admin.vguide.size')}<select name="vg.${k}.size">${Object.entries(S.sizes || {}).map(([sk, sv]) => html`<option value="${sk}" ${S.vehicleGuide?.[k]?.size === sk ? 'selected' : ''}>${label(sv, sk)}</option>`)}</select></label></div>`)}</div></div>
     <div class="card stack"><h3>${t('admin.cod.settingsTitle')}</h3><p class="hint">${t('admin.cod.settingsHint')}</p>
@@ -534,7 +538,7 @@ function settings(body) {
         <label class="f">${t('admin.s.codGrace')}<input type="number" name="codGraceDays" min="0" max="30" step="1" inputmode="numeric" value="${S.codGraceDays ?? 3}" required></label></div>
       <label class="f">${t('admin.s.codScope')}<select name="codBlockScope"><option value="cod" ${S.codBlockScope !== 'all' ? 'selected' : ''}>${t('admin.s.codScope.cod')}</option><option value="all" ${S.codBlockScope === 'all' ? 'selected' : ''}>${t('admin.s.codScope.all')}</option></select></label></div>
     <div class="card stack"><h3>${t('admin.vp.title')}</h3><p class="hint">${t('admin.vp.hint')}</p>
-      ${['pickup', 'half_ton', 'truck', 'jumbo'].map((k) => { const cur = S.vehiclePricing?.[k] || {}, gz = S.sizes?.[S.vehicleGuide?.[k]?.size]; return html`<div class="stack" style="gap:.3rem;border-top:1px solid var(--rule);padding-top:.5rem"><b>${t('vehicle.' + k)}</b>
+      ${['pickup', 'half_ton', 'jumbo', 'truck'].map((k) => { const cur = S.vehiclePricing?.[k] || {}, gz = S.sizes?.[S.vehicleGuide?.[k]?.size]; return html`<div class="stack" style="gap:.3rem;border-top:1px solid var(--rule);padding-top:.5rem"><b>${t('vehicle.' + k)}</b>
         <p class="hint">${t('admin.vp.current', { perKm: fmtNum((S.perKm || 0) * Number(gz?.mult || 1)), min: fmtNum(S.minPrice || 0) })}</p>
         <div class="grid-2">${[['base', cur.base], ['perKm', cur.perKm], ['minPrice', cur.minPrice], ['kmFee', cur.kmFee]].map(([f, v]) => html`<label class="f">${t('admin.vp.' + f)}<input type="number" name="vp.${k}.${f}" min="0" max="${f === 'perKm' || f === 'kmFee' ? 10000 : 1000000}" step="0.1" inputmode="decimal" value="${v ?? 0}" required></label>`)}</div></div>`; })}
       <label class="f">${t('admin.s.dcPerKm')}<input type="number" name="dcPerKm" min="0" max="10000" step="0.1" inputmode="decimal" value="${S.dcPerKm ?? 0}" required></label>
@@ -546,6 +550,7 @@ function settings(body) {
       <label class="f">${t('admin.s.jobsRadiusKm')}<input type="number" name="jobsRadiusKm" min="0" max="500" step="0.5" inputmode="decimal" value="${S.jobsRadiusKm ?? 15}" required></label></div>
     <div class="card stack"><h3>${t('admin.dc.settingsTitle')}</h3><p class="hint">${t('admin.dc.settingsHint')}</p>
       <label class="row"><input type="checkbox" name="dcEnabled" ${S.dcEnabled === true ? 'checked' : ''}> <span>${t('admin.s.dcEnabled')}</span></label>
+      <label class="row"><input type="checkbox" name="adminShowLegacy" ${S.adminShowLegacy === true ? 'checked' : ''}> <span>${t('admin.s.showLegacy')}</span></label>
       <div class="grid-2"><label class="f">${t('admin.s.dcPct')}<input type="number" name="dcPct" min="0" max="50" step="0.1" inputmode="decimal" value="${S.dcPct ?? 2}" required></label>
         <label class="f">${t('admin.s.dcLimit')}<input type="number" name="dcLimit" min="1" max="100000000" step="1" inputmode="numeric" value="${S.dcLimit ?? 1000}" required></label>
         <label class="f">${t('admin.s.dcAutoHours')}<input type="number" name="dcAutoCompleteHours" min="0" max="720" step="1" inputmode="numeric" value="${S.dcAutoCompleteHours ?? 24}" required></label>
@@ -621,10 +626,10 @@ function settings(body) {
           categories: readKv('categories'), sizes: readKv('sizes'),
           companionAsk: f.elements.companionAsk.checked, vehicleGuideOn: f.elements.vehicleGuideOn.checked,
           codEnabled: f.elements.codEnabled.checked, codCommissionPct: n('codCommissionPct'), codMaxAmount: n('codMaxAmount'), codPeriodDays: n('codPeriodDays'), codGraceDays: n('codGraceDays'), codBlockScope: f.elements.codBlockScope.value,
-          dcPerKm: n('dcPerKm'), fineCreditToWallet: f.elements.fineCreditToWallet.checked, vehiclePricing: Object.fromEntries(['pickup', 'half_ton', 'truck', 'jumbo'].map((k) => [k, Object.fromEntries(['base', 'perKm', 'minPrice', 'kmFee'].map((f) => [f, n(`vp.${k}.${f}`)]))])),
+          dcPerKm: n('dcPerKm'), fineCreditToWallet: f.elements.fineCreditToWallet.checked, vehiclePricing: Object.fromEntries(['pickup', 'half_ton', 'jumbo', 'truck'].map((k) => [k, Object.fromEntries(['base', 'perKm', 'minPrice', 'kmFee'].map((f) => [f, n(`vp.${k}.${f}`)]))])),
           finesEnabled: f.elements.finesEnabled.checked, ...Object.fromEntries(['fineFreeCancelMin', 'fineWaitMin', 'fineEnRouteAmount', 'fineArrivedAmount', 'fineClaimHours', 'fineObjectHours', 'fineDriverSharePct', 'fineCollectorPct', 'fineMonthlyCap', 'fineMaxClaimsPerDay', 'fineBlockLimit', 'samePickupMeters', 'samePickupMax'].map((k) => [k, n(k)])),
-          dcEnabled: f.elements.dcEnabled.checked, dcPct: n('dcPct'), dcLimit: n('dcLimit'), dcAutoCompleteHours: n('dcAutoCompleteHours'), jobsRadiusKm: n('jobsRadiusKm'), dcPay: { wallet: f.elements['dcPay.wallet'].value.trim(), walletName: f.elements['dcPay.walletName'].value.trim() },
-          vehicleGuide: Object.fromEntries(['pickup', 'half_ton', 'truck', 'jumbo'].map((k) => [k, { maxKg: n(`vg.${k}.maxKg`), size: f.elements[`vg.${k}.size`].value }])),
+          dcEnabled: f.elements.dcEnabled.checked, adminShowLegacy: f.elements.adminShowLegacy.checked, dcPct: n('dcPct'), dcLimit: n('dcLimit'), dcAutoCompleteHours: n('dcAutoCompleteHours'), jobsRadiusKm: n('jobsRadiusKm'), dcPay: { wallet: f.elements['dcPay.wallet'].value.trim(), walletName: f.elements['dcPay.walletName'].value.trim() },
+          vehicleGuide: Object.fromEntries(['pickup', 'half_ton', 'jumbo', 'truck'].map((k) => [k, { maxKg: n(`vg.${k}.maxKg`), size: f.elements[`vg.${k}.size`].value }])),
           passengersEnabled: f.elements.passengersEnabled.checked, passengerClasses: readKv('passengerClasses'),
           levelDiscountPct: { trusted: n('levelDiscountPct.trusted'), pro: n('levelDiscountPct.pro'), elite: n('levelDiscountPct.elite') },
     trustRules: Object.fromEntries(['trusted', 'pro', 'elite'].map((k) => [k, { avg: n(`trustRules.${k}.avg`), ratings: n(`trustRules.${k}.ratings`) }])),

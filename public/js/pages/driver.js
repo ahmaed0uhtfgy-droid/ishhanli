@@ -9,26 +9,30 @@ import { attachDocCheck } from '../docCheck.js';
 import { getPos, cachedPos } from '../geo.js';
 import { chime, unlockAudio } from '../sound.js';
 import { pushSupport, enablePush } from '../push.js';
+import { dcBanner } from './driver-fees.js';
 
-const TABS = [['available', 'driver.tabAvail'], ['jobs', 'driver.tabJobs'], ['wallet', 'driver.tabWallet']];
+const TABS_ALL = [['available', 'driver.tabAvail'], ['jobs', 'driver.tabJobs'], ['wallet', 'driver.tabWallet']];
+const tabsFor = () => (state.settings?.dcEnabled === false ? TABS_ALL : TABS_ALL.filter(([k]) => k !== 'wallet')); // المحفظة (سحب أرباح الضمان) مش موجودة في الدفع المباشر
 const onError = (e) => toast(errMsg(e), true);
 let driverOnline = false; // حالة "متاح" (بتتشارك بين شريط الحضور وتنبيه الطلب الجديد)
 
 // نفس منطق السيرفر: العربية تخدم إيه؟ (بضاعة حسب الحجم، أو ركاب حسب فئة العربية)
-const CARGO_CAP = { car: ['small'], van: ['small'], microbus: ['small'], minibus: [], pickup: ['small'], half_ton: ['small', 'medium'], truck: ['small', 'medium', 'large'] };
+const CARGO_CAP = { car: ['small'], van: ['small'], microbus: ['small'], minibus: [], pickup: ['small'], half_ton: ['small', 'medium'], jumbo: ['small', 'medium', 'large'], truck: ['small', 'medium', 'large', 'xlarge'] };
 const PAX_CAP = { car: ['car'], van: ['car', 'van'], microbus: ['car', 'van', 'microbus'], minibus: ['car', 'van', 'microbus', 'minibus'] };
 const canServe = (v, o) => {
   if (o.service === 'passengers') { const cap = PAX_CAP[v]; return !!cap && (!['car', 'van', 'microbus', 'minibus'].includes(o.vehicleClass) || cap.includes(o.vehicleClass)); }
-  const cap = CARGO_CAP[v]; return !cap || !['small', 'medium', 'large'].includes(o.size) || cap.includes(o.size);
+  const cap = CARGO_CAP[v]; return !cap || !['small', 'medium', 'large', 'xlarge'].includes(o.size) || cap.includes(o.size);
 };
 
 export function renderDriver(el, tab) {
-  const company = state.profile.accountType === 'company', tabs = company ? [...TABS, ['fleet', 'fleet.tab']] : TABS; // شركة الشحن عندها تاب لسواقينها
+  const company = state.profile.accountType === 'company', tabs = company ? [...tabsFor(), ['fleet', 'fleet.tab']] : tabsFor(); // شركة الشحن عندها تاب لسواقينها
   render(el, html`<div class="page-head"><h1>${t('driver.title')}</h1><span class="muted">${ratingText(state.profile)}</span></div>
     <div id="trust"></div>
     <div id="presence"></div>
+    <div id="dcBanner"></div>
     <nav class="tabs" aria-label="driver">${tabs.map(([k, l]) => html`<a href="#/driver${k === 'available' ? '' : '/' + k}" class="${tab === k ? 'on' : ''}">${t(l)}</a>`)}</nav><div id="body">${skeleton(3)}</div>`);
   const body = $('#body', el), stopPresence = presenceBar($('#presence', el));
+  if (state.settings?.dcEnabled !== false) api('dc/summary', {}).then((d) => { if ($('#dcBanner', el)) render($('#dcBanner', el), dcBanner(d)); }).catch(() => {});
   const paintTrust = (tr) => render($('#trust', el), tr ? trustCard(tr) : '');
   paintTrust(state.profile.trust);
   api('me').then((r) => { if (r.profile?.trust) { Object.assign(state.profile, { trust: r.profile.trust, ratingSum: r.profile.ratingSum, ratingCount: r.profile.ratingCount, completedOrders: r.profile.completedOrders }); paintTrust(r.profile.trust); } }).catch(() => {});
@@ -135,7 +139,7 @@ function jobs(body) {
 }
 
 // ---------- سواقين الشركة: بيانات كاملة لكل سواق (بطاقة/رخصة/لوحة) — عشان لو الشحنة اتلفت أو اتسرقت يبقى معروف مين استلمها ----------
-const FLEET_VEHICLES = ['pickup', 'half_ton', 'truck', 'jumbo', 'van', 'car', 'microbus', 'minibus'];
+const FLEET_VEHICLES = ['pickup', 'half_ton', 'jumbo', 'truck', 'van', 'car', 'microbus', 'minibus'];
 function fleet(body) {
   const file = (name, key, req = true) => html`<label class="f">${t(key)}<input type="file" name="${name}" accept="image/*" ${req ? 'required' : ''}></label>`;
   render(body, html`<div class="stack"><div class="card stack"><h3>${t('fleet.addTitle')}</h3><p class="hint">${t('fleet.addHint')}</p>

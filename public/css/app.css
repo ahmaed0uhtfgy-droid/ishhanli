@@ -251,7 +251,7 @@ details.card > summary { cursor: pointer; list-style: none; } details.card > sum
 /* ---------- كود التسليم + متابعة المستلم ---------- */
 .code-card { display: flex; align-items: center; gap: 1rem; border-inline-start: 5px solid var(--line); }
 .code-digits { font: 700 1.9rem/1 var(--font-display, inherit); letter-spacing: .12em; background: var(--asphalt); color: var(--line); padding: .55rem .9rem; border-radius: 10px; }
-.steps-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: .4rem; font-size: .72rem; color: var(--slate); text-align: center; }
+.steps-bar { display: grid; grid-template-columns: repeat(5, 1fr); gap: .4rem; font-size: .72rem; color: var(--slate); text-align: center; }
 .steps-bar div { padding-top: .8rem; position: relative; }
 .steps-bar div::before { content: ''; position: absolute; top: 0; inset-inline: 0; height: 5px; border-radius: 9px; background: var(--rule); }
 .steps-bar .on { color: var(--ink); font-weight: 600; } .steps-bar .on::before { background: var(--line); } .steps-bar .done::before { background: var(--nile); }
@@ -326,3 +326,33 @@ html[data-theme="dark"] .leaflet-control-attribution a { color: var(--blue); }
   .topbar .btn.sm { padding-inline: .6rem; min-height: 40px; }
   .brand span { font-size: 1.05rem; }
 }
+
+/* ===== تحسين شكلي (v22): مراحل الطلب، كروت الأرقام، التبويبات، صفحة رسوم المنصة ===== */
+.steps { padding: .4rem 0 .2rem; } .steps li { font-size: .8rem; padding-top: 28px; }
+.steps li::before { top: 9px; border-top-width: 4px; } .steps li::after { top: 0; width: 20px; height: 20px; inset-inline-start: calc(50% - 10px); border-width: 3px; }
+.steps li.done::after { content: '✓'; color: #fff; font-size: .7rem; line-height: 14px; text-align: center; background: var(--nile, #2E7D5B); border-color: var(--nile, #2E7D5B); }
+.steps li.now::after { background: var(--line); border-color: var(--ink); content: ''; box-shadow: 0 0 0 5px var(--line-soft); }
+.steps li.now { color: var(--ink); }
+.tabs { gap: .4rem; border-bottom: 0; background: var(--line-soft); padding: .35rem; border-radius: 14px; }
+.tabs a { border-radius: 10px; border-bottom: 0; margin-bottom: 0; padding: .5rem .95rem; }
+.tabs a.on { background: var(--paper); box-shadow: 0 2px 8px -3px rgba(15, 46, 58, .35); }
+.tile { border-inline-start-width: 5px; transition: transform .15s ease, box-shadow .15s ease; } .tile:hover { transform: translateY(-2px); }
+.kpi { border: 1px solid var(--rule); box-shadow: none; } .kpi-v { color: var(--ink); }
+.card { border: 1px solid var(--rule); } .card.stack { gap: .8rem; }
+.action { border-width: 1px; border-inline-start-width: 6px; } .action.bad { border-color: var(--brick); } .action > b { display: block; margin-bottom: .2rem; }
+.howto { margin: 0; padding-inline-start: 1.3rem; display: grid; gap: .35rem; color: var(--slate); } .howto li::marker { color: var(--line-deep); font-weight: 700; }
+.pay-box { background: var(--line-soft); border: 2px dashed var(--line-deep); border-radius: 14px; } .pay-box .row { align-items: center; gap: .6rem; } .pay-box [dir="ltr"] { font-size: 1.25rem; letter-spacing: .04em; }
+.pbar { height: 12px; } .pbar.bad .pbar-fill { background: var(--brick); }
+table { border-collapse: collapse; width: 100%; } table th { background: var(--line-soft); color: var(--ink); font-size: .85rem; text-align: start; } table th, table td { padding: .6rem .7rem; border-bottom: 1px solid var(--rule); } table tbody tr:hover { background: var(--mist); }
+@media (max-width: 600px) { .steps li { min-width: 62px; font-size: .72rem; } .tabs a { padding: .45rem .7rem; } .kpi-v { font-size: 1.3rem; } }
+@media (prefers-reduced-motion: reduce) { .tile { transition: none; } }
+
+/* ===== تحسين شكلي (v22): كارت الطلب والشارات ===== */
+.waybill { border-radius: 14px; border: 1px solid var(--rule); transition: transform .15s ease, box-shadow .15s ease; }
+a.waybill:hover { transform: translateY(-2px); box-shadow: 0 8px 22px -10px rgba(15, 46, 58, .35); }
+.stamp { transform: none; border-width: 1.5px; border-radius: 999px; padding: .15rem .7rem; font-size: .75rem; background: color-mix(in srgb, currentColor 9%, var(--paper)); }
+.wb-no { color: var(--blue); } .wb-foot .price { color: var(--ink); background: var(--line-soft); padding: .1rem .6rem; border-radius: 999px; }
+.tiles { gap: .8rem; } .tile b { font-size: 1.5rem; }
+.page-head h1 { letter-spacing: -.01em; }
+.btn.block { border-radius: 12px; min-height: 46px; }
+@media (prefers-reduced-motion: reduce) { .waybill { transition: none; } a.waybill:hover { transform: none; } }

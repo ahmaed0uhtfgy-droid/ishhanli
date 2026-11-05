@@ -1,6 +1,7 @@
 // صفحات قانونية ثابتة: شروط الاستخدام وسياسة الخصوصية. متاحة للزوار ولأي مستخدم مسجّل.
 // المحتوى كله من جدول الترجمة (i18n) عشان يتبدّل مع تغيير اللغة.
 import { t } from '../i18n.js';
+import '../i18n-info.js';
 import { html, render } from '../ui.js';
 import { siteFacts } from '../facts.js';
 

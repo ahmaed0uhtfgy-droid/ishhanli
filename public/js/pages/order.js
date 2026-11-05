@@ -30,6 +30,8 @@ const arrivalHtml = (o) => {
   return html`<div class="action info"><p class="small">${t('fine.arrivedAt', { time: fmtDate(o.arrivedAt) })} ${t('fine.waitUntil', { time: fmtDate(o.arrivedAt + (S.fineWaitMin || 0) * 60000) })}</p>
     <p class="small">${t('fine.driverExplain', { amount: fmtMoney(S.fineArrivedAmount), credit: fmtMoney(fineCreditC(S.fineArrivedAmount)) })}</p><button class="btn danger sm" data-act="noshow">${t('fine.noshow')}</button></div>`;
 };
+const STEPS_UNI = ['open', 'accepted', 'picked_up', 'delivering', 'completed'];
+const STEP_OF_UNI = { awaiting_payment: 0, payment_review: 0, open: 0, accepted: 1, paid: 1, heading_pickup: 1, picked_up: 2, in_transit: 3, delivered: 3, completed: 4, resolved: 4 };
 const STEPS_DIRECT = ['open', 'accepted', 'picked_up', 'in_transit', 'completed']; // الدفع المباشر: مفيش خطوة دفع ولا ضمان — بيتكمّل بمجرد تأكيد السواق للتسليم
 const STEP_OF_DIRECT = { open: 0, paid: 1, heading_pickup: 1, picked_up: 2, in_transit: 3, delivered: 4, completed: 4, resolved: 4 };
 const STEP_OF_PRE = { awaiting_payment: 0, payment_review: 0, open: 1, paid: 2, heading_pickup: 2, picked_up: 3, in_transit: 4, delivered: 5, completed: 6, resolved: 6 };
@@ -140,7 +142,7 @@ export function renderOrder(el, id) {
     if (o.payMode === 'before') return html`<div class="action good"><p>${t('order.prepaidFixed', { price: fmtMoney(o.price) })}</p>${manifestHtml(o)}<button class="btn primary block" data-act="accept">${t('order.acceptPrepaid')}</button></div>`;
     const S = state.settings, canInstant = o.instant !== false, my = o.myOffer?.status === 'pending' ? o.myOffer : null;
     const lo = Math.max(Math.ceil(S.minPrice || 0), Math.ceil((o.price * (S.offerMinPct || 70)) / 100)), hi = Math.ceil((o.price * (S.offerMaxPct || 200)) / 100);
-    return html`<div class="action"><p>${t('order.driverOpenMsg')}</p>${o.fineDue > 0 ? html`<p class="small no-t"><b>${t('fine.openFine', { fine: fmtMoney(o.fineDue) })}</b></p>` : ''}${manifestHtml(o)}
+    return html`<div class="action"><p>${t(o.direct === true ? 'order.driverOpenMsg.direct' : 'order.driverOpenMsg')}</p>${o.fineDue > 0 ? html`<p class="small no-t"><b>${t('fine.openFine', { fine: fmtMoney(o.fineDue) })}</b></p>` : ''}${manifestHtml(o)}
       ${canInstant ? html`<button class="btn primary block" data-act="accept">${t('order.acceptAt', { price: fmtMoney(o.price) })}</button>` : html`<p class="hint">${t('offer.offersOnly')}</p>`}
       ${S.offersEnabled === false ? '' : html`<div class="offer-box">
         ${my ? html`<p style="margin:0">${t('offer.yours')}: <b>${fmtMoney(my.price)}</b> — ${t('offer.waiting')}</p>` : ''}
@@ -149,11 +151,11 @@ export function renderOrder(el, id) {
         <div class="row"><button class="btn ${canInstant ? 'ghost' : 'primary'} grow" data-act="offer">${my ? t('offer.update') : t('offer.send')}</button>${my ? html`<button class="btn ghost sm" data-act="offerWithdraw">${t('offer.withdraw')}</button>` : ''}</div></div>`}</div>`;
   }
 
+  // المراحل الخمس الموحّدة لكل الأدوار ولكل أنظمة الدفع: طلب ← قبول السواق ← استلام الشحنة ← تسليم ← اكتمال (التفاصيل الأدق زي «في الطريق للاستلام» بتظهر كحالة جوّه المرحلة)
   function stepsHtml(o) {
     if (o.status === 'cancelled') return '';
-    const dir = o.direct === true, pre = o.payMode === 'before', map = dir ? STEP_OF_DIRECT : pre ? STEP_OF_PRE : STEP_OF;
-    const idx = o.status === 'disputed' ? (map[o.prevStatus] ?? 2) : (map[o.status] ?? 0);
-    return html`<ol class="steps" aria-label="${t('order.progress')}">${(dir ? STEPS_DIRECT : pre ? STEPS_PRE : STEPS).map((s, i) => html`<li class="${i < idx ? 'done' : i === idx ? 'done now' : ''}">${stepLabel(s, o)}</li>`)}</ol>`;
+    const idx = o.status === 'disputed' ? (STEP_OF_UNI[o.prevStatus] ?? 1) : (STEP_OF_UNI[o.status] ?? 0);
+    return html`<ol class="steps" aria-label="${t('order.progress')}">${STEPS_UNI.map((s, i) => html`<li class="${i < idx ? 'done' : i === idx ? 'done now' : ''}">${stepLabel(s, o)}</li>`)}</ol>`;
   }
 
   function actionsHtml(o) {
@@ -257,7 +259,7 @@ export function renderOrder(el, id) {
   }
 
   // حراسة القيمة: الشحنة العالية (لو الأدمن فعّلها) كود تسليمها إجباري ومفيش تحرير تلقائي — ظاهرة للسواق قبل ما يقبل
-  const guardHtml = (o) => o.guard === 'high' ? html`<div class="action"><p><b>${t('guard.title')}</b> — ${t('guard.body')}</p></div>` : '';
+  const guardHtml = (o) => o.guard === 'high' ? html`<div class="action"><p><b>${t('guard.title')}</b> — ${t(o.direct === true ? 'guard.body.direct' : 'guard.body')}</p></div>` : '';
   // ---------- مواعيد الاستلام/التسليم ونقاط التأخير (تتبّع اختياري: العميل هو اللي بيحدد مدة التأخير المسموح) ----------
   const TIMES_ST = ['accepted', 'payment_review', 'paid', 'heading_pickup', 'picked_up', 'in_transit'];
   const localIn = (ms) => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().slice(0, 16);

@@ -6,10 +6,10 @@ const SHAPES = {
   pickup: `<path class="body" d="M16 34h52v16H16z"/><path class="cab" d="M70 24h14l10 12h8v14H70z"/><path class="glass" d="M74 28h9l7 8H74z"/><path class="rail" d="M16 34v-5M68 34v-5"/>${WHEEL(34)}${WHEEL(90)}`,
   // نص نقل: صندوق مقفول متوسط
   half_ton: `<path class="body" d="M8 16h62v34H8z"/><path class="rib" d="M8 28h62"/><path class="cab" d="M72 26h13l10 11h9v13H72z"/><path class="glass" d="M76 30h8l7 7H76z"/>${WHEEL(28)}${WHEEL(90)}`,
-  // نقل ثقيل: صندوق طويل وكابينة أعلى وعجلتين ورا
-  truck: `<path class="body" d="M3 12h78v38H3z"/><path class="rib" d="M3 25h78M3 38h78"/><path class="cab" d="M83 22h14l10 12h9v16H83z"/><path class="glass" d="M87 26h9l7 8H87z"/>${WHEEL(20)}${WHEEL(40)}${WHEEL(98)}`,
-  // جامبو: تريلا حاوية طويلة بـ3 محاور
-  jumbo: `<path class="body" d="M2 8h84v42H2z"/><path class="rib" d="M14 8v42M26 8v42M38 8v42M50 8v42M62 8v42M74 8v42"/><path class="cab" d="M88 20h13l9 12h8v18H88z"/><path class="glass" d="M92 24h8l7 8H92z"/>${WHEEL(14)}${WHEEL(32)}${WHEEL(50)}${WHEEL(100)}`,
+  // نقل ثقيل: تريلا طويلة بـ3 محاور
+  truck: `<path class="body" d="M2 8h84v42H2z"/><path class="rib" d="M14 8v42M26 8v42M38 8v42M50 8v42M62 8v42M74 8v42"/><path class="cab" d="M88 20h13l9 12h8v18H88z"/><path class="glass" d="M92 24h8l7 8H92z"/>${WHEEL(14)}${WHEEL(32)}${WHEEL(50)}${WHEEL(100)}`,
+  // جامبو: عربية نقل متوسطة (أقل من النقل الثقيل): صندوق عالي وكابينة وعجلتين ورا
+  jumbo: `<path class="body" d="M3 12h78v38H3z"/><path class="rib" d="M3 25h78M3 38h78"/><path class="cab" d="M83 22h14l10 12h9v16H83z"/><path class="glass" d="M87 26h9l7 8H87z"/>${WHEEL(20)}${WHEEL(40)}${WHEEL(98)}`,
   // نقل ركاب: ميكروباص
   passengers: `<path class="cab" d="M10 50V28q0-8 8-8h58q10 0 18 12l14 8v10z"/><path class="glass" d="M18 26h14v10H18zM36 26h14v10H36zM54 26h14v10H54zM72 26h8l9 10H72z"/>${WHEEL(34)}${WHEEL(92)}`,
 };

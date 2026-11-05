@@ -27,7 +27,7 @@ async function googleSignIn(btn, errEl) {
   });
 }
 
-const VEHICLES = ['pickup', 'half_ton', 'truck', 'jumbo', 'van', 'car', 'microbus', 'minibus'];
+const VEHICLES = ['pickup', 'half_ton', 'jumbo', 'truck', 'van', 'car', 'microbus', 'minibus'];
 
 export function renderLogin(el) {
   render(el, html`<div class="auth card stack">
@@ -105,7 +105,9 @@ export function renderRegister(el, query) {
         <label class="row"><input type="checkbox" name="isCompany"> <span>${t('auth.asCompany')}</span></label>
         <div id="companyOnly" class="stack" hidden>
           <label class="f">${t('auth.companyName')}<input name="companyName" maxlength="80"></label>
-          ${file('commercialRegFile', 'auth.commercialReg', false)}${file('taxCardFile', 'auth.taxCard', false)}
+          <label class="f">${t('auth.fleetSize')}<input name="fleetSize" type="number" inputmode="numeric" min="1" max="500" step="1"></label>
+          ${file('selfieFile', 'auth.selfieId', false)}
+          ${file('commercialRegFile', 'auth.officialDoc', false)}
           <p class="hint">${t('auth.companyHint')}</p>
         </div>
         <div id="indivDocs" class="stack">${file('licenseFile', 'auth.license', false)}${file('vehicleRegFile', 'auth.vehicleReg', false)}${file('vehiclePhotoFile', 'auth.vehiclePhoto', false)}</div>
@@ -122,9 +124,9 @@ export function renderRegister(el, query) {
   const f = $('#f', el), err = $('#err', el);
   if (needsAccount) $('#gbtn', el).addEventListener('click', () => googleSignIn($('#gbtn', el), err));
   const isCo = () => role === 'driver' && f.isCompany.checked;
-  const paint = () => { el.querySelectorAll('[data-role]').forEach((b) => b.classList.toggle('on', b.dataset.role === role)); $('#driverOnly', el).hidden = role !== 'driver'; $('#nidBox', el).hidden = role !== 'driver'; $('#idBox', el).hidden = role !== 'driver'; $('#companyOnly', el).hidden = !isCo(); $('#indivDocs', el).hidden = isCo(); };
+  const paint = () => { el.querySelectorAll('[data-role]').forEach((b) => b.classList.toggle('on', b.dataset.role === role)); $('#driverOnly', el).hidden = role !== 'driver'; $('#nidBox', el).hidden = role !== 'driver'; $('#idBox', el).hidden = role !== 'driver'; $('#companyOnly', el).hidden = !isCo(); };
   f.isCompany.addEventListener('change', paint);
-  attachDocCheck(f, { idFile: 'id', licenseFile: 'license', vehicleRegFile: 'vehicle', commercialRegFile: 'company', taxCardFile: 'company' });
+  attachDocCheck(f, { idFile: 'id', licenseFile: 'license', vehicleRegFile: 'vehicle', commercialRegFile: 'company' }); // السيلفي مش بيتفحص (فحص المستندات بيرفض صور الوش)
   el.addEventListener('click', (e) => { const b = e.target.closest('[data-role]'); if (b) { role = b.dataset.role; paint(); } });
   paint();
 
@@ -132,7 +134,7 @@ export function renderRegister(el, query) {
   f.addEventListener('submit', (e) => {
     e.preventDefault(); err.textContent = '';
     if (!f.terms.checked) { err.textContent = t('err.terms'); return; }
-    if (isCo()) { if (f.companyName.value.trim().length < 2 || !(f.commercialRegFile.files[0] && f.taxCardFile.files[0])) { err.textContent = t('err.companyDocs'); return; } }
+    if (isCo()) { const fs = Math.floor(+f.fleetSize.value); if (f.companyName.value.trim().length < 2 || !(fs >= 1 && fs <= 500) || !(f.selfieFile.files[0] && f.vehicleRegFile.files[0] && f.vehiclePhotoFile.files[0])) { err.textContent = t('err.companyDocs'); return; } }
     else if (role === 'driver' && !(f.licenseFile.files[0] && f.vehicleRegFile.files[0] && f.vehiclePhotoFile.files[0])) { err.textContent = t('err.driverDocs'); return; }
     if (role === 'driver' && !f.idFile.files[0]) { err.textContent = t('err.bad_file'); return; }
     busy($('#submit', el), async () => {
@@ -148,8 +150,12 @@ export function renderRegister(el, query) {
           body.idRef = await uploadImage(f.idFile.files[0], 'id');
           if (isCo()) { // شركة شحن: مستنداتها بدل مستندات السواق الفرد
             body.accountType = 'company'; body.companyName = f.companyName.value.trim();
-            body.commercialRegRef = await uploadImage(f.commercialRegFile.files[0], 'company');
-            body.taxCardRef = await uploadImage(f.taxCardFile.files[0], 'company');
+            body.fleetSize = Math.floor(+f.fleetSize.value);
+            body.selfieRef = await uploadImage(f.selfieFile.files[0], 'vehiclePhoto'); // سيلفي مع البطاقة
+            if (f.commercialRegFile.files[0]) body.commercialRegRef = await uploadImage(f.commercialRegFile.files[0], 'company'); // مستند رسمي اختياري
+            if (f.licenseFile.files[0]) body.licenseRef = await uploadImage(f.licenseFile.files[0], 'license');
+            body.vehicleRegRef = await uploadImage(f.vehicleRegFile.files[0], 'vehicle');
+            body.vehiclePhotoRef = await uploadImage(f.vehiclePhotoFile.files[0], 'vehiclePhoto');
           } else {
             body.licenseRef = await uploadImage(f.licenseFile.files[0], 'license');
             body.vehicleRegRef = await uploadImage(f.vehicleRegFile.files[0], 'vehicle');

@@ -14,7 +14,7 @@ export function straightKm(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 /** نفس معادلة السيرفر (calcPrice): لو للعربية تسعير خاص (سعر كيلو > 0): (سعر الفتح + سعر الكيلو × المسافة) × معامل النوع بحد أدنى العربية؛ وإلا سعر الكيلومتر العام × المسافة × معامل النوع × معامل الحجم بحد أدنى */
-const PRICE_VEHICLES = ['pickup', 'half_ton', 'truck', 'jumbo'];
+const PRICE_VEHICLES = ['pickup', 'half_ton', 'jumbo', 'truck'];
 export const vehicleOfSize = (S, size) => PRICE_VEHICLES.find((k) => S.vehicleGuide?.[k]?.maxKg > 0 && S.vehicleGuide[k].size === size) || null;
 export function priceFromKm(S, km, category, size, vehicle = null) {
   const c = S.categories?.[category], z = S.sizes?.[size]; if (!c || !z) return null;
@@ -29,7 +29,7 @@ export function estimate(S, from, to, category, size) {
 }
 
 /** ترشيح العربية (نفس منطق السيرفر recommendVehicle): أول عربية مفعّلة وزنها يكفي، وإلا أكبر مفعّلة */
-export const VEHICLE_KEYS = ['pickup', 'half_ton', 'truck', 'jumbo'];
+export const VEHICLE_KEYS = ['pickup', 'half_ton', 'jumbo', 'truck'];
 export function recommendVehicle(guide, weightKg) {
   const on = VEHICLE_KEYS.filter((k) => guide?.[k]?.maxKg > 0), kg = Number(weightKg);
   if (!on.length) return null;

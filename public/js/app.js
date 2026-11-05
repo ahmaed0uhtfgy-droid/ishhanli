@@ -7,19 +7,34 @@ import { state } from './state.js';
 import { t, applyI18n, setLang, getLang, initLang } from './i18n.js';
 import { $, html, raw, render, toast, errMsg, spinner, enableZoom, busy, openModal } from './ui.js';
 import { renderLogin, renderRegister, renderForgot, renderStatus } from './pages/auth.js';
-import { renderCustomerHome, renderNewOrder } from './pages/customer.js';
-import { renderOrder } from './pages/order.js';
-import { renderReceipt } from './pages/receipt.js';
-import { renderDriver } from './pages/driver.js';
-import { renderAdmin } from './pages/admin.js';
-import { renderAccount } from './pages/account.js';
-import { renderLegal } from './pages/legal.js';
-import { renderRules } from './pages/rules.js';
-import { renderTrack } from './pages/track.js';
 import { initEstimate } from './pages/estimate-widget.js';
 import { showLanding, hideLanding, lpPublicPricing } from './landing.js';
-import { renderDriverDash } from './pages/driver-dash.js';
 import { initErrorReporting } from './report.js';
+
+// الصفحات التقيلة (الأدمن، السواق، الطلب...) بتتحمّل عند أول دخول عليها بس: الزائر والصفحة الرئيسية ما بيحمّلوهاش. بتفضل ترجّع دالة تنضيف زي ما كانت.
+let leafletP = null; // Leaflet (الخرائط) بيتحمّل بس لما صفحة محتاجاه، مش على الصفحة الرئيسية
+const loadLeaflet = () => window.L ? Promise.resolve() : (leafletP ||= new Promise((ok, no) => { const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js'; sc.onload = ok; sc.onerror = () => { leafletP = null; no(new Error('leaflet')); }; document.head.appendChild(sc); }));
+const lazy = (load, name, map = false) => (...args) => {
+  let inner = null, dead = false;
+  if (args[0] instanceof Element) render(args[0], spinner());
+  Promise.all([load(), map ? loadLeaflet() : null]).then(([m]) => { if (!dead) inner = m[name](...args); }).catch((e) => {
+    console.error(e);
+    if (!dead && args[0] instanceof Element) { render(args[0], html`<div class="auth card stack"><p>${t('err.network')}</p><button class="btn primary" id="retryPage">${t('common.retry')}</button></div>`); args[0].querySelector('#retryPage')?.addEventListener('click', () => window.dispatchEvent(new Event('app:refresh'))); }
+  });
+  return () => { dead = true; if (typeof inner === 'function') inner(); };
+};
+const renderCustomerHome = lazy(() => import('./pages/customer.js'), 'renderCustomerHome', true);
+const renderNewOrder = lazy(() => import('./pages/customer.js'), 'renderNewOrder', true);
+const renderOrder = lazy(() => import('./pages/order.js'), 'renderOrder', true);
+const renderReceipt = lazy(() => import('./pages/receipt.js'), 'renderReceipt');
+const renderDriver = lazy(() => import('./pages/driver.js'), 'renderDriver', true);
+const renderAdmin = lazy(() => import('./pages/admin.js'), 'renderAdmin');
+const renderAccount = lazy(() => import('./pages/account.js'), 'renderAccount', true);
+const renderTrack = lazy(() => import('./pages/track.js'), 'renderTrack', true);
+const renderDriverDash = lazy(() => import('./pages/driver-dash.js'), 'renderDriverDash');
+const renderLegal = lazy(() => import('./pages/legal.js'), 'renderLegal');
+const renderRules = lazy(() => import('./pages/rules.js'), 'renderRules');
+const renderDriverFees = lazy(() => import('./pages/driver-fees.js'), 'renderDriverFees');
 
 let view = $('#view');
 const landing = $('#landing'), topbar = $('#topbar');
@@ -63,7 +78,7 @@ window.addEventListener('app:2fa-required', async () => { if (await askTotp()) r
 function renderTopbar() {
   const p = state.profile, here = location.hash.split('?')[0] || '#/';
   const roleLinks = !p ? [] : p.role === 'customer' ? [['/customer', 'nav.myOrders'], ['/customer/new', 'nav.newOrder']]
-    : p.role === 'driver' ? [['/driver', 'nav.available'], ['/driver/jobs', 'nav.jobs'], ['/driver/wallet', 'nav.wallet'], ['/driver/dashboard', 'nav.dash']]
+    : p.role === 'driver' ? [['/driver', 'nav.available'], ['/driver/jobs', 'nav.jobs'], ...(state.settings?.dcEnabled === false ? [['/driver/wallet', 'nav.wallet']] : []), ...(state.settings?.dcEnabled === false ? [] : [['/driver/fees', 'nav.fees']]), ['/driver/dashboard', 'nav.dash']]
       : p.role === 'admin' ? [['/customer', 'nav.myOrders'], ['/customer/new', 'nav.newOrder'], ['/admin', 'nav.admin']] : [];
   const links = [...roleLinks, ...(p ? [['/account', 'nav.account']] : []), ['/about', 'nav.about']];
   const showBell = p && (p.status === 'active' || p.role === 'admin') && pushSupport() === 'default';
@@ -168,6 +183,7 @@ function route() {
   else if (a === 'receipt' && b) cleanup = renderReceipt(view, b);
   else if (a === 'customer' && (p.role === 'customer' || p.role === 'admin')) cleanup = b === 'new' ? renderNewOrder(view) : renderCustomerHome(view);
   else if (a === 'driver' && b === 'dashboard' && p.role === 'driver') cleanup = renderDriverDash(view);
+    else if (a === 'driver' && b === 'fees' && p.role === 'driver') cleanup = renderDriverFees(view);
     else if (a === 'driver' && p.role === 'driver') cleanup = renderDriver(view, b || 'available');
   else if (a === 'admin' && p.role === 'admin') cleanup = renderAdminGated(view, b || 'overview');
   else if (a === 'terms' || a === 'privacy') cleanup = renderLegal(view, a);

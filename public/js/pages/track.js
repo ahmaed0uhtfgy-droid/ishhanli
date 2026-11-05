@@ -3,8 +3,9 @@ import { t } from '../i18n.js';
 import { html, render, spinner } from '../ui.js';
 import { createMap, pinIcon } from '../map.js';
 
-const STEPS = ['accepted', 'paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered'];
-const stepIdx = (s) => Math.max(0, STEPS.indexOf(s));
+const STEPS = ['open', 'accepted', 'picked_up', 'delivering', 'completed']; // نفس المراحل الخمس في كل مكان
+const STEP_OF = { accepted: 1, paid: 1, heading_pickup: 1, picked_up: 2, in_transit: 3, delivered: 3 };
+const stepIdx = (s) => STEP_OF[s] ?? 1;
 
 export function renderTrack(view, token) {
   render(view, html`<div class="page-head"><h1>${t('track.pageTitle')}</h1></div><div id="trk" class="stack">${spinner()}</div>`);
@@ -19,7 +20,7 @@ export function renderTrack(view, token) {
     if (r.final) { render(box, html`<div class="card"><h3>${t('track.final.' + (r.status === 'completed' || r.status === 'resolved' ? 'done' : 'ended'))}</h3></div>`); return stop(); }
     const i = stepIdx(r.status);
     render(box, html`<div class="card stack"><div class="row"><b class="grow">${t('status.' + r.status)}</b>${r.driver ? html`<span class="muted">${r.driver}${r.vehicleType ? ' · ' + (t('vehicle.' + r.vehicleType) === 'vehicle.' + r.vehicleType ? r.vehicleType : t('vehicle.' + r.vehicleType)) : ''}</span>` : ''}</div>
-      <div class="steps-bar">${STEPS.slice(2).map((s, k) => html`<div class="${stepIdx(s) < i ? 'done' : stepIdx(s) === i ? 'on' : ''}">${t('status.' + s)}</div>`)}</div>
+      <div class="steps-bar">${STEPS.map((s, k) => html`<div class="${k < i ? 'done' : k === i ? 'on' : ''}">${t('step.' + s)}</div>`)}</div>
       <p class="muted small">${r.location ? t('track.approx') : t('track.noLoc')}</p></div><div id="tmap" class="map tall"></div>`);
     if (r.dropoff || r.location) {
       const c = r.location || r.dropoff; map = createMap(box.querySelector('#tmap'), { center: [c.lat, c.lng], zoom: 13 });

@@ -3,7 +3,7 @@ import { gpoll } from '../sync.js';
 import { state } from '../state.js';
 import { t } from '../i18n.js';
 import { $, $$, html, raw, render, toast, errMsg, busy, spinner, skeleton, waybill, orderNo, fmtMoney, fmtNum, fmtDate, label, confirmDialog, promptDialog } from '../ui.js';
-import { createMap, pinIcon, geocode, reverse } from '../map.js';
+import { createMap, pinIcon, geocode, reverse, drawRoute } from '../map.js';
 import { uploadImage } from '../storage.js';
 import { recommendVehicle, VEHICLE_KEYS } from '../estimate.js';
 import { vehicleSvg } from '../vehicles.js';
@@ -92,7 +92,7 @@ export function renderNewOrder(el) {
       <button class="btn primary block" type="submit" id="submit">${t('new.submit')}</button>
       <p class="hint" id="progress"></p>
     </form>
-    <div class="map-col"><div id="map" class="map tall"></div></div>
+    <div class="map-col"><div id="map" class="map tall"></div><p id="routeInfo" class="muted small" aria-live="polite"></p></div>
   </div>`);
 
   const f = $('#f', el), quoteBox = $('#quote', el), err = $('#err', el);
@@ -107,8 +107,22 @@ export function renderNewOrder(el) {
       markers[kind] = L.marker([lat, lng], { icon: pinIcon(kind === 'pickup' ? 'a' : 'b'), draggable: true }).addTo(map);
       markers[kind].on('dragend', async () => { const ll = markers[kind].getLatLng(); setPoint(kind, ll.lat, ll.lng, ''); fillAddress(kind); });
     } else markers[kind].setLatLng([lat, lng]);
-    if (pts.pickup && pts.dropoff) map.fitBounds(L.latLngBounds([pts.pickup, pts.dropoff]).pad(0.3));
+    paintRoute();
     scheduleQuote();
+  }
+  // مسار على الطريق من الاستلام للتسليم (بيتحدّث لما أي نقطة تتغيّر)، مع المسافة والزمن تحت الخريطة
+  const routeGroup = L.layerGroup().addTo(map); let routeTimer = null, routeSeq = 0;
+  function paintRoute() {
+    clearTimeout(routeTimer); routeGroup.clearLayers();
+    const info = $('#routeInfo', el); if (info) info.textContent = '';
+    if (!(pts.pickup && pts.dropoff)) return;
+    const seq = ++routeSeq;
+    routeTimer = setTimeout(async () => {
+      const a = [pts.pickup.lat, pts.pickup.lng], b = [pts.dropoff.lat, pts.dropoff.lng];
+      const r = await drawRoute(map, a, b, routeGroup);
+      if (seq !== routeSeq) { return; }
+      const el2 = $('#routeInfo', el); if (el2) el2.textContent = r ? t('map.routeInfo', { km: Math.round(r.km * 10) / 10, min: r.min }) : t('map.routeApprox');
+    }, 400);
   }
   async function fillAddress(kind) {
     const { lat, lng } = pts[kind], a = await reverse(lat, lng);
@@ -189,7 +203,7 @@ export function renderNewOrder(el) {
   // الدفع المقدم بيلغي العروض (السعر بيبقى ثابت)
   f.declaredValue?.addEventListener('input', () => { // حراسة القيمة: نبّه العميل لو الشحنة هتتحسب «عالية القيمة»
     const g = $('#guardHint', el), high = S.valueGuardOn === true && (+f.declaredValue.value || 0) >= (S.valueGuardFrom || 0);
-    g.hidden = !high; if (high) g.textContent = t(S.deliveryCodeAvailable ? 'guard.formHint' : 'guard.formNoSecret');
+    g.hidden = !high; if (high) g.textContent = t(S.deliveryCodeAvailable ? (S.dcEnabled === true ? 'guard.formHint.direct' : 'guard.formHint') : 'guard.formNoSecret');
   });
   f.prepay?.addEventListener('change', () => { if (f.offersOnly) { f.offersOnly.disabled = f.prepay.checked; if (f.prepay.checked) f.offersOnly.checked = false; } });
   f.vehicleClass?.addEventListener('change', () => { syncSeats(); scheduleQuote(); });

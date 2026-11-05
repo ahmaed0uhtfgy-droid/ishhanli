@@ -1,5 +1,6 @@
 // صفحة «قواعد التعامل»: متاحة للزوار وأي مستخدم. الأرقام من إعدادات المنصة الحالية.
 import { t } from '../i18n.js';
+import '../i18n-info.js';
 import { html, render } from '../ui.js';
 import { state } from '../state.js';
 import { rulesSections } from '../rules.js';
