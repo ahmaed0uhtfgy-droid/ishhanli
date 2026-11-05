@@ -64,18 +64,25 @@ export const DEFAULTS = {
   sizes: {
     small:  { ar: 'صغير (ربع نقل / سيارة)', en: 'Small (pickup / car)',  mult: 1.0 },
     medium: { ar: 'متوسط (نص نقل)',          en: 'Medium (half-ton)',     mult: 1.4 },
-    large:  { ar: 'كبير (نقل ثقيل)',         en: 'Large (heavy truck)',   mult: 2.0 },
-    xlarge: { ar: 'جامبو (حمولة كبيرة جداً)', en: 'Jumbo (extra large load)', mult: 3.0 },
+    large:  { ar: 'جامبو (نقل متوسط)',        en: 'Jumbo (medium truck)',  mult: 2.0 },
+    xlarge: { ar: 'نقل ثقيل (تريلا / حمولة كبيرة)', en: 'Heavy truck (trailer / large load)', mult: 3.0 },
   },
   // الدفع عند الاستلام (COD): مخفي ومقفول افتراضياً. العمولة صفر في الأول، وبعدها نسبة من إجمالي المبالغ المحصّلة في فترة محاسبة. السواق اللي ما يسدّدش حسابه بعد المهلة بيتوقف تلقائياً لحد ما الأدمن يأكد السداد.
   codEnabled: false, codCommissionPct: 0, codPeriodDays: 7, codGraceDays: 3, codMaxAmount: 5000,
   codBlockScope: 'cod',    // 'cod' = السواق المتأخر ما ياخدش طلبات دفع عند الاستلام جديدة بس · 'all' = ما ياخدش أي طلبات
   // نظام الدفع المباشر + عمولة المنصة (مقفول افتراضياً = نظام الضمان القديم زي ما هو). لما الأدمن يفعّله: العميل بيدفع للسواق مباشرة، والمنصة بتسجّل كل شحنة ناجحة،
   // ولما إجمالي مكسب السواق (غير المسدَّد) يوصل للحد بيتوقف عن قبول طلبات جديدة لحد ما يسدّد نسبة المنصة (محفظة/إنستا باي + صورة التحويل + تأكيد الأدمن). نسبة 0 = من غير عمولة.
-  dcEnabled: false, dcPct: 2, dcLimit: 1000, dcPay: { wallet: '', walletName: '' },
+  adminShowLegacy: false, // إظهار تبويبات نظام الضمان القديم (الدفعات/السحب/النزاعات/الاسترداد/COD) في الأدمن وهو مقفول
+  dcEnabled: true, dcPct: 2, dcLimit: 1000, dcPay: { wallet: '', walletName: '' }, // الدفع المباشر هو النظام الأساسي. نظام الضمان القديم مقفول ومخفي (الأدمن يرجّعه من الإعدادات > نظام الدفع)
   // تسعير مستقل لكل نوع عربية (ربع نقل / نص نقل / نقل / جامبو): سعر فتح + سعر الكيلو + حد أدنى (0 = نستخدم المعادلة العامة: سعر الكيلو العام × معامل الحجم).
   // kmFee = رسوم المنصة على كل كيلومتر من مشاوير العربية دي (0 = نستخدم dcPerKm العام).
-  vehiclePricing: Object.fromEntries(['pickup', 'half_ton', 'truck', 'jumbo'].map((k) => [k, { base: 0, perKm: 0, minPrice: 0, kmFee: 0 }])),
+  // تسعير كل نوع عربية لوحده (الأدمن يعدّله من الإعدادات). الأرقام دي تقديرية مبدئية للبداية (مش من مصدر رسمي) وتتظبط حسب السوق عندك.
+  vehiclePricing: {
+    pickup:   { base: 100, perKm: 6.5, minPrice: 250,  kmFee: 0 },
+    half_ton: { base: 150, perKm: 9,   minPrice: 350,  kmFee: 0 },
+    jumbo:    { base: 300, perKm: 15,  minPrice: 600,  kmFee: 0 },
+    truck:    { base: 600, perKm: 24,  minPrice: 1200, kmFee: 0 },
+  },
   dcPerKm: 0,                // رسوم المنصة على كل كيلومتر مكتمل (جنيه/كم) بجانب النسبة — 0 = مقفولة
   fineCreditToWallet: false, // تعويض المنصة للسواق يتحوّل لرصيد محفظة قابل للسحب بدل خصم من العمولة (مفيد لو العمولة 0)
   dcAutoCompleteHours: 24, // الدفع المباشر: الطلب اللي السواق استلمه وفضل مفتوح المدة دي من غير تأكيد تسليم بيتكمّل تلقائي (0 = مقفول)
@@ -100,8 +107,8 @@ export const DEFAULTS = {
   vehicleGuide: {          // لكل عربية: أقصى وزن بالكجم (0 = متوقفة) والحجم المرتبط بيها (بيحدد السعر). مرتّبة من الأصغر للأكبر
     pickup:   { maxKg: 800,   size: 'small' },
     half_ton: { maxKg: 2000,  size: 'medium' },
-    truck:    { maxKg: 8000,  size: 'large' },
-    jumbo:    { maxKg: 50000, size: 'xlarge' },
+    jumbo:    { maxKg: 5000,  size: 'large' },   // الجامبو في مصر = عربية بين النص نقل والنقل الثقيل (حمولتها حوالي 3-5 طن)
+    truck:    { maxKg: 50000, size: 'xlarge' },  // النقل الثقيل (تريلا وما فوق)
   },
   // تعديل بيانات الحساب: مرة كل N يوم — الأدمن بيقلّلها/يزوّدها أو يعطّلها، ويقدر يفتح القفل لمستخدم معيّن
   profileEditEnabled: true,
@@ -157,14 +164,15 @@ export async function loadSettings(env) {
     codEnabled: d.codEnabled === true, codCommissionPct: Math.round(num(d.codCommissionPct, D.codCommissionPct, 0, 30) * 10) / 10,
     codPeriodDays: Math.floor(num(d.codPeriodDays, D.codPeriodDays, 1, 31)), codGraceDays: Math.floor(num(d.codGraceDays, D.codGraceDays, 0, 30)),
     codMaxAmount: Math.floor(num(d.codMaxAmount, D.codMaxAmount, 100, 1000000)), codBlockScope: d.codBlockScope === 'all' ? 'all' : 'cod',
-    dcEnabled: d.dcEnabled === true, dcPct: Math.round(num(d.dcPct, D.dcPct, 0, 50) * 10) / 10, dcLimit: Math.floor(num(d.dcLimit, D.dcLimit, 1, 1e8)),
+    adminShowLegacy: d.adminShowLegacy === true,
+    dcEnabled: d.dcEnabled === undefined ? D.dcEnabled : d.dcEnabled === true, dcPct: Math.round(num(d.dcPct, D.dcPct, 0, 50) * 10) / 10, dcLimit: Math.floor(num(d.dcLimit, D.dcLimit, 1, 1e8)),
     finesEnabled: d.finesEnabled === true, fineFreeCancelMin: Math.floor(num(d.fineFreeCancelMin, D.fineFreeCancelMin, 0, 1440)), fineWaitMin: Math.floor(num(d.fineWaitMin, D.fineWaitMin, 0, 1440)),
     fineEnRouteAmount: Math.floor(num(d.fineEnRouteAmount, D.fineEnRouteAmount, 0, 100000)), fineArrivedAmount: Math.floor(num(d.fineArrivedAmount, D.fineArrivedAmount, 0, 100000)),
     fineClaimHours: Math.floor(num(d.fineClaimHours, D.fineClaimHours, 0, 720)), fineObjectHours: Math.floor(num(d.fineObjectHours, D.fineObjectHours, 0, 720)),
     fineDriverSharePct: num(d.fineDriverSharePct, D.fineDriverSharePct, 0, 99), fineCollectorPct: num(d.fineCollectorPct, D.fineCollectorPct, 0, 50),
     fineMonthlyCap: Math.floor(num(d.fineMonthlyCap, D.fineMonthlyCap, 0, 1e6)), fineMaxClaimsPerDay: Math.floor(num(d.fineMaxClaimsPerDay, D.fineMaxClaimsPerDay, 0, 1000)), fineBlockLimit: Math.floor(num(d.fineBlockLimit, D.fineBlockLimit, 0, 1e6)),
     samePickupMeters: Math.floor(num(d.samePickupMeters, D.samePickupMeters, 0, 5000)), samePickupMax: Math.floor(num(d.samePickupMax, D.samePickupMax, 0, 50)),
-    vehiclePricing: Object.fromEntries(PRICE_VEHICLES.map((k) => { const v = d.vehiclePricing?.[k] || {}; return [k, { base: num(v.base, 0, 0, 1e6), perKm: num(v.perKm, 0, 0, 10000), minPrice: num(v.minPrice, 0, 0, 1e6), kmFee: num(v.kmFee, 0, 0, 10000) }]; })),
+    vehiclePricing: Object.fromEntries(PRICE_VEHICLES.map((k) => { const v = d.vehiclePricing?.[k] || D.vehiclePricing[k] || {}; return [k, { base: num(v.base, 0, 0, 1e6), perKm: num(v.perKm, 0, 0, 10000), minPrice: num(v.minPrice, 0, 0, 1e6), kmFee: num(v.kmFee, 0, 0, 10000) }]; })),
     dcPerKm: num(d.dcPerKm, 0, 0, 10000), fineCreditToWallet: d.fineCreditToWallet === true,
     dcAutoCompleteHours: Math.floor(num(d.dcAutoCompleteHours, D.dcAutoCompleteHours, 0, 720)), jobsRadiusKm: Math.round(num(d.jobsRadiusKm, D.jobsRadiusKm, 0, 500) * 10) / 10,
     dcPay: { wallet: typeof d.dcPay?.wallet === 'string' ? d.dcPay.wallet.slice(0, 40) : '', walletName: typeof d.dcPay?.walletName === 'string' ? d.dcPay.walletName.slice(0, 80) : '' },
@@ -205,7 +213,7 @@ export async function distanceKm(a, b, settings) {
 
 /** السعر = (سعر الكم × المسافة) × معامل الفئة × معامل الحجم — مع حد أدنى ثابت، ومقرّب لأعلى جنيه */
 /** أنواع العربيات اللي ليها تسعير مستقل (نفس مفاتيح دليل العربيات) */
-export const PRICE_VEHICLES = ['pickup', 'half_ton', 'truck', 'jumbo'];
+export const PRICE_VEHICLES = ['pickup', 'half_ton', 'jumbo', 'truck'];
 /** العربية المرتبطة بحجم معيّن في دليل العربيات (أول واحدة مفعّلة حجمها كده) */
 export const vehicleOfSize = (s, size) => PRICE_VEHICLES.find((k) => s.vehicleGuide?.[k]?.maxKg > 0 && s.vehicleGuide[k].size === size) || null;
 /** السعر: لو للعربية تسعير خاص (سعر كيلو > 0): (سعر الفتح + سعر الكيلو × المسافة) × معامل نوع الشحنة، وبحد أدنى العربية. وإلا المعادلة العامة (سعر الكيلو العام × معامل النوع × معامل الحجم). */
@@ -281,6 +289,7 @@ export function sanitizeSettings(b) {
     codEnabled: b.codEnabled === true, codCommissionPct: Math.round(n(b.codCommissionPct ?? DEFAULTS.codCommissionPct, 0, 30) * 10) / 10,
     codPeriodDays: Math.floor(n(b.codPeriodDays ?? DEFAULTS.codPeriodDays, 1, 31)), codGraceDays: Math.floor(n(b.codGraceDays ?? DEFAULTS.codGraceDays, 0, 30)),
     codMaxAmount: Math.floor(n(b.codMaxAmount ?? DEFAULTS.codMaxAmount, 100, 1000000)), codBlockScope: b.codBlockScope === 'all' ? 'all' : 'cod',
+    adminShowLegacy: b.adminShowLegacy === true,
     dcEnabled: b.dcEnabled === true, dcPct: Math.round(n(b.dcPct ?? DEFAULTS.dcPct, 0, 50) * 10) / 10, dcLimit: Math.floor(n(b.dcLimit ?? DEFAULTS.dcLimit, 1, 1e8)),
     finesEnabled: b.finesEnabled === true, fineFreeCancelMin: Math.floor(n(b.fineFreeCancelMin ?? DEFAULTS.fineFreeCancelMin, 0, 1440)), fineWaitMin: Math.floor(n(b.fineWaitMin ?? DEFAULTS.fineWaitMin, 0, 1440)),
     fineEnRouteAmount: Math.floor(n(b.fineEnRouteAmount ?? DEFAULTS.fineEnRouteAmount, 0, 100000)), fineArrivedAmount: Math.floor(n(b.fineArrivedAmount ?? DEFAULTS.fineArrivedAmount, 0, 100000)),
@@ -321,8 +330,8 @@ export function sanitizeSettings(b) {
 }
 
 // العربية تخدم إيه؟ (بضاعة حسب الحجم، أو ركاب حسب فئة العربية). أي حجم/فئة مخصصة من الأدمن = مسموح.
-export const VEHICLE_KEYS = ['pickup', 'half_ton', 'truck', 'jumbo']; // عربيات البضاعة اللي بيرشّحها النظام (من الأصغر للأكبر)
-const CARGO_CAP = { car: ['small'], van: ['small'], microbus: ['small'], minibus: [], pickup: ['small'], half_ton: ['small', 'medium'], truck: ['small', 'medium', 'large', 'xlarge'], jumbo: ['small', 'medium', 'large', 'xlarge'] };
+export const VEHICLE_KEYS = ['pickup', 'half_ton', 'jumbo', 'truck']; // عربيات البضاعة اللي بيرشّحها النظام (من الأصغر للأكبر)
+const CARGO_CAP = { car: ['small'], van: ['small'], microbus: ['small'], minibus: [], pickup: ['small'], half_ton: ['small', 'medium'], jumbo: ['small', 'medium', 'large'], truck: ['small', 'medium', 'large', 'xlarge'] };
 const PAX_CAP = { car: ['car'], van: ['car', 'van'], microbus: ['car', 'van', 'microbus'], minibus: ['car', 'van', 'microbus', 'minibus'] };
 export function canServe(vehicleType, o) {
   if (o.service === 'passengers') {

@@ -6,6 +6,7 @@ import { onRequest } from '../functions/api/[[route]].js';
 import { JWKS_URL } from '../functions/_lib/core.js';
 import { trustOf } from '../functions/_lib/trust.js';
 import { makeFirestore } from './fake-firestore.mjs';
+import { DEFAULTS as __ESC } from '../functions/_lib/logic.js'; __ESC.dcEnabled = false; for (const k of Object.keys(__ESC.vehiclePricing)) __ESC.vehiclePricing[k] = { base: 0, perKm: 0, minPrice: 0, kmFee: 0 }; // الاختبارات دي بتفترض المعادلة العامة (التسعير لكل نوع تقديري جديد وليه اختبار خاص) // هذا الملف بيختبر نظام الضمان القديم، فبنختاره صراحةً (الافتراضي الجديد = الدفع المباشر)
 
 const PROJECT = 'demo-ishhanli';
 const b64u = (b) => Buffer.from(b).toString('base64url');
@@ -1173,12 +1174,16 @@ console.log('\n— الإلغاء برسوم والبلاغات والطوارئ
 // ------------------ شركة شحن: بتتعامل كسواق + سواقينها مسجّلين، وكل شحنة مربوطة بالسواق اللي استلمها ------------------
 {
   FS.put('settings/pricing', { v: JSON.stringify({}) }); // الافتراضي: العميل بيتفعّل تلقائياً
-  const regCo = async (uid, extra = {}) => ({ role: 'driver', accountType: 'company', companyName: 'شركة النيل للشحن', vehicleType: 'truck', name: 'مدير الشركة', phone: '01077770001', nationalId: '29001011777701', idRef: await up(uid, 'id'), commercialRegRef: await up(uid, 'company'), taxCardRef: await up(uid, 'company'), ...extra });
-  await bad('شركة من غير سجل تجاري', call('comp1', 'register', { ...(await regCo('comp1')), commercialRegRef: undefined }), 400, 'bad_file');
-  await bad('شركة من غير اسم', call('comp1', 'register', await regCo('comp1', { companyName: '' })), 400, 'bad_input');
-  await ok('تسجيل شركة شحن', call('comp1', 'register', await regCo('comp1')));
+  const regCo = async (uid, extra = {}) => ({ role: 'driver', accountType: 'company', companyName: 'شركة النيل للشحن', vehicleType: 'truck', name: 'مدير الشركة', phone: '01077770001', nationalId: '29001011777701', idRef: await up(uid, 'id'), selfieRef: await up(uid, 'vehiclePhoto'), vehicleRegRef: await up(uid, 'vehicle'), vehiclePhotoRef: await up(uid, 'vehiclePhoto'), fleetSize: 3, ...extra });
+  const co1 = await regCo('comp1'); // رفع واحد بس (فيه حد لعدد الرفع للمستخدم)
+  await bad('شركة من غير سيلفي مع البطاقة', call('comp1', 'register', { ...co1, selfieRef: undefined }), 400, 'bad_file');
+  await bad('شركة من غير استمارة مركبة', call('comp1', 'register', { ...co1, vehicleRegRef: undefined }), 400, 'bad_file');
+  await bad('شركة من غير صورة مركبة', call('comp1', 'register', { ...co1, vehiclePhotoRef: undefined }), 400, 'bad_file');
+  await bad('شركة من غير عدد مركبات', call('comp1', 'register', { ...co1, fleetSize: undefined }), 400, 'bad_input');
+  await bad('شركة من غير اسم', call('comp1', 'register', { ...co1, companyName: '' }), 400, 'bad_input');
+  await ok('تسجيل شركة شحن', call('comp1', 'register', co1));
   check('الشركة دورها سواق + نوع الحساب شركة + pending', U('comp1').role === 'driver' && U('comp1').account_type === 'company' && U('comp1').status === 'pending' && U('comp1').company_name === 'شركة النيل للشحن');
-  check('مستندات الشركة محفوظة', !!U('comp1').commercial_reg_ref && !!U('comp1').tax_card_ref);
+  check('مستندات الشركة محفوظة (سيلفي + استمارة + صورة مركبة + عدد المركبات) والسجل التجاري/الضريبية مش مطلوبين', !!U('comp1').selfie_ref && !!U('comp1').vehicle_reg_ref && !!U('comp1').vehicle_photo_ref && U('comp1').fleet_size === 3 && U('comp1').commercial_reg_ref === null && U('comp1').tax_card_ref === null);
   await bad('شركة معلّقة ما تضيفش سواقين', call('comp1', 'fleet/list'), 403, 'account_not_active');
   await ok('أدمن يفعّل الشركة', call('admin1', 'admin/user', { uid: 'comp1', status: 'active' }));
   await ok('عميل جديد (تفعيل تلقائي)', call('compC', 'register', { role: 'customer', name: 'عميل الشركة', phone: '01077770002', nationalId: '29001011777702', idRef: await up('compC', 'id') }));

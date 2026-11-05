@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { DICT } from '../public/js/i18n.js';
+import '../public/js/i18n-admin.js'; import '../public/js/i18n-info.js';
 import { moneySteps } from '../public/js/money.js';
 
 let n = 0; const ok = (name, fn) => { fn(); n++; console.log('✓', name); };

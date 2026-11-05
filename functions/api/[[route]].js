@@ -189,6 +189,15 @@ async function directDoneStmts(env, o, s, patch, log) {
   ];
 }
 
+// بعد إكمال طلب مباشر: لو السواق عدّى حد الأرباح بالطلب ده بالذات نبلّغه فوراً إنه اتوقف عن قبول طلبات جديدة وإزاي يسدّد (مرة واحدة لكل مرة بيوصل فيها للحد)
+async function dcNotifyLimit(env, o, s) {
+  try {
+    if (!dcFeesOn(s) || !o.driverId) return;
+    const r = await F.get(env, `users/${o.driverId}`), now_ = r?.dc_gross || 0, prev = now_ - collectedOf(o);
+    if (dcBlocked(now_, s) && !dcBlocked(prev, s)) await notify(env, [o.driverId], 'dc_limit_reached', { limit: s.dcLimit, due: dcPayable(now_, s.dcPct, r.dc_credit, r.dc_fines_held, r.dc_kmfee).amount }, { url: '/#/driver/fees' });
+  } catch { /* الإشعار مش لازم يوقّف إكمال الطلب */ }
+}
+
 // تفاصيل الشحنة اللي السواق بيوافق عليها: بصمة (hash) بتتحفظ لحظة الموافقة كدليل إن الوصف ما اتغيّرش
 const manifestHash = (o) => sha256hex(JSON.stringify([o.description || '', o.itemsCount || 1, o.declaredValue || 0, o.photos || [], o.category || '', o.size || '', o.weightKg || 0]));
 const ACTIVE_JOB = ['accepted', 'payment_review', 'paid', 'heading_pickup', 'picked_up', 'in_transit']; // طلبات شغّالة على السواق (المسلَّم ما بيتحسبش)
@@ -302,6 +311,7 @@ async function applyClaim(env, cl, s, by) {
 }
 async function autoDirectDone(env, o, s) {
   await F.run(env, await directDoneStmts(env, o, s, { deliveredAt: now(), deliveryVerified: 'auto' }, L('completed', 'system', { note: 'direct_auto' }))); // الشرط الذرّي في orderUpdate بيمنع التكرار لو اتأكد في نفس اللحظة
+  await dcNotifyLimit(env, o, s);
   const v = { no: orderNo(o.id), hours: s.dcAutoCompleteHours };
   await notify(env, [o.customerId], 'direct_auto', v, { url: `/#/order/${o.id}` }).catch(() => {});
   await notify(env, [o.driverId], 'direct_auto', v, { url: '/#/driver/dashboard' }).catch(() => {});
@@ -429,12 +439,16 @@ const ROUTES = {
     const name = str(body.name, 2, 80), area = str(body.area ?? '', 0, 60), lang = body.lang === 'en' ? 'en' : 'ar';
     const driver = role === 'driver', refs = driver ? { id: fileRef(body.idRef) } : {}; // صورة البطاقة للسواق/الشركة بس
     const company = driver && body.accountType === 'company'; // شركة شحن: بتتعامل كسواق، لكن بمستندات الشركة، وسواقينها بيتسجّلوا لاحقاً
-    let vehicleType = null, companyName = null;
+    let vehicleType = null, companyName = null, fleetSize = null;
     if (driver) {
       vehicleType = str(body.vehicleType, 2, 40);
       if (company) {
         companyName = str(body.companyName, 2, 80);
-        refs.company = fileRef(body.commercialRegRef); refs.tax = fileRef(body.taxCardRef);
+        // شركة الشحن: بطاقة المسؤول (فوق) + سيلفي معاها + استمارة وصورة لمركبة واحدة على الأقل + عدد المركبات. السجل التجاري والبطاقة الضريبية ما بقوش مطلوبين (مستند رسمي اختياري بس)
+        refs.selfie = fileRef(body.selfieRef); refs.vehicleReg = fileRef(body.vehicleRegRef); refs.vehiclePhoto = fileRef(body.vehiclePhotoRef);
+        fleetSize = Math.floor(Number(body.fleetSize)); if (!(fleetSize >= 1 && fleetSize <= 500)) throw new HttpError(400, 'bad_input');
+        if (body.commercialRegRef) refs.company = fileRef(body.commercialRegRef);
+        if (body.taxCardRef) refs.tax = fileRef(body.taxCardRef);
         if (body.licenseRef) refs.license = fileRef(body.licenseRef);
       } else { refs.license = fileRef(body.licenseRef); refs.vehicleReg = fileRef(body.vehicleRegRef); refs.vehiclePhoto = fileRef(body.vehiclePhotoRef); }
     }
@@ -457,7 +471,7 @@ const ROUTES = {
       F.create(`users/${uid}`, {
         uid, role, status, status_reason: null, name, phone, email: token.email ?? null, national_id: nid || null, area, lang, id_ref: refs.id ?? null, license_ref: refs.license ?? null,
         vehicle_reg_ref: refs.vehicleReg ?? null, vehicle_photo_ref: refs.vehiclePhoto ?? null, vehicle_type: vehicleType, phone_verified: !!token.phone_number,
-        account_type: company ? 'company' : 'individual', company_name: companyName, commercial_reg_ref: refs.company ?? null, tax_card_ref: refs.tax ?? null,
+        account_type: company ? 'company' : 'individual', company_name: companyName, fleet_size: fleetSize, selfie_ref: refs.selfie ?? null, commercial_reg_ref: refs.company ?? null, tax_card_ref: refs.tax ?? null,
         rating_sum: 0, rating_count: 0, completed_orders: 0, cancel_count: 0, reviewed_by: null, reviewed_at: null, created_at: now(),
         referral_code: refCode, referred_by: referrer ? referrer.uid : null,
       }),
@@ -929,6 +943,7 @@ const ROUTES = {
     const direct = o.direct === true && next === 'delivered'; // الدفع المباشر: تأكيد السواق للتسليم = إكمال الطلب وتسجيل مكسبه في دفتر العمولة
     await F.run(c.env, direct ? await directDoneStmts(c.env, o, s, patch, L('completed', c.uid, { note: 'direct_delivered', ...(loc ? { lat: loc.lat, lng: loc.lng } : {}) }))
       : orderUpdate(c.env, o, patch, L(next, c.uid, loc ? { lat: loc.lat, lng: loc.lng } : {})));
+    if (direct) await dcNotifyLimit(c.env, o, s);
     // مكافآت الإحالة مش بتتصرف على طلبات الدفع المباشر: مفيش فلوس متحقق منها عند المنصة، فكانت هتبقى ثغرة لزراعة المكافآت بحسابات وهمية
     for (const k of lateNow) bg(c, notify(c.env, [o.customerId], `late_ask_${k}`, { no: orderNo(o.id) }, { url: `/#/order/${o.id}` }));
     const tpl = direct ? 'delivered_direct' : next === 'picked_up' && patch.startVerified ? (patch.startVerified === 'code' ? 'trip_started' : 'trip_started_nocode') : o.service === 'passengers' ? `${next}_p` : next;
@@ -943,7 +958,9 @@ const ROUTES = {
     if (o.customerId !== c.uid) throw new HttpError(403, 'forbidden');
     if (o.direct === true) { // الدفع المباشر: تأكيد العميل بعد الاستلام بيكفي (زي تأكيد السواق للتسليم) — الطلب بيتكمّل ومكسب السواق بيتسجّل
       if (!['picked_up', 'in_transit'].includes(o.status)) throw new HttpError(409, 'bad_state');
-      await F.run(c.env, await directDoneStmts(c.env, o, await loadSettings(c.env), { deliveredAt: now(), deliveryVerified: 'customer' }, L('completed', c.uid, { note: 'direct_customer_confirm' })));
+      const s2 = await loadSettings(c.env);
+      await F.run(c.env, await directDoneStmts(c.env, o, s2, { deliveredAt: now(), deliveryVerified: 'customer' }, L('completed', c.uid, { note: 'direct_customer_confirm' })));
+      await dcNotifyLimit(c.env, o, s2);
       bg(c, notify(c.env, [o.driverId], 'direct_confirmed', { no: orderNo(o.id) }, { url: '/#/driver/dashboard' }));
       return { ok: true };
     }

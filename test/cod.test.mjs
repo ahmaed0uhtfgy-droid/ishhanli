@@ -6,6 +6,7 @@ import { JWKS_URL } from '../functions/_lib/core.js';
 import { trustOf } from '../functions/_lib/trust.js';
 import { codPeriodOf, codPeriodBounds, codSplit, codStatements, codBlocked } from '../functions/_lib/logic.js';
 import { makeFirestore } from './fake-firestore.mjs';
+import { DEFAULTS as __ESC } from '../functions/_lib/logic.js'; __ESC.dcEnabled = false; for (const k of Object.keys(__ESC.vehiclePricing)) __ESC.vehiclePricing[k] = { base: 0, perKm: 0, minPrice: 0, kmFee: 0 }; // الاختبارات دي بتفترض المعادلة العامة (التسعير لكل نوع تقديري جديد وليه اختبار خاص) // هذا الملف بيختبر نظام الضمان القديم، فبنختاره صراحةً (الافتراضي الجديد = الدفع المباشر)
 
 const PROJECT = 'demo-ishhanli';
 const b64u = (b) => Buffer.from(b).toString('base64url');

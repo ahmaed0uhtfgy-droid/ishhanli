@@ -6,6 +6,7 @@ import { JWKS_URL } from '../functions/_lib/core.js';
 import { trustOf } from '../functions/_lib/trust.js';
 import { dcDue, dcBlocked, dcPayable, fineCredit, calcPrice, kmFeeOf, dcFeesOn, vehicleOfSize, DEFAULTS as __D } from '../functions/_lib/logic.js'; __D.samePickupMax = 0; // حد «نفس النقطة» بيتختبر بالإعدادات في قسم الغرامات
 import { makeFirestore } from './fake-firestore.mjs';
+import { DEFAULTS as __ESC } from '../functions/_lib/logic.js'; __ESC.dcEnabled = false; for (const k of Object.keys(__ESC.vehiclePricing)) __ESC.vehiclePricing[k] = { base: 0, perKm: 0, minPrice: 0, kmFee: 0 }; // الاختبارات دي بتفترض المعادلة العامة (التسعير لكل نوع تقديري جديد وليه اختبار خاص) // هذا الملف بيختبر تفعيل الدفع المباشر من الأدمن (من حالة مقفول)؛ الافتراضي الفعلي متغطّي في default.test.mjs
 
 const PROJECT = 'demo-ishhanli';
 const b64u = (b) => Buffer.from(b).toString('base64url');
@@ -547,23 +548,23 @@ await ok('نقفل الغرامات', save({ dcEnabled: false, finesEnabled: fal
 // ===== 9) تسعير كل نوع عربية + رسوم الكيلومتر + العمولة 0 مع الغرامة + تعويض المحفظة =====
 clearFines();
 const sv9 = (p) => save({ dcEnabled: true, dcPct: 2, dcLimit: 1000, finesEnabled: true, ...p });
-const VP = { pickup: { base: 30, perKm: 6, minPrice: 200, kmFee: 0 }, half_ton: { base: 0, perKm: 9, minPrice: 0, kmFee: 0 }, truck: { base: 50, perKm: 12, minPrice: 400, kmFee: 1 }, jumbo: { base: 0, perKm: 0, minPrice: 0, kmFee: 0 } };
+const VP = { pickup: { base: 30, perKm: 6, minPrice: 200, kmFee: 0 }, half_ton: { base: 0, perKm: 9, minPrice: 0, kmFee: 0 }, jumbo: { base: 50, perKm: 12, minPrice: 400, kmFee: 1 }, truck: { base: 0, perKm: 0, minPrice: 0, kmFee: 0 } };
 { // حسابات نقية
   const S = { ...cur, vehiclePricing: VP };
   const cm = Number(S.categories.goods.mult);
-  check('الحجم المرتبط بكل عربية', vehicleOfSize(S, 'small') === 'pickup' && vehicleOfSize(S, 'medium') === 'half_ton' && vehicleOfSize(S, 'large') === 'truck' && vehicleOfSize(S, 'nope') === null);
+  check('الحجم المرتبط بكل عربية', vehicleOfSize(S, 'small') === 'pickup' && vehicleOfSize(S, 'medium') === 'half_ton' && vehicleOfSize(S, 'large') === 'jumbo' && vehicleOfSize(S, 'nope') === null);
   check('ربع نقل: (30 + 6×10) × المعامل', calcPrice(S, 10, 'goods', 'small').price === Math.max(200, Math.ceil((30 + 6 * 10) * cm)));
   check('الحد الأدنى للعربية بيسري (200)', calcPrice(S, 1, 'goods', 'small').price === 200);
   check('نص نقل من غير حد أدنى خاص: بيستخدم العام', calcPrice(S, 1, 'goods', 'medium').price === Math.max(Math.ceil(S.minPrice), Math.ceil(9 * 1 * cm)));
   check('نقل: (50 + 12×40) × المعامل وحد أدنى 400', calcPrice(S, 40, 'goods', 'large').price === Math.max(400, Math.ceil((50 + 12 * 40) * cm)));
   check('جامبو سعر كيلو 0 = المعادلة العامة القديمة', calcPrice(S, 40, 'goods', 'xlarge').price === calcPrice({ ...S, vehiclePricing: {} }, 40, 'goods', 'xlarge').price);
   check('كل عربية بسعر مختلف على نفس المسافة', new Set(['small', 'medium', 'large'].map((z) => calcPrice(S, 40, 'goods', z).price)).size === 3);
-  check('العربية المحددة صراحة بتحدد السعر', calcPrice(S, 40, 'goods', 'small', 'truck').price === calcPrice(S, 40, 'goods', 'large').price);
+  check('العربية المحددة صراحة بتحدد السعر', calcPrice(S, 40, 'goods', 'small', 'jumbo').price === calcPrice(S, 40, 'goods', 'large').price);
   check('من غير إعدادات تسعير = زي الأول', calcPrice({ ...S, vehiclePricing: undefined }, 40, 'goods', 'small').price === Math.max(Math.ceil(S.minPrice), Math.ceil(S.perKm * 40 * cm * Number(S.sizes.small.mult))));
-  check('رسوم الكيلو: العامة والخاصة بالعربية', kmFeeOf({ dcPerKm: 2, vehiclePricing: VP }, 100, 'pickup') === 200 && kmFeeOf({ dcPerKm: 2, vehiclePricing: VP }, 100, 'truck') === 100 && kmFeeOf({ dcPerKm: 0, vehiclePricing: VP }, 100, 'pickup') === 0 && kmFeeOf({ dcPerKm: 2 }, 0, null) === 0);
+  check('رسوم الكيلو: العامة والخاصة بالعربية', kmFeeOf({ dcPerKm: 2, vehiclePricing: VP }, 100, 'pickup') === 200 && kmFeeOf({ dcPerKm: 2, vehiclePricing: VP }, 100, 'jumbo') === 100 && kmFeeOf({ dcPerKm: 0, vehiclePricing: VP }, 100, 'pickup') === 0 && kmFeeOf({ dcPerKm: 2 }, 0, null) === 0);
   check('فيه رسوم لو نسبة أو كيلو (عام أو للعربية)', dcFeesOn({ dcEnabled: true, dcPct: 2 }) && dcFeesOn({ dcEnabled: true, dcPct: 0, dcPerKm: 1 }) && dcFeesOn({ dcEnabled: true, dcPct: 0, dcPerKm: 0, vehiclePricing: VP }) && !dcFeesOn({ dcEnabled: true, dcPct: 0, dcPerKm: 0 }) && !dcFeesOn({ dcEnabled: false, dcPct: 5 }));
   check('المطلوب بيشمل رسوم الكيلومتر', dcPayable(1000, 2, 0, 0, 200).commission === 220 && dcPayable(1000, 2, 0, 0, 200).amount === 220 && dcPayable(1000, 0, 50, 30, 200).amount === 180);
-  check('الإعدادات الافتراضية: تسعير العربيات مقفول', ['pickup', 'half_ton', 'truck', 'jumbo'].every((k) => cur.vehiclePricing[k].perKm === 0 && cur.vehiclePricing[k].kmFee === 0) && cur.dcPerKm === 0 && cur.fineCreditToWallet === false); }
+  check('الإعدادات الافتراضية: تسعير العربيات مقفول', ['pickup', 'half_ton', 'jumbo', 'truck'].every((k) => cur.vehiclePricing[k].perKm === 0 && cur.vehiclePricing[k].kmFee === 0) && cur.dcPerKm === 0 && cur.fineCreditToWallet === false); }
 await bad('سعر كيلو سالب', sv9({ vehiclePricing: { ...VP, pickup: { ...VP.pickup, perKm: -1 } } }), 400, 'bad_input');
 await bad('رسوم كيلو فوق الحد', sv9({ dcPerKm: 10001 }), 400, 'bad_input');
 await bad('عميل مايغيّرش التسعير', call('cF', 'admin/settings/save', { ...cur, vehiclePricing: VP }, eS), 403, 'forbidden');
@@ -572,10 +573,10 @@ await ok('الأدمن يحدد تسعير كل عربية', sv9({ vehiclePricin
   const qS = await ok('عرض سعر ربع نقل', call('cF', 'quote', body('small', { vehiclePick: 'pickup' }), eS));
   const cm = Number(cur.categories.goods.mult), km = Math.max(qS.distanceKm, 0.5);
   check('السعر طبق تسعير ربع نقل', qS.price === Math.max(200, Math.ceil((30 + 6 * km) * cm)) && qS.vehicle === 'pickup');
-  const qL = await ok('عرض سعر نقل', call('cF', 'quote', body('large', { vehiclePick: 'truck' }), eS));
+  const qL = await ok('عرض سعر نقل', call('cF', 'quote', body('large', { vehiclePick: 'jumbo' }), eS));
   check('النقل غير ربع النقل', qL.price === Math.max(400, Math.ceil((50 + 12 * km) * cm)) && qL.price > qS.price);
   const qN = await ok('من غير اختيار عربية (بالحجم)', call('cF', 'quote', body('small'), eS)); check('بيتحسب بعربية الحجم', qN.price === qS.price);
-  const qBad = await ok('عربية مش مطابقة للحجم: بيتجاهلها', call('cF', 'quote', body('small', { vehiclePick: 'truck' }), eS)); check('بيرجع لعربية الحجم', qBad.price === qS.price);
+  const qBad = await ok('عربية مش مطابقة للحجم: بيتجاهلها', call('cF', 'quote', body('small', { vehiclePick: 'jumbo' }), eS)); check('بيرجع لعربية الحجم', qBad.price === qS.price);
   const o = await ok('طلب بنفس العربية', make(100, eS, { vehiclePick: 'pickup' }, true)); check('سعر الطلب = عرض السعر', o.price === qS.price || orderRow(o.id).price === qS.price); }
 
 // -- رسوم الكيلومتر + تتبع الكيلومترات --
@@ -593,14 +594,14 @@ await ok('رسوم 2 جنيه/كم والنسبة 0', sv9({ vehiclePricing: VP, 
   check('اتخصم اللي اتحسب بس وفضل 30 كم و60 جنيه', U('drvFF').dc_km === 30 && U('drvFF').dc_kmfee === 60 && U('drvFF').km_total === 100); }
 { // رسوم خاصة بنوع العربية (نقل = 1 جنيه/كم) بدل العامة
   FS.patch('users/drvXX', { dc_km: 0, dc_kmfee: 0, dc_gross: 0, km_total: 0 });
-  const id = (await ok('طلب نقل', make(100, eS, { size: 'large', vehiclePick: 'truck' }, true))).id; setPrice(id, 900); patchData(id, { distanceKm: 100 });
-  FS.patch('users/drvXX', { vehicle_type: 'truck' });
+  const id = (await ok('طلب نقل', make(100, eS, { size: 'large', vehiclePick: 'jumbo' }, true))).id; setPrice(id, 900); patchData(id, { distanceKm: 100 });
+  FS.patch('users/drvXX', { vehicle_type: 'jumbo' });
   await ok('سواق يقبل', call('drvXX', 'orders/accept', { orderId: id }, eS)); await drive('drvXX', id); await ok('تسليم', finish('drvXX', id));
-  check('رسوم النقل 100 (1 جنيه/كم) مش العامة 200', U('drvXX').dc_kmfee === 100 && ledger('drvXX', id)?.vehicle === 'truck' && dataOf(id).kmFee === 100); }
+  check('رسوم النقل 100 (1 جنيه/كم) مش العامة 200', U('drvXX').dc_kmfee === 100 && ledger('drvXX', id)?.vehicle === 'jumbo' && dataOf(id).kmFee === 100); }
 { // توقيف بسبب الحد حتى لو النسبة 0 (فيه رسوم كيلومتر)
   FS.patch('users/drvFF', { dc_gross: 1000 }); check('رسوم كيلومتر + مكسب فوق الحد = متوقف', (await call('drvFF', 'dc/summary', {}, eS)).blocked === true);
   const id = (await mk()).id; await bad('المتوقف مايقبلش', call('drvFF', 'orders/accept', { orderId: id }, eS), 403, 'dc_blocked'); FS.patch('users/drvFF', { dc_gross: 0 }); }
-await ok('نقفل رسوم الكيلومتر (حتى الخاصة بالنقل)', sv9({ vehiclePricing: { ...VP, truck: { ...VP.truck, kmFee: 0 } }, dcPct: 0, dcPerKm: 0, dcLimit: 1000 }));
+await ok('نقفل رسوم الكيلومتر (حتى الخاصة بالنقل)', sv9({ vehiclePricing: { ...VP, jumbo: { ...VP.jumbo, kmFee: 0 } }, dcPct: 0, dcPerKm: 0, dcLimit: 1000 }));
 { const id = (await mk()).id; setPrice(id, 400); patchData(id, { distanceKm: 50, vehiclePick: 'pickup' }); FS.patch('users/drvXX', { dc_km: 0, dc_kmfee: 0, dc_gross: 0, km_total: 0 });
   await ok('سواق يقبل', call('drvXX', 'orders/accept', { orderId: id }, eS)); await drive('drvXX', id); await ok('تسليم', finish('drvXX', id));
   check('من غير أي رسوم: الكيلومترات بتتتبّع بس من غير رسوم ولا دفتر', U('drvXX').km_total === 50 && !U('drvXX').dc_kmfee && !U('drvXX').dc_gross && !ledger('drvXX', id)); }

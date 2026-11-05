@@ -7,6 +7,7 @@ import { trustOf } from '../functions/_lib/trust.js';
 import { recommendVehicle, canServe } from '../functions/_lib/logic.js';
 import * as clientEst from '../public/js/estimate.js';
 import { makeFirestore } from './fake-firestore.mjs';
+import { DEFAULTS as __ESC } from '../functions/_lib/logic.js'; __ESC.dcEnabled = false; for (const k of Object.keys(__ESC.vehiclePricing)) __ESC.vehiclePricing[k] = { base: 0, perKm: 0, minPrice: 0, kmFee: 0 }; // الاختبارات دي بتفترض المعادلة العامة (التسعير لكل نوع تقديري جديد وليه اختبار خاص) // هذا الملف بيختبر نظام الضمان القديم، فبنختاره صراحةً (الافتراضي الجديد = الدفع المباشر)
 
 const PROJECT = 'demo-ishhanli';
 const b64u = (b) => Buffer.from(b).toString('base64url');
@@ -93,25 +94,25 @@ const make = async (extra = {}) => { clearRl(); cancelAll('cV', ALIVE); return c
 
 // ===== 1) الافتراضيات =====
 check('الترشيح والمرافقة مفعّلين افتراضياً', cur.companionAsk === true && cur.vehicleGuideOn === true);
-check('جدول العربيات الافتراضي: ربع نقل 800 / نص نقل 2000 / نقل ثقيل 8000 / جامبو 50000', cur.vehicleGuide.pickup.maxKg === 800 && cur.vehicleGuide.half_ton.maxKg === 2000 && cur.vehicleGuide.truck.maxKg === 8000 && cur.vehicleGuide.jumbo.maxKg === 50000);
-check('حجم الجامبو موجود بمعامل 3', cur.sizes.xlarge?.mult === 3 && cur.vehicleGuide.jumbo.size === 'xlarge');
+check('جدول العربيات الافتراضي: ربع نقل 800 / نص نقل 2000 / جامبو 5000 / نقل ثقيل 50000', cur.vehicleGuide.pickup.maxKg === 800 && cur.vehicleGuide.half_ton.maxKg === 2000 && cur.vehicleGuide.jumbo.maxKg === 5000 && cur.vehicleGuide.truck.maxKg === 50000);
+check('الجامبو (حجم كبير) أقل من النقل الثقيل (حجم أكبر جداً بمعامل 3)', cur.sizes.large?.mult === 2 && cur.sizes.xlarge?.mult === 3 && cur.vehicleGuide.jumbo.size === 'large' && cur.vehicleGuide.truck.size === 'xlarge');
 
 // ===== 2) ترشيح العربية (وحدة) =====
 { const g = cur.vehicleGuide;
-  const cases = [[1, 'pickup'], [800, 'pickup'], [801, 'half_ton'], [2000, 'half_ton'], [2001, 'truck'], [8000, 'truck'], [8001, 'jumbo'], [50000, 'jumbo'], [99999, 'jumbo']];
+  const cases = [[1, 'pickup'], [800, 'pickup'], [801, 'half_ton'], [2000, 'half_ton'], [2001, 'jumbo'], [5000, 'jumbo'], [5001, 'truck'], [50000, 'truck'], [99999, 'truck']];
   for (const [kg, want] of cases) check(`ترشيح ${kg} كجم = ${want}`, recommendVehicle(g, kg) === want);
-  check('نسخة الواجهة مطابقة للسيرفر لكل الأوزان', [0, 1, 500, 800, 801, 1999, 2001, 7999, 8001, 49999, 100000, NaN, -5].every((kg) => clientEst.recommendVehicle(g, kg) === recommendVehicle(g, kg)));
+  check('نسخة الواجهة مطابقة للسيرفر لكل الأوزان', [0, 1, 500, 800, 801, 1999, 2001, 4999, 5001, 49999, 100000, NaN, -5].every((kg) => clientEst.recommendVehicle(g, kg) === recommendVehicle(g, kg)));
   const noPickup = { ...g, pickup: { ...g.pickup, maxKg: 0 } };
   check('عربية متوقفة (0) بتتخطّى: 100 كجم = نص نقل', recommendVehicle(noPickup, 100) === 'half_ton');
   const allOff = Object.fromEntries(Object.keys(g).map((k) => [k, { ...g[k], maxKg: 0 }]));
   check('كلهم متوقفين = مفيش ترشيح', recommendVehicle(allOff, 100) === null);
-  check('وزن غير صالح = أكبر عربية مفعّلة', recommendVehicle(g, NaN) === 'jumbo'); }
+  check('وزن غير صالح = أكبر عربية مفعّلة', recommendVehicle(g, NaN) === 'truck'); }
 
 // ===== 3) مين يخدم إيه =====
-check('ربع نقل مايخدمش الجامبو', canServe('pickup', { service: 'cargo', size: 'xlarge' }) === false);
-check('نص نقل مايخدمش الجامبو', canServe('half_ton', { service: 'cargo', size: 'xlarge' }) === false);
-check('النقل الثقيل والجامبو يخدموا الجامبو', canServe('truck', { service: 'cargo', size: 'xlarge' }) && canServe('jumbo', { service: 'cargo', size: 'xlarge' }));
-check('الجامبو يخدم كل الأحجام', ['small', 'medium', 'large', 'xlarge'].every((z) => canServe('jumbo', { service: 'cargo', size: z })));
+check('ربع نقل مايخدمش النقل الثقيل', canServe('pickup', { service: 'cargo', size: 'xlarge' }) === false);
+check('نص نقل مايخدمش الجامبو ولا الثقيل', canServe('half_ton', { service: 'cargo', size: 'large' }) === false && canServe('half_ton', { service: 'cargo', size: 'xlarge' }) === false);
+check('الجامبو يخدم لحد حجمه بس (مش النقل الثقيل)', canServe('jumbo', { service: 'cargo', size: 'large' }) && canServe('jumbo', { service: 'cargo', size: 'xlarge' }) === false);
+check('النقل الثقيل يخدم كل الأحجام', ['small', 'medium', 'large', 'xlarge'].every((z) => canServe('truck', { service: 'cargo', size: z })));
 
 // ===== 4) المرافقة =====
 { const a = await ok('طلب: العميل هيرافق', make({ companion: true })); check('companion=true متخزّن', dataOf(a.id).companion === true);
@@ -127,9 +128,9 @@ check('الجامبو يخدم كل الأحجام', ['small', 'medium', 'large'
   const n = await ok('من غير اختيار', make()); check('من غير اختيار = null', dataOf(n.id).vehiclePick === null);
   await bad('ربع نقل + حجم متوسط = مش متطابق', make({ vehiclePick: 'pickup', size: 'medium' }), 400, 'bad_vehicle');
   await bad('عربية مش موجودة', make({ vehiclePick: 'rocket', size: 'small' }), 400, 'bad_vehicle');
-  const j = await ok('جامبو + حجم جامبو', make({ vehiclePick: 'jumbo', size: 'xlarge' })); check('الجامبو متخزّن', dataOf(j.id).vehiclePick === 'jumbo' && dataOf(j.id).size === 'xlarge');
-  const L = await ok('نقل ثقيل', make({ vehiclePick: 'truck', size: 'large' }));
-  check('سعر الجامبو أعلى من النقل الثقيل (معامل 3 مقابل 2)', j.price > L.price);
+  const j = await ok('جامبو + حجم جامبو', make({ vehiclePick: 'jumbo', size: 'large' })); check('الجامبو متخزّن', dataOf(j.id).vehiclePick === 'jumbo' && dataOf(j.id).size === 'large');
+  const L = await ok('نقل ثقيل', make({ vehiclePick: 'truck', size: 'xlarge' }));
+  check('سعر النقل الثقيل أعلى من الجامبو (معامل 3 مقابل 2)', L.price > j.price);
   await ok('الأدمن يوقف الترشيح', save({ vehicleGuideOn: false }));
   const off = await ok('طلب والترشيح مقفول', make({ vehiclePick: 'pickup', size: 'small' })); check('الترشيح مقفول = الاختيار بيتتجاهل', dataOf(off.id).vehiclePick === null);
   await ok('الأدمن يفتحه', save({ vehicleGuideOn: true })); }
@@ -140,12 +141,12 @@ check('الجامبو يخدم كل الأحجام', ['small', 'medium', 'large'
   await ok('الأدمن يغيّر أوزان ربع النقل', save({ vehicleGuide: { ...g, pickup: { maxKg: 1000, size: 'small' } } }));
   { const s = (await call('cV', 'settings')).settings; check('التعديل ظاهر للعميل', s.vehicleGuide.pickup.maxKg === 1000 && recommendVehicle(s.vehicleGuide, 900) === 'pickup'); }
   await bad('أوزان مش مرتبة (ربع نقل أكبر من نص نقل)', save({ vehicleGuide: { ...g, pickup: { maxKg: 3000, size: 'small' } } }), 400, 'bad_input');
-  await bad('حجم مش موجود في جدول الأحجام', save({ vehicleGuide: { ...g, truck: { maxKg: 8000, size: 'nope' } } }), 400, 'bad_input');
+  await bad('حجم مش موجود في جدول الأحجام', save({ vehicleGuide: { ...g, truck: { maxKg: 50000, size: 'nope' } } }), 400, 'bad_input');
   await bad('وزن سالب', save({ vehicleGuide: { ...g, truck: { maxKg: -5, size: 'large' } } }), 400, 'bad_input');
   await ok('عربية متوقفة (0) مسموح', save({ vehicleGuide: { ...g, pickup: { maxKg: 0, size: 'small' } } }));
   await bad('العربية المتوقفة مش مقبولة كاختيار', make({ vehiclePick: 'pickup', size: 'small' }), 400, 'bad_vehicle');
-  await ok('الأدمن يغيّر معامل الجامبو', save({ vehicleGuide: g, sizes: { ...cur.sizes, xlarge: { ...cur.sizes.xlarge, mult: 4 } } }));
-  check('معامل الجامبو الجديد اتحفظ', (await call('cV', 'settings')).settings.sizes.xlarge.mult === 4);
+  await ok('الأدمن يغيّر معامل النقل الثقيل', save({ vehicleGuide: g, sizes: { ...cur.sizes, xlarge: { ...cur.sizes.xlarge, mult: 4 } } }));
+  check('معامل النقل الثقيل الجديد اتحفظ', (await call('cV', 'settings')).settings.sizes.xlarge.mult === 4);
   await ok('إعادة الإعدادات الأصلية', save({ vehicleGuide: g, sizes: cur.sizes })); }
 
 
@@ -165,7 +166,7 @@ check('الجامبو يخدم كل الأحجام', ['small', 'medium', 'large'
 { const { vehicleSvg, vehicleImgKey } = await import('../public/js/vehicles.js');
   for (const k of ['pickup', 'half_ton', 'truck', 'jumbo', 'passengers', 'car', 'van', 'microbus', 'minibus', 'tuktuk', 'reefer', 'flatbed', 'tanker', 'dump', 'curtain', 'carcarrier', 'غريب']) { const x = vehicleSvg(k); check(`رسمة ${k} صالحة`, x.startsWith('<svg') && x.endsWith('</svg>') && x.includes('class="wheel"')); }
   check('كل نوع من الأربعة رسمته مختلفة', new Set(['pickup', 'half_ton', 'truck', 'jumbo'].map((k) => vehicleSvg(k))).size === 4);
-  const { VEHICLE_SHAPES } = await import('../public/js/vehicles.js'), { DICT } = await import('../public/js/i18n.js');
+  const { VEHICLE_SHAPES } = await import('../public/js/vehicles.js'), { DICT } = await import('../public/js/i18n.js'); await import('../public/js/i18n-admin.js'); await import('../public/js/i18n-info.js');
   const uniq = VEHICLE_SHAPES.filter((k) => k !== 'passengers'); // passengers = نفس رسمة الميكروباص
   check('16 مفتاح (15 رسمة مختلفة + رسمة الركاب = الميكروباص)', VEHICLE_SHAPES.length === 16 && ['tuktuk', 'reefer', 'flatbed', 'tanker', 'dump', 'curtain', 'carcarrier', 'car', 'van', 'minibus'].every((k) => VEHICLE_SHAPES.includes(k)));
   check('كل الأشكال رسمتها مختلفة عن بعض', new Set(uniq.map((k) => vehicleSvg(k))).size === uniq.length);

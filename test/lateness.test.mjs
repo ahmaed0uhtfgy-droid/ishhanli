@@ -5,6 +5,7 @@ import { onRequest } from '../functions/api/[[route]].js';
 import { JWKS_URL } from '../functions/_lib/core.js';
 import { trustOf } from '../functions/_lib/trust.js';
 import { makeFirestore } from './fake-firestore.mjs';
+import { DEFAULTS as __ESC } from '../functions/_lib/logic.js'; __ESC.dcEnabled = false; for (const k of Object.keys(__ESC.vehiclePricing)) __ESC.vehiclePricing[k] = { base: 0, perKm: 0, minPrice: 0, kmFee: 0 }; // الاختبارات دي بتفترض المعادلة العامة (التسعير لكل نوع تقديري جديد وليه اختبار خاص) // هذا الملف بيختبر نظام الضمان القديم، فبنختاره صراحةً (الافتراضي الجديد = الدفع المباشر)
 import { DEFAULTS as __D } from '../functions/_lib/logic.js'; __D.samePickupMax = 0; // اختبارات قديمة بتفتح طلبات كتير من نفس النقطة؛ حد «نفس نقطة الاستلام» متختبر في dc.test.mjs
 
 const PROJECT = 'demo-ishhanli';

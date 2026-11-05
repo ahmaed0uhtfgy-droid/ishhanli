@@ -63,7 +63,7 @@ export const userOut = (r) => r && ({
   ratingCount: r.rating_count, completedOrders: r.completed_orders, cancelCount: r.cancel_count, latePoints: r.late_points || 0, addresses: parseArr(r.addresses),
   profileEditedAt: r.profile_edited_at || 0, profileEditDays: r.profile_edit_days ?? null, createdAt: r.created_at,
   fineDue: r.fine_due || 0, referralCode: r.referral_code || null, referredBy: r.referred_by || null, totpEnabled: !!r.totp_enabled,
-  accountType: r.account_type || 'individual', companyName: r.company_name || null, commercialRegRef: r.commercial_reg_ref || null, taxCardRef: r.tax_card_ref || null,
+  accountType: r.account_type || 'individual', companyName: r.company_name || null, commercialRegRef: r.commercial_reg_ref || null, taxCardRef: r.tax_card_ref || null, selfieRef: r.selfie_ref || null, fleetSize: r.fleet_size || null,
 });
 // سواق تابع لشركة شحن: بياناته (بطاقة/رخصة/لوحة) بتتسجّل عشان لو الشحنة اتلفت أو اتسرقت يبقى معروف مين استلمها
 export const fleetOut = (r) => ({

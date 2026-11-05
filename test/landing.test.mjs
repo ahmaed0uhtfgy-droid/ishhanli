@@ -11,11 +11,14 @@ const strip = (h) => h.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<[^>]+
 const jsonld = (h) => [...h.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)].map((m) => JSON.parse(m[1]));
 const L = (s, site, company, env) => buildLanding({ settings: s, site, company: company || s.company, env });
 
-ok('الافتراضي (حجز عبر المنصة): كلام الحجز موجود وحجز العربية مش ظاهر', () => {
-  const r = L(S()), t = strip(r.body);
+ok('نظام الضمان (لو الأدمن فعّله): كلام الحجز موجود وحجز العربية مش ظاهر', () => {
+  const r = L(S({ dcEnabled: false })), t = strip(r.body);
   assert.match(t, /محجوزة/); assert.match(t, /InstaPay/); assert.ok(!t.includes('حجز عربية'), 'حجز عربية مقفول افتراضياً');
   assert.ok(!t.includes('بنبدأ بمنطقة'), 'جملة المنطقة الواحدة اتشالت');
   assert.match(t, new RegExp(`${DEFAULTS.commissionPct}%`)); assert.match(t, new RegExp(`${DEFAULTS.minPrice} جنيه`));
+});
+ok('الافتراضي = الدفع المباشر: مفيش أي كلام عن حجز المبلغ', () => {
+  const t = strip(L(S()).body); for (const bad of ['محجوز', 'محجوزة', 'InstaPay', 'Escrow', 'escrow', 'نزاع']) assert.ok(!t.includes(bad), 'ظهرت: ' + bad);
 });
 ok('الدفع المباشر: مفيش أي كلام عن حجز المبلغ أو InstaPay أو السحب', () => {
   const r = L(S({ dcEnabled: true, dcPct: 7 })), t = strip(r.body) + JSON.stringify(jsonld(r.head));
@@ -23,8 +26,8 @@ ok('الدفع المباشر: مفيش أي كلام عن حجز المبلغ �
   assert.match(t, /بتدفع للسواق مباشرة/); assert.match(t, /7%/);
 });
 ok('التحرير التلقائي بيظهر بعدد الساعات الحقيقي بس لو مفعّل', () => {
-  assert.ok(!strip(L(S()).body).includes('تلقائياً بعد'));
-  assert.match(strip(L(S({ autoReleaseHours: 36 })).body), /36 ساعة/);
+  assert.ok(!strip(L(S({ dcEnabled: false })).body).includes('تلقائياً بعد'));
+  assert.match(strip(L(S({ dcEnabled: false, autoReleaseHours: 36 })).body), /36 ساعة/);
 });
 ok('نطاق GPS: الرقم من الإعدادات، ولو صفر بيتشال الادعاء', () => {
   assert.match(strip(L(S({ geofenceMeters: 250 })).body), /250 متر/);
@@ -35,12 +38,13 @@ ok('العروض: جملة الاقتراح بتظهر بس لو العروض م
 });
 ok('حجز عربية بيظهر لما الأدمن يفعّله', () => { assert.match(strip(L(S({ passengersEnabled: true })).body), /حجز عربية/); });
 ok('معادلة السعر بتتبدّل لو التسعير بالعربية مفعّل', () => {
-  assert.match(strip(L(S()).body), /معامل الحجم/);
+  assert.match(strip(L(S({ vehiclePricing: {} })).body), /معامل الحجم/);
+  assert.match(strip(L(S()).body), /سعر الفتح/); // الافتراضي الجديد: تسعير لكل نوع عربية
   const vp = { pickup: { base: 50, perKm: 8, minPrice: 100, kmFee: 0 } };
   const t = strip(L(S({ vehiclePricing: vp })).body); assert.match(t, /سعر الفتح/); assert.ok(!t.includes('معامل الحجم'));
 });
 ok('عمولة السواق الجديد بتظهر بأرقام الإعدادات', () => {
-  const t = strip(L(S({ commissionPct: 12, newDriver: { orders: 10, commissionPct: 5 } })).body); assert.match(t, /أول 10 رحلات/); assert.match(t, /5%/);
+  const t = strip(L(S({ dcEnabled: false, commissionPct: 12, newDriver: { orders: 10, commissionPct: 5 } })).body); assert.match(t, /أول 10 رحلات/); assert.match(t, /5%/);
 });
 ok('الأمان: النص المعدّل والبيانات بتتهرّب والروابط الغريبة بتتشال', () => {
   const site = { texts: { 'hero.h1': '<img src=x onerror=alert(1)> *مهم*' } };

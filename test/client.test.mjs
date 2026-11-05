@@ -4,6 +4,7 @@ globalThis.localStorage = { getItem: () => null, setItem() {} };
 globalThis.document = { documentElement: {} };
 const { html, esc, raw, fmtMoney, errMsg, orderNo, trustBadge, stamp } = await import('../public/js/ui.js');
 const { t, setLang, DICT } = await import('../public/js/i18n.js');
+await import('../public/js/i18n-admin.js'); await import('../public/js/i18n-info.js');
 
 // XSS: أي بيانات مستخدم لازم تتعمل لها escape تلقائياً
 const evil = '<img src=x onerror=alert(1)>"\'&';
