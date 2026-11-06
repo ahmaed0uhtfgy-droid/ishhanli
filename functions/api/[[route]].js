@@ -1111,7 +1111,7 @@ const ROUTES = {
     await F.run(c.env, stmts);
     if (pointIt) {
       bg(c, notify(c.env, [o.driverId], 'late_point', { no: orderNo(o.id) }, { url: '/#/driver/dashboard' }));
-      if (s.latePointsLimit > 0 && prev < s.latePointsLimit && prev + 1 >= s.latePointsLimit) toAdmins(c, 'late_limit', { name: o.driverName || '', n: prev + 1 }, '/#/admin/users'); // وصل الحد → يروح للأدمن (حظر أو مسح)
+      if (s.latePointsLimit > 0 && prev < s.latePointsLimit && prev + 1 >= s.latePointsLimit) toAdmins(c, 'late_limit', { name: o.driverName || '', n: prev + 1 }, '/#/admin/drivers'); // وصل الحد → يروح للأدمن (حظر أو مسح)
     }
     return { ok: true, state: marks[kind].state };
   },
@@ -1551,7 +1551,9 @@ const ROUTES = {
 
   async 'admin/users'(c) {
     await need(c, ['admin']);
-    const role = ['customer', 'driver'].includes(c.body.role) ? c.body.role : null, status = c.body.status ? String(c.body.status) : null;
+    // kind = صفحات الأدمن المنفصلة: customer (عملاء) / driver (سواقين أفراد) / company (شركات شحن). role لسه شغّال زي ما كان.
+    const kind = ['customer', 'driver', 'company'].includes(c.body.kind) ? c.body.kind : null;
+    const role = kind ? (kind === 'customer' ? 'customer' : 'driver') : (['customer', 'driver'].includes(c.body.role) ? c.body.role : null), status = c.body.status ? String(c.body.status) : null;
     const base = role ? { role } : {};
     // بنجيب المعلّقين الأول (عشان ما يضيعوش وسط القائمة) + الأحدث، وبنفلتر البحث في الذاكرة (Firestore مفيهوش LIKE)
     const lists = status ? [await F.query(c.env, 'users', { eq: { ...base, status }, limit: 300 })]
@@ -1560,7 +1562,8 @@ const ROUTES = {
     const seen = new Map(); for (const r of lists.flat()) seen.set(r.uid, r);
     const q = String(c.body.q ?? '').trim().slice(0, 40).toLowerCase();
     const has = (v) => String(v ?? '').toLowerCase().includes(q);
-    const rows = [...seen.values()].filter((r) => r.role !== 'admin' && (!q || has(r.name) || has(r.phone) || has(r.email)))
+    const kindOk = (r) => !kind || kind === 'customer' || (kind === 'company') === (r.account_type === 'company'); // الشركة = سواق بحساب شركة؛ السواق الفرد = أي سواق غير كده
+    const rows = [...seen.values()].filter((r) => r.role !== 'admin' && kindOk(r) && (!q || has(r.name) || has(r.phone) || has(r.email) || has(r.company_name)))
       .sort((a, b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1) || b.created_at - a.created_at).slice(0, 300);
     const ts = await loadSettings(c.env);
     return { users: rows.map((r) => { const u = userOut(r); if (r.role === 'driver') u.trust = trustOf(r, ts); return u; }) };
