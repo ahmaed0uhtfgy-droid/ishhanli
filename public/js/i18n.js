@@ -531,6 +531,11 @@ const ROWS = [
 
   ['map.routeInfo', 'المسار على الطريق: {km} كم تقريباً · حوالي {min} دقيقة', 'Road route: about {km} km · about {min} min'],
   ['map.routeApprox', 'مسار تقريبي (خدمة الطرق مش متاحة دلوقتي)', 'Approximate route (road service unavailable right now)'],
+  ['auth.roleAdmin', 'أدمن', 'Admin'],
+  ['notif.title', 'الإشعارات', 'Notifications'],
+  ['notif.empty', 'مفيش إشعارات لسه. هتظهر هنا أول ما يحصل جديد في طلباتك.', 'No notifications yet. They will show up here as soon as something new happens.'],
+  ['notif.markAll', 'تعليم الكل كمقروء', 'Mark all as read'],
+  ['notif.enablePush', 'فعّل إشعارات الجهاز', 'Enable device notifications'],
   ['nav.fees', 'رسوم المنصة', 'Platform fees'],
   ['fees.title', 'رسوم المنصة', 'Platform fees'],
   ['fees.active', 'حسابك شغّال وبتقدر تاخد طلبات.', 'Your account is active and can accept orders.'],
@@ -678,7 +683,7 @@ const ROWS = [
   ['order.vehiclePhoto', 'صورة العربية', 'Vehicle photo'],
 
   ['est.title', 'احسب سعر شحنتك قبل ما تسجّل', 'Estimate your price before signing up'],
-  ['est.sub', 'اختار المدينتين ونوع الحمولة وحجمها وشوف السعر التقريبي فوراً.', 'Pick the two cities, cargo type and size to see an approximate price instantly.'],
+  ['est.sub', 'اختار المدينتين ونوع الحمولة ونوع العربية وشوف السعر التقريبي فوراً.', 'Pick the two cities, cargo type and vehicle type to see an approximate price instantly.'],
   ['est.note', 'تقدير تقريبي بالمسافة المستقيمة بين المدن. السعر النهائي بيتحسب من المسافة الفعلية على الخريطة قبل ما تأكد الطلب.', 'An approximate estimate using straight-line distance between cities. The final price is calculated from the real route on the map before you confirm.'],
   ['est.about', 'حوالي', 'About'],
   ['est.pick', 'اختار مدينتين مختلفتين', 'Pick two different cities'],

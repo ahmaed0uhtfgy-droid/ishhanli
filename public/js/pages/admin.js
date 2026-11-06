@@ -491,7 +491,7 @@ function referrals(body) {
 }
 
 // ---- واجهة الموقع (الصفحة الرئيسية): التصميم الفعّال، الوضع الافتراضي، الأقسام، النصوص، السيو ----
-const SITE_SEC = { estimate: ['حاسبة السعر', 'Price estimator'], services: ['الخدمات', 'Services'], trust: ['الثقة', 'Trust'], join: ['السواقين والشركات', 'Drivers and companies'], faq: ['الأسئلة الشائعة', 'FAQ'], contact: ['التواصل (بيظهر لو فيه بيانات)', 'Contact (shown when data exists)'] };
+const SITE_SEC = { about: ['من نحن', 'About'], estimate: ['حاسبة السعر', 'Price estimator'], services: ['الخدمات', 'Services'], trust: ['الثقة', 'Trust'], join: ['السواقين والشركات', 'Drivers and companies'], faq: ['الأسئلة الشائعة', 'FAQ'], contact: ['التواصل (بيظهر لو فيه بيانات)', 'Contact (shown when data exists)'] };
 export function siteCard(S) {
   const en = getLang() === 'en', site = cleanSite(S.site), L = (ar, e) => (en ? e : ar);
   const slots = lpSlots(lpFacts(S, { DELIVERY_CODE_SECRET: S.deliveryCodeAvailable }));
@@ -502,7 +502,7 @@ export function siteCard(S) {
       <label class="f">${L('الوضع الافتراضي للزائر', 'Default visitor mode')}<select name="site.mode"><option value="auto" ${site.mode === 'auto' ? 'selected' : ''}>${L('تلقائي (وضع التصميم الأصلي)', 'Auto (the design’s own mode)')}</option><option value="light" ${site.mode === 'light' ? 'selected' : ''}>${L('نهاري', 'Light')}</option><option value="dark" ${site.mode === 'dark' ? 'selected' : ''}>${L('ليلي', 'Dark')}</option></select></label>
       <label class="f">${L('رابط اللوجو (https، اختياري)', 'Logo URL (https, optional)')}<input name="site.logoUrl" dir="ltr" maxlength="300" value="${site.logoUrl}" placeholder="/img/logo.png"></label></div>
     <p class="hint"><a href="/?preview=a" target="_blank" rel="noopener">${L('معاينة التصميم 1', 'Preview design 1')}</a> · <a href="/?preview=b" target="_blank" rel="noopener">${L('معاينة التصميم 2', 'Preview design 2')}</a> ${L('(من غير تفعيل، وبدون فهرسة)', '(without activating; not indexed)')}</p>
-    <div class="row" style="flex-wrap:wrap;gap:1rem">${LP_SECTIONS.map((id) => html`<label class="row"><input type="checkbox" name="site.show.${id}" ${site.hide.includes(id) ? '' : 'checked'}> <span>${L(SITE_SEC[id][0], SITE_SEC[id][1])}</span></label>`)}</div>
+    <div class="row" style="flex-wrap:wrap;gap:1rem">${LP_SECTIONS.map((id) => html`<label class="row"><input type="checkbox" name="site.show.${id}" ${site.hide.includes(id) ? '' : 'checked'}> <span>${L(...(SITE_SEC[id] || [id, id]))}</span></label>`)}</div>
     <div class="grid-2"><label class="f">${L('عنوان الصفحة في جوجل (حتى 70 حرف)', 'Google title (up to 70 chars)')}<input name="site.seo.title" maxlength="70" value="${site.seo.title}"></label>
       <label class="f">${L('وصف الصفحة في جوجل (حتى 200 حرف)', 'Google description (up to 200 chars)')}<input name="site.seo.description" maxlength="200" value="${site.seo.description}"></label></div>
     <div class="grid-2"><label class="f">${L('رمز توثيق Google Search Console (قيمة content فقط)', 'Google Search Console verification token (the content value only)')}<input name="site.seo.google" dir="ltr" maxlength="100" value="${site.seo.google}"></label>

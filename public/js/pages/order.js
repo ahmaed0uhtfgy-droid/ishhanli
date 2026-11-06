@@ -11,8 +11,6 @@ import { moneySteps } from '../money.js';
 const ACTIVE = ['heading_pickup', 'picked_up', 'in_transit'];
 const HELD = ['paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered'];
 const RECEIPT_STATUS = ['paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered', 'completed', 'resolved'];
-const STEPS = ['open', 'accepted', 'paid', 'picked_up', 'in_transit', 'delivered', 'completed'];
-const STEPS_PRE = ['pay', 'visible', 'accepted', 'picked_up', 'in_transit', 'delivered', 'completed'];
 // غرامة إلغاء العميل دلوقتي (نفس منطق السيرفر): مجاني في أول دقايق، بعدها حسب مرحلة السواق (في الطريق / وصل)
 const fineOnC = () => state.settings.finesEnabled === true && state.settings.dcEnabled === true;
 const fineStage = (o) => {
@@ -32,11 +30,7 @@ const arrivalHtml = (o) => {
 };
 const STEPS_UNI = ['open', 'accepted', 'picked_up', 'delivering', 'completed'];
 const STEP_OF_UNI = { awaiting_payment: 0, payment_review: 0, open: 0, accepted: 1, paid: 1, heading_pickup: 1, picked_up: 2, in_transit: 3, delivered: 3, completed: 4, resolved: 4 };
-const STEPS_DIRECT = ['open', 'accepted', 'picked_up', 'in_transit', 'completed']; // الدفع المباشر: مفيش خطوة دفع ولا ضمان — بيتكمّل بمجرد تأكيد السواق للتسليم
-const STEP_OF_DIRECT = { open: 0, paid: 1, heading_pickup: 1, picked_up: 2, in_transit: 3, delivered: 4, completed: 4, resolved: 4 };
-const STEP_OF_PRE = { awaiting_payment: 0, payment_review: 0, open: 1, paid: 2, heading_pickup: 2, picked_up: 3, in_transit: 4, delivered: 5, completed: 6, resolved: 6 };
 const CHAT_OPEN = ['accepted', 'payment_review', 'paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered', 'disputed'];
-const STEP_OF = { open: 0, accepted: 1, payment_review: 1, paid: 2, heading_pickup: 2, picked_up: 3, in_transit: 4, delivered: 5, completed: 6, resolved: 6 };
 const NEXT_LABEL = { heading_pickup: 'order.actHeading', picked_up: 'order.actPicked', in_transit: 'order.actTransit', delivered: 'order.actDelivered' };
 const NEXT_LABEL_P = { picked_up: 'order.actPickedP', delivered: 'order.actDeliveredP' }; // رحلات الركاب
 const NEXT_OF = { paid: 'heading_pickup', heading_pickup: 'picked_up', picked_up: 'in_transit', in_transit: 'delivered' };

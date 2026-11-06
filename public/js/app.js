@@ -13,7 +13,8 @@ import { initErrorReporting } from './report.js';
 
 // الصفحات التقيلة (الأدمن، السواق، الطلب...) بتتحمّل عند أول دخول عليها بس: الزائر والصفحة الرئيسية ما بيحمّلوهاش. بتفضل ترجّع دالة تنضيف زي ما كانت.
 let leafletP = null; // Leaflet (الخرائط) بيتحمّل بس لما صفحة محتاجاه، مش على الصفحة الرئيسية
-const loadLeaflet = () => window.L ? Promise.resolve() : (leafletP ||= new Promise((ok, no) => { const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js'; sc.onload = ok; sc.onerror = () => { leafletP = null; no(new Error('leaflet')); }; document.head.appendChild(sc); }));
+const loadLeaflet = () => window.L ? Promise.resolve() : (leafletP ||= new Promise((ok, no) => { if (!document.querySelector('link[data-leaflet]')) { const lk = document.createElement('link'); lk.rel = 'stylesheet'; lk.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css'; lk.dataset.leaflet = '1'; document.head.appendChild(lk); }
+  const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js'; sc.onload = ok; sc.onerror = () => { leafletP = null; no(new Error('leaflet')); }; document.head.appendChild(sc); }));
 const lazy = (load, name, map = false) => (...args) => {
   let inner = null, dead = false;
   if (args[0] instanceof Element) render(args[0], spinner());
@@ -75,35 +76,88 @@ async function ensureAdmin2fa() {
 }
 window.addEventListener('app:2fa-required', async () => { if (await askTotp()) route(); });
 
+// ===== صندوق الإشعارات (الجرس) =====
+const inbox = { items: [], unread: 0, open: false, menu: false, seen: null, timer: null };
+const ICON = {
+  bell: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>',
+  moon: '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>',
+  lang: '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
+};
+const initial = (n) => [...String(n || '?').trim()][0] || '?';
+const ago = (ms) => { const d = Math.round((ms - Date.now()) / 1000), rtf = new Intl.RelativeTimeFormat(getLang(), { numeric: 'auto' }), a = Math.abs(d); return a < 60 ? rtf.format(0, 'second') : a < 3600 ? rtf.format(Math.round(d / 60), 'minute') : a < 86400 ? rtf.format(Math.round(d / 3600), 'hour') : rtf.format(Math.round(d / 86400), 'day'); };
+async function loadInbox({ quiet = true } = {}) {
+  if (!state.user || !state.profile) return;
+  try {
+    const r = await api('inbox/list', {}), prev = inbox.unread, first = inbox.seen === null;
+    inbox.items = r.items; inbox.unread = r.unread; inbox.seen = true;
+    if (!first && r.unread > prev && quiet && r.items[0]) toast(r.items[0].title); // إشعار جديد وصل والمستخدم على الموقع
+    if (!first && r.unread === prev && !inbox.open) return; // مفيش تغيير: ما نعيدش رسم الشريط
+    renderTopbar();
+  } catch (e) { /* الجرس مش حرج: نسكت لو السيرفر مش متاح */ }
+}
+function startInbox() {
+  clearInterval(inbox.timer); inbox.seen = null; inbox.items = []; inbox.unread = 0;
+  if (!state.user || !state.profile) return;
+  loadInbox(); inbox.timer = setInterval(() => { if (!document.hidden) loadInbox(); }, 45000);
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) loadInbox(); });
+const closePops = () => { if (inbox.open || inbox.menu) { inbox.open = inbox.menu = false; renderTopbar(); } };
+document.addEventListener('click', (e) => { if (!e.target.closest('#topbar .tb-act, #topbar .tb-user')) closePops(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePops(); });
+
 function renderTopbar() {
   const p = state.profile, here = location.hash.split('?')[0] || '#/';
   const roleLinks = !p ? [] : p.role === 'customer' ? [['/customer', 'nav.myOrders'], ['/customer/new', 'nav.newOrder']]
     : p.role === 'driver' ? [['/driver', 'nav.available'], ['/driver/jobs', 'nav.jobs'], ...(state.settings?.dcEnabled === false ? [['/driver/wallet', 'nav.wallet']] : []), ...(state.settings?.dcEnabled === false ? [] : [['/driver/fees', 'nav.fees']]), ['/driver/dashboard', 'nav.dash']]
       : p.role === 'admin' ? [['/customer', 'nav.myOrders'], ['/customer/new', 'nav.newOrder'], ['/admin', 'nav.admin']] : [];
-  const links = [...roleLinks, ...(p ? [['/account', 'nav.account']] : []), ['/about', 'nav.about']];
-  const showBell = p && (p.status === 'active' || p.role === 'admin') && pushSupport() === 'default';
+  const links = [...roleLinks, ['/about', 'nav.about']];
+  const canPush = p && (p.status === 'active' || p.role === 'admin') && pushSupport() === 'default';
+  const bellPanel = !inbox.open ? '' : html`<div class="pop notif-pop" role="dialog" aria-label="${t('notif.title')}">
+      <div class="pop-head"><b>${t('notif.title')}</b>${inbox.unread ? html`<button class="link-btn" id="markAll" type="button">${t('notif.markAll')}</button>` : ''}</div>
+      <div class="pop-body">${inbox.items.length ? inbox.items.map((n) => html`<button type="button" class="notif-item ${n.read ? '' : 'unread'}" data-id="${n.id}" data-url="${n.url}"><span class="dot" aria-hidden="true"></span><span class="nt"><b>${n.title}</b><span>${n.body}</span><time>${ago(n.at)}</time></span></button>`) : html`<p class="pop-empty">${t('notif.empty')}</p>`}</div>
+      ${canPush ? html`<div class="pop-foot"><button class="btn sm primary block" id="pushOn" type="button">${t('notif.enablePush')}</button></div>` : ''}
+    </div>`;
+  const userMenu = !inbox.menu ? '' : html`<div class="pop user-pop" role="menu">
+      <div class="pop-head"><b>${p.name}</b><span class="muted small">${t('auth.role' + (p.accountType === 'company' ? 'Company' : p.role === 'driver' ? 'Driver' : p.role === 'admin' ? 'Admin' : 'Customer'))}</span></div>
+      <a class="menu-item" role="menuitem" href="#/account">${t('nav.account')}</a>
+      <div class="menu-item fsz-row"><span>${t('ui.fontUp')}</span><span class="fsz"><button class="btn ghost sm" id="fdown" type="button" aria-label="${t('ui.fontDown')}">A−</button><button class="btn ghost sm" id="fup" type="button" aria-label="${t('ui.fontUp')}">A+</button></span></div>
+      <button class="menu-item danger" role="menuitem" id="logout" type="button">${t('nav.logout')}</button>
+    </div>`;
   render(topbar, html`<div class="wrap">
     <a class="brand" href="#/">${raw(LOGO)}<span>${t('brand')}</span></a>
     <nav class="nav" aria-label="main">${links.map(([href, k]) => html`<a href="#${href}" class="${here === '#' + href || (href === '/admin' && here.startsWith('#/admin')) ? 'on' : ''}${href === '/admin' ? ' nav-admin' : ''}">${t(k)}</a>`)}</nav>
     <span class="grow"></span>
-    ${p ? html`<span class="who">${p.name}</span>` : ''}
-    ${showBell ? html`<button class="btn ghost sm" id="bell" type="button">${t('push.enable')}</button>` : ''}
-    <button class="btn ghost sm" id="theme" type="button" aria-label="${t('ui.theme')}" aria-pressed="${theme === 'dark'}" title="${t('ui.theme')}">◐</button>
-    <span class="fsz" role="group" aria-label="${t('ui.fontUp')}"><button class="btn ghost sm" id="fdown" type="button" aria-label="${t('ui.fontDown')}">A−</button><button class="btn ghost sm" id="fup" type="button" aria-label="${t('ui.fontUp')}">A+</button></span>
-    <button class="btn ghost sm" id="lang" type="button">${getLang() === 'ar' ? 'EN' : 'عربي'}</button>
-    ${state.user ? html`<button class="btn ghost sm" id="logout" type="button">${t('nav.logout')}</button>` : html`<a class="btn primary sm" href="#/login">${t('nav.login')}</a>`}
+    <div class="tb-tools">
+      ${p ? html`<div class="tb-act"><button class="icon-btn" id="inboxBtn" type="button" aria-haspopup="dialog" aria-expanded="${inbox.open}" aria-label="${t('notif.title')}">${raw(ICON.bell)}${inbox.unread ? html`<b class="badge">${inbox.unread > 9 ? '9+' : inbox.unread}</b>` : ''}</button>${bellPanel}</div>` : ''}
+      <button class="icon-btn" id="theme" type="button" aria-label="${t('ui.theme')}" aria-pressed="${theme === 'dark'}" title="${t('ui.theme')}">${raw(ICON.moon)}</button>
+      <button class="icon-btn lang-btn" id="lang" type="button" aria-label="${getLang() === 'ar' ? 'English' : 'العربية'}"><span aria-hidden="true">${getLang() === 'ar' ? 'EN' : 'ع'}</span></button>
+      ${p ? html`<div class="tb-user"><button class="avatar-btn" id="userBtn" type="button" aria-haspopup="menu" aria-expanded="${inbox.menu}" aria-label="${p.name}"><span class="avatar">${initial(p.name)}</span><span class="who">${p.name}</span></button>${userMenu}</div>`
+        : state.user ? html`<button class="btn ghost sm" id="logout" type="button">${t('nav.logout')}</button>` : html`<a class="btn primary sm" href="#/login">${t('nav.login')}</a>`}
+    </div>
   </div>`);
 }
 topbar.addEventListener('click', async (e) => {
   if (e.target.closest('#fup')) setFont(+1); if (e.target.closest('#fdown')) setFont(-1);
   if (e.target.closest('#theme')) { setTheme(theme === 'dark' ? 'light' : 'dark'); e.target.closest('#theme').setAttribute('aria-pressed', String(theme === 'dark')); }
-  if (e.target.closest('#lang')) { setLang(getLang() === 'ar' ? 'en' : 'ar'); applyI18n(document); renderTopbar(); route(); }
-  if (e.target.closest('#bell')) {
+  if (e.target.closest('#lang')) { setLang(getLang() === 'ar' ? 'en' : 'ar'); applyI18n(document); inbox.open = inbox.menu = false; renderTopbar(); route(); loadInbox(); }
+  if (e.target.closest('#inboxBtn')) { inbox.open = !inbox.open; inbox.menu = false; renderTopbar(); if (inbox.open) loadInbox({ quiet: false }); return; }
+  if (e.target.closest('#userBtn')) { inbox.menu = !inbox.menu; inbox.open = false; renderTopbar(); return; }
+  if (e.target.closest('#markAll')) { try { await api('inbox/read', {}); } catch { /* تجاهل */ } inbox.items.forEach((n) => { n.read = true; }); inbox.unread = 0; renderTopbar(); return; }
+  const it = e.target.closest('.notif-item');
+  if (it) {
+    const url = it.dataset.url || '/', n = inbox.items.find((x) => x.id === it.dataset.id);
+    if (n && !n.read) { n.read = true; inbox.unread = Math.max(0, inbox.unread - 1); api('inbox/read', { id: n.id }).catch(() => {}); }
+    inbox.open = false; renderTopbar();
+    const h = url.includes('#') ? url.slice(url.indexOf('#')) : '#/'; if (location.hash === h) route(); else location.hash = h;
+    return;
+  }
+  if (e.target.closest('#pushOn')) {
     const r = await enablePush({ ask: true }).catch(() => 'error');
     const key = { granted: 'push.enabled', denied: 'push.denied', unsupported: 'push.unsupported', not_configured: 'push.notConfigured' }[r] || 'push.error';
     toast(t(key), r !== 'granted'); renderTopbar();
   }
-  if (e.target.closest('#logout')) { await unregisterPush(); await signOut(auth); go('/'); }
+  if (e.target.closest('#logout')) { await unregisterPush(); clearInterval(inbox.timer); inbox.menu = false; await signOut(auth); go('/'); }
+  if (e.target.closest('.menu-item[href]')) { inbox.menu = false; renderTopbar(); }
 });
 
 async function loadSettings() {
@@ -139,7 +193,7 @@ async function fillCompany() {
 async function loadProfile() {
   try { state.profile = (await api('me')).profile; state.profileError = false; }
   catch (e) { console.error(e); state.profile = null; state.profileError = true; }
-  state.ready = true; route();
+  state.ready = true; route(); startInbox();
 }
 window.addEventListener('app:profile-stale', loadProfile);
 

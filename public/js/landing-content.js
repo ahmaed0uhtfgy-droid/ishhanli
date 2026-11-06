@@ -53,7 +53,7 @@ export const LP_ROWS = [
   ['lp.svc.cargo.t', 'نقل بضائع', 'Cargo transport'], ['lp.svc.cargo.d', 'من شحنة صغيرة لحمولة كاملة: حدد الاستلام والتسليم على الخريطة وشوف السعر فوراً.', 'From a small parcel to a full load: set pickup and drop-off on the map and see the price instantly.'],
   ['lp.svc.pass.t', 'حجز عربية', 'Vehicle booking'], ['lp.svc.pass.d', 'احجز عربية بسواقها لنقل الأفراد والمجموعات، وتتابع الرحلة على الخريطة.', 'Book a vehicle with a driver for individuals and groups, and follow the trip on the map.'],
   ['lp.svc.driver.t', 'سواقين فرادى', 'Individual drivers'], ['lp.svc.driver.d', 'أي سواق عنده عربية نقل يسجّل بمستنداته، وبعد المراجعة اليدوية يبدأ يستقبل الطلبات.', 'Any driver with a transport vehicle registers with documents and, after manual review, starts receiving orders.'],
-  ['lp.svc.company.t', 'شركات شحن', 'Shipping companies'], ['lp.svc.company.d', 'الشركة تسجّل بسجلها التجاري وبطاقتها الضريبية، وتضيف سواقينها، وتحدد مين هيستلم كل شحنة.', 'A company registers with its commercial register and tax card, adds its drivers and assigns who picks up each shipment.'],
+  ['lp.svc.company.t', 'شركات شحن', 'Shipping companies'], ['lp.svc.company.d', 'الشركة تسجّل ببطاقة المسؤول وسيلفي معاها ومركبة واحدة على الأقل، وتضيف سواقينها، وتحدد مين هيستلم كل شحنة.', 'A company registers with the manager’s ID, a selfie with it and at least one vehicle, adds its drivers and assigns who picks up each shipment.'],
 
   ['lp.price.title', 'سعر بدون مفاجآت', 'Pricing without surprises'],
   ['lp.price.text', 'السعر بيتحسب أوتوماتيك من المسافة ونوع الحمولة، وبيظهر لك قبل ما تطلب.', 'The price is calculated automatically from distance and cargo type, and shown before you order.'],
@@ -77,7 +77,7 @@ export const LP_ROWS = [
   ['lp.join.d.text.direct', 'سجّل بمستنداتك، وأول ما تتفعّل تشوف الطلبات المتاحة وتقبلها. الدفع بيكون من العميل للسواق مباشرة.', 'Register with your documents, and once activated you can see available jobs and accept them. The customer pays the driver directly.'],
   ['lp.join.d.cta', 'اشتغل كسواق', 'Drive with us'],
   ['lp.join.c.title', 'لشركات الشحن', 'For shipping companies'],
-  ['lp.join.c.text', 'سجّل شركتك بالسجل التجاري والبطاقة الضريبية، وأضف سواقينك بمستنداتهم. في كل شحنة بتحدد مين اللي هيستلمها، فلو حصل تلف أو فقد يبقى معروف المسؤول.', 'Register your company with its commercial register and tax card, and add your drivers with their documents. For each shipment you assign who picks it up, so if anything is damaged or lost it is known who is responsible.'],
+  ['lp.join.c.text', 'سجّل شركتك ببطاقة المسؤول وسيلفي معاها واستمارة وصورة لمركبة واحدة على الأقل (السجل التجاري مش شرط)، وأضف باقي سواقينك بمستنداتهم. في كل شحنة بتحدد مين اللي هيستلمها، فلو حصل تلف أو فقد يبقى معروف المسؤول.', 'Register your company with the manager’s ID, a selfie with it, and the registration and a photo of at least one vehicle (no commercial register required), then add your other drivers with their documents. For each shipment you assign who picks it up, so if anything is damaged or lost it is known who is responsible.'],
   ['lp.join.c.cta', 'سجّل شركتك', 'Register your company'],
 
   ['lp.faq.title', 'أسئلة شائعة', 'Frequently asked questions'],
