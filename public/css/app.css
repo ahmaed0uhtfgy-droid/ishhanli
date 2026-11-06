@@ -403,3 +403,33 @@ a.waybill:hover { transform: translateY(-2px); box-shadow: 0 8px 22px -10px rgba
 }
 @media (prefers-reduced-motion: reduce) { .pop { animation: none; } }
 .fsz-row .fsz { display: inline-flex !important; }
+
+/* ---------- لوحة الأدمن: تنقّل مجمّع + صفحات العملاء/السواقين/الشركات ---------- */
+.gnav { display: grid; grid-template-columns: repeat(5, 1fr); gap: .5rem; margin-bottom: .75rem; }
+.gnav a { position: relative; display: flex; align-items: center; justify-content: center; gap: .5rem; min-height: 52px; padding: .5rem .4rem; border-radius: 12px; background: var(--paper); color: var(--ink); border: 1.5px solid var(--rule); text-decoration: none; font-weight: 700; }
+.gnav a:hover { border-color: var(--ink); } .gnav a.on { background: var(--asphalt); border-color: var(--asphalt); color: #fff; }
+.gnav .dot, .qa .dot { background: var(--brick-btn); color: #fff; border-radius: 99px; font-size: .72rem; line-height: 1.4; padding: 0 .45rem; position: absolute; top: -6px; inset-inline-end: -4px; }
+.qa { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .7rem; }
+.qa-i { position: relative; display: flex; flex-direction: column; gap: .2rem; padding: .9rem 1rem; background: var(--paper); border-radius: 14px; box-shadow: var(--shadow); color: var(--ink); text-decoration: none; border: 1.5px solid transparent; }
+.qa-i:hover { border-color: var(--line); } .qa-i .ic { color: var(--line-deep); width: 26px; height: 26px; } .qa-i small { color: var(--slate); }
+.pchips { display: flex; gap: .5rem; flex-wrap: wrap; }
+.pchip { display: inline-flex; align-items: center; gap: .5rem; min-height: 40px; padding: .3rem .9rem; border-radius: 999px; border: 1.5px solid var(--rule); background: var(--paper); color: var(--ink); font: 600 .9rem var(--font-body); cursor: pointer; }
+.pchip b { font-variant-numeric: tabular-nums; background: var(--line-soft); color: var(--ink); border-radius: 99px; padding: 0 .5rem; font-size: .8rem; }
+.pchip.on { background: var(--btn); border-color: var(--btn); color: #fff; } .pchip.on b { background: rgba(255, 255, 255, .22); color: #fff; }
+.pchip.warn:not(.on) { border-color: var(--line-deep); }
+.pl-tools { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; } .pl-search { flex: 1 1 260px; min-height: 48px; font-size: 1rem; width: auto; }
+.pl-list { display: grid; gap: .6rem; }
+.pl-row { display: grid; grid-template-columns: auto 1fr auto; gap: .9rem; align-items: center; padding: .8rem 1rem; background: var(--paper); border-radius: 14px; box-shadow: var(--shadow); border-inline-start: 5px solid var(--rule); }
+.pl-row[data-status=pending] { border-inline-start-color: var(--line); } .pl-row[data-status=active] { border-inline-start-color: var(--nile); }
+.pl-row[data-status=banned], .pl-row[data-status=rejected], .pl-row[data-status=suspended] { border-inline-start-color: var(--brick); }
+.pl-av { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; font: 700 1.2rem var(--font-display); background: var(--blue-soft); color: var(--blue); }
+.pl-av.k-driver { background: var(--nile-soft); color: var(--nile); } .pl-av.k-company { background: var(--line-soft); color: var(--line-deep); }
+.pl-name { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; } .pl-name b { font-size: 1.05rem; }
+.pl-kind { font-size: .75rem; padding: .05rem .6rem; border-radius: 99px; background: var(--blue-soft); color: var(--blue); } .pl-kind.k-driver { background: var(--nile-soft); color: var(--nile); } .pl-kind.k-company { background: var(--line-soft); color: var(--line-deep); }
+.pl-sub { color: var(--slate); font-size: .9rem; } .pl-facts { display: flex; gap: .2rem 1rem; flex-wrap: wrap; align-items: center; font-size: .86rem; color: var(--slate); margin-top: .15rem; } .pl-facts b { color: var(--ink); }
+.pl-acts { display: flex; gap: .4rem; flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 720px) {
+  .gnav { gap: .3rem; } .gnav a { flex-direction: column; gap: .1rem; min-height: 56px; font-size: .75rem; }
+  .pl-row { grid-template-columns: auto 1fr; } .pl-acts { grid-column: 1 / -1; justify-content: stretch; } .pl-acts .btn { flex: 1; }
+}
+@media print { .gnav { display: none !important; } }

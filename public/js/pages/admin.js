@@ -8,25 +8,59 @@ import { $, $$, html, raw, render, toast, errMsg, busy, spinner, stamp, orderNo,
 import { hydrate, imgTag } from '../storage.js';
 import { toCsv, downloadCsv, downloadJson } from '../csv.js';
 
-const TABS = ['overview', 'finance', 'payments', 'users', 'joins', 'orders', 'withdrawals', 'disputes', 'refunds', 'reports', 'coupons', 'referrals', 'cod', 'dc', 'fines', 'settings', 'blacklist', 'audit', 'monitoring'];
+const TABS = ['overview', 'customers', 'drivers', 'companies', 'joins', 'users', 'orders', 'reports', 'disputes', 'refunds', 'payments', 'withdrawals', 'cod', 'finance', 'dc', 'fines', 'coupons', 'referrals', 'settings', 'blacklist', 'audit', 'monitoring'];
 const LEGACY_TABS = ['payments', 'withdrawals', 'disputes', 'refunds', 'cod']; // تبويبات نظام الضمان القديم: مخفية لما الدفع المباشر شغّال (إلا لو الأدمن فعّل إظهارها)
+// التبويبات متجمّعة في 5 أقسام بدل صف واحد طويل: القسم فوق، وتبويباته تحته
+const GROUPS = [
+  { id: 'home', icon: 'home', tabs: ['overview'] },
+  { id: 'people', icon: 'users', tabs: ['customers', 'drivers', 'companies', 'joins', 'users'] },
+  { id: 'ops', icon: 'box', tabs: ['orders', 'reports', 'disputes', 'refunds', 'payments', 'withdrawals', 'cod'] },
+  { id: 'money', icon: 'coins', tabs: ['finance', 'dc', 'fines', 'coupons', 'referrals'] },
+  { id: 'system', icon: 'gear', tabs: ['settings', 'blacklist', 'audit', 'monitoring'] },
+];
+const TAB_BADGE = { joins: 'users', payments: 'payments', withdrawals: 'withdrawals', disputes: 'disputes', refunds: 'refunds', reports: 'reports' }; // التبويب ← مفتاح الشارة
 const legacyHidden = () => state.settings?.dcEnabled !== false && state.settings?.adminShowLegacy !== true;
 const onError = (e) => toast(errMsg(e), true);
 const imgs = (refs) => html`<div class="photos">${(refs || []).filter(Boolean).map((r) => raw(imgTag(r)))}</div>`;
 const roleKey = (u) => (u.accountType === 'company' ? 'auth.roleCompany' : 'auth.role' + (u.role === 'driver' ? 'Driver' : 'Customer'));
 
+const ICON = {
+  home: '<path d="M3 11l9-8 9 8M5 10v10h14V10"/>',
+  users: '<circle cx="9" cy="8" r="3.5"/><path d="M2 20c0-3.6 3-6 7-6s7 2.4 7 6M16 4.5a3.5 3.5 0 010 7M18 14.5c2.4.7 4 2.5 4 5.5"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>',
+  truck: '<path d="M2 6h12v10H2zM14 10h4l4 3v3h-8"/><circle cx="7" cy="18" r="2"/><circle cx="18" cy="18" r="2"/>',
+  building: '<path d="M4 21V4h10v17M14 9h6v12M8 8h2M8 12h2M8 16h2M3 21h18"/>',
+  inbox: '<path d="M3 13l3-8h12l3 8v6H3zM3 13h5l1 3h6l1-3h5"/>',
+  box: '<path d="M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10"/>',
+  alert: '<path d="M12 3l10 18H2zM12 10v5M12 18v.5"/>',
+  chart: '<path d="M4 20V4M4 20h16M8 16v-5M13 16V8M18 16v-9"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/>',
+  coins: '<circle cx="12" cy="12" r="9"/><path d="M12 7v10M15 9.5c-.5-1-1.6-1.5-3-1.5-1.7 0-3 .8-3 2s1.3 1.8 3 2 3 .8 3 2-1.3 2-3 2c-1.4 0-2.5-.5-3-1.5"/>',
+};
+const ico = (k) => raw(`<svg class="ic" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>`);
+
+// أرقام الشارات (طلبات معلّقة): بتتحط على التبويبات والأقسام وكروت الوصول السريع
+let lastBadges = {}, shownTabs = TABS;
+const setDot = (d, n) => { if (d) { d.textContent = n; d.hidden = !n; } };
+function applyBadges(root) {
+  const b = lastBadges;
+  $$('[data-badge]', root).forEach((d) => setDot(d, b[d.dataset.badge] || 0));
+  $$('[data-tab]', root).forEach((a) => setDot($('.dot', a), b[TAB_BADGE[a.dataset.tab]] || 0));
+  $$('[data-grp]', root).forEach((a) => { const g = GROUPS.find((x) => x.id === a.dataset.grp); setDot($('.dot', a), g.tabs.filter((k) => shownTabs.includes(k)).reduce((n, k) => n + (b[TAB_BADGE[k]] || 0), 0)); });
+}
+
 export function renderAdmin(el, tab) {
-  const shown = legacyHidden() ? TABS.filter((k) => !LEGACY_TABS.includes(k)) : TABS;
+  const shown = shownTabs = legacyHidden() ? TABS.filter((k) => !LEGACY_TABS.includes(k)) : TABS;
   if (!shown.includes(tab)) tab = 'overview';
+  const grp = GROUPS.find((g) => g.tabs.includes(tab)), sub = grp.tabs.filter((k) => shown.includes(k));
   render(el, html`<div class="page-head"><h1>${t('admin.title')}</h1></div>
-    <nav class="tabs">${shown.map((k) => html`<a href="#/admin/${k}" data-tab="${k}" class="${k === tab ? 'on' : ''}">${t('admin.tab.' + k)}<span class="dot" hidden></span></a>`)}</nav><div id="body">${spinner()}</div>`);
+    <nav class="gnav" aria-label="${t('admin.title')}">${GROUPS.map((g) => html`<a href="#/admin/${g.tabs.filter((k) => shown.includes(k))[0]}" data-grp="${g.id}" class="${g === grp ? 'on' : ''}" ${g === grp ? raw('aria-current="page"') : ''}>${ico(g.icon)}<span>${t('admin.grp.' + g.id)}</span><span class="dot" hidden></span></a>`)}</nav>
+    ${sub.length > 1 ? html`<nav class="tabs" aria-label="${t('admin.grp.' + grp.id)}">${sub.map((k) => html`<a href="#/admin/${k}" data-tab="${k}" class="${k === tab ? 'on' : ''}">${t('admin.tab.' + k)}<span class="dot" hidden></span></a>`)}</nav>` : ''}<div id="body">${spinner()}</div>`);
+  applyBadges(el);
   // شارات الأعداد المعلّقة (استعلامات خفيفة على index الحالة) — كل 20 ثانية
-  const badges = gpoll(['orders', 'users', 'withdrawals', 'disputes', 'refunds', 'reports'], () => api('admin/badges'), 20000, ({ badges: b }) => {
-    for (const [k, n] of Object.entries(b)) { const d = $(`[data-tab="${k}"] .dot`, el); if (d) { d.textContent = n; d.hidden = !n; } }
-    const dj = $('[data-tab="joins"] .dot', el); if (dj) { dj.textContent = b.users || 0; dj.hidden = !b.users; } // طلبات الانضمام = الحسابات المعلّقة
-  }, { dedupe: true });
+  const badges = gpoll(['orders', 'users', 'withdrawals', 'disputes', 'refunds', 'reports'], () => api('admin/badges'), 20000, ({ badges: b }) => { lastBadges = b; applyBadges(el); }, { dedupe: true });
   const body = $('#body', el);
-  const stop = { overview, finance, payments, users, joins, orders, withdrawals, disputes, refunds, reports, coupons, referrals, cod, dc, fines, settings, blacklist, audit, monitoring }[tab](body, badges);
+  const stop = { overview, finance, payments, users, customers, drivers, companies, joins, orders, withdrawals, disputes, refunds, reports, coupons, referrals, cod, dc, fines, settings, blacklist, audit, monitoring }[tab](body, badges);
   return () => { badges(); stop?.(); };
 }
 
@@ -38,6 +72,10 @@ function overview(body) {
     const perDay = days.map((d) => per[d] || 0), mx = Math.max(1, ...perDay), T = s.totals, money = (n) => (n == null ? '—' : fmtMoney(n));
     render(body, html`<div class="stack">
       ${(s.warnings || []).length ? html`<div class="action warn"><b>${t('admin.indexMissing')}</b><p class="hint">${t('admin.indexMissingHint')}</p>${s.warnings.map((w) => { const url = (w.detail.match(/https?:\/\/\S+/) || [])[0]; return html`<p class="small" dir="ltr" style="word-break:break-all">${w.what}: ${url ? html`<a href="${url}" target="_blank" rel="noopener">${url}</a>` : w.detail}</p>`; })}</div>` : ''}
+      <section aria-label="${t('admin.qa.title')}"><h3>${t('admin.qa.title')}</h3><nav class="qa">${[
+        ['customers', 'user', t('admin.qa.active', { n: s.activeCustomers })], ['drivers', 'truck', t('admin.qa.active', { n: s.activeDrivers })], ['companies', 'building', ''],
+        ['joins', 'inbox', '', 'users'], ['orders', 'box', ''], ['reports', 'alert', '', 'reports'], ['finance', 'chart', ''], ['settings', 'gear', ''],
+      ].map(([k, ic, sub, badge]) => html`<a class="qa-i" href="#/admin/${k}">${ico(ic)}<b>${t('admin.tab.' + k)}</b>${sub ? html`<small>${sub}</small>` : ''}${badge ? html`<span class="dot" data-badge="${badge}" hidden></span>` : ''}</a>`)}</nav></section>
       <div class="tiles">
         <div class="tile"><b>${T.total}</b><span>${t('admin.ordersTotal')}</span></div>
         <div class="tile"><b>${T.active}</b><span>${t('admin.ordersActive')}</span></div>
@@ -52,6 +90,7 @@ function overview(body) {
         <div class="card"><h3>${t('admin.last14')}</h3><div class="bars" role="img" aria-label="${t('admin.last14')}">${perDay.map((n) => raw(`<div data-n="${n}" style="height:${Math.max(3, (n / mx) * 100)}%"></div>`))}</div></div>
         <div class="card"><h3>${t('admin.topDrivers')}</h3>${s.topDrivers.length ? html`<table><tbody>${s.topDrivers.map((d) => html`<tr><td>${d.name}</td><td class="num">${d.n} ${t('admin.trips')}</td><td class="num">${fmtMoney(d.earned)}</td></tr>`)}</tbody></table>` : html`<p class="muted">—</p>`}</div>
       </div><p class="hint">${t('admin.statsNote')}</p></div>`);
+    applyBadges(body);
   }, { dedupe: true, onError });
 }
 
@@ -98,26 +137,85 @@ function payments(body) {
   return p;
 }
 
-// =====================================================================  المستخدمين (الفلترة على السيرفر)
-function users(body, badges) {
-  render(body, html`<div class="row" style="margin-bottom:1rem"><select id="fr" style="max-width:160px"><option value="">${t('admin.allRoles')}</option><option value="customer">${t('auth.roleCustomer')}</option><option value="driver">${t('auth.roleDriver')}</option></select>
-    <select id="fs" style="max-width:170px"><option value="">${t('admin.allStatus')}</option>${['pending', 'active', 'rejected', 'banned', 'suspended'].map((s) => html`<option value="${s}">${t('status.' + s)}</option>`)}</select>
-    <input id="fq" placeholder="${t('admin.searchUsers')}" style="max-width:200px"><input id="fd" type="date" style="max-width:150px" aria-label="${t('admin.fin.from')}" title="${t('admin.fin.from')}"><input id="fto" type="date" style="max-width:150px" aria-label="${t('admin.fin.to')}" title="${t('admin.fin.to')}"></div><div id="tbl">${spinner()}</div>`);
-  let all = [], timer = null;
-  const inRange = () => { const f = $('#fd', body).value, tt = $('#fto', body).value; const fms = f ? new Date(f + 'T00:00:00').getTime() : 0, tms = tt ? new Date(tt + 'T23:59:59.999').getTime() : 0; return (ms) => (!fms || (ms || 0) >= fms) && (!tms || (ms || 0) <= tms); };
-  const paint = () => { const ok = inRange(), rows = all.filter((u) => ok(u.createdAt)); render($('#tbl', body), rows.length ? html`<div class="table-wrap"><table><thead><tr><th>${t('auth.name')}</th><th>${t('admin.role')}</th><th>${t('auth.phone')}</th><th>${t('admin.status')}</th><th>${t('admin.rating')}</th><th>${t('trust.title')}</th><th>${t('admin.joined')}</th><th></th></tr></thead>
-    <tbody>${rows.map((u) => html`<tr><td>${u.name}${u.latePoints > 0 ? html` <span class="stamp s-pending">${t('late.pts', { n: u.latePoints })}</span>` : ''}</td><td>${t(roleKey(u))}</td><td dir="ltr">${u.phone}</td><td>${stamp(u.status)}</td><td>${ratingText(u)}</td><td>${u.trust ? trustBadge(u.trust) : '—'}</td><td class="small">${fmtDate(u.createdAt)}</td><td><button class="btn sm ${u.status === 'pending' ? 'primary' : 'ghost'}" data-id="${u.id}">${t('admin.review')}</button></td></tr>`)}</tbody></table></div>` : html`<div class="empty">${t('admin.noneUsers')}</div>`); };
-  async function load() {
-    try { all = (await api('admin/users', { role: $('#fr', body).value, status: $('#fs', body).value, q: $('#fq', body).value })).users; paint(); }
-    catch (e) { render($('#tbl', body), html`<div class="empty">${errMsg(e)}</div>`); }
-  }
-  ['#fr', '#fs'].forEach((s) => $(s, body).addEventListener('change', load));
-  ['#fd', '#fto'].forEach((s) => $(s, body).addEventListener('change', paint)); // فلتر التاريخ في الذاكرة (من غير فهارس مركّبة)
-  $('#fq', body).addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(load, 350); });
-  body.addEventListener('click', (e) => { const b = e.target.closest('[data-id]'); if (b) userModal(all.find((u) => u.id === b.dataset.id), async () => { await load(); badges.now(); }); });
-  load();
-  return () => clearTimeout(timer);
+// =====================================================================  العملاء / السواقين / شركات الشحن / الكل — نفس الصفحة بفلتر النوع
+const kindOf = (u) => (u.role === 'customer' ? 'customer' : u.accountType === 'company' ? 'company' : 'driver');
+const waLink = (p) => { const d = String(p || '').replace(/\D/g, ''); return d ? 'https://wa.me/' + (d.startsWith('0') ? '2' + d : d) : ''; }; // 010... → 2010...
+const PEOPLE_STATUS = ['pending', 'active', 'suspended', 'banned', 'rejected'];
+
+function people(kind) {
+  return (body, badges) => {
+    let all = [], status = '', type = '', timer = null;
+    render(body, html`<div class="stack">
+      ${kind ? '' : html`<div class="pchips" id="types"></div>`}
+      <div class="pchips" id="chips"></div>
+      <div class="pl-tools"><input id="fq" type="search" class="pl-search" placeholder="${t('admin.p.search')}" aria-label="${t('admin.p.search')}" autocomplete="off">
+        <button class="btn ghost sm" type="button" id="dtog" aria-expanded="false">${t('admin.p.dates')}</button><button class="btn ghost sm" type="button" id="csv">${t('admin.exportCsv')}</button></div>
+      <div class="row" id="drow" hidden><label class="f">${t('admin.fin.from')}<input id="fd" type="date"></label><label class="f">${t('admin.fin.to')}<input id="fto" type="date"></label></div>
+      <div id="list">${spinner()}</div></div>`);
+    const inRange = () => { const f = $('#fd', body).value, tt = $('#fto', body).value; const fms = f ? new Date(f + 'T00:00:00').getTime() : 0, tms = tt ? new Date(tt + 'T23:59:59.999').getTime() : 0; return (ms) => (!fms || (ms || 0) >= fms) && (!tms || (ms || 0) <= tms); };
+    const visible = () => { const ok = inRange(); return all.filter((u) => ok(u.createdAt) && (!type || kindOf(u) === type)); };
+    const chip = (attr, val, on, text, n, warn) => html`<button type="button" class="pchip${on ? ' on' : ''}${warn ? ' warn' : ''}" ${raw(`data-${attr}="${val}"`)} aria-pressed="${on}">${text}<b>${n}</b></button>`;
+    const facts = (u) => {
+      const k = kindOf(u), rate = ratingText(u), f = [];
+      if (k === 'customer') f.push(html`<span>${t('admin.p.orders')}: <b>${u.completedOrders || 0}</b></span>`, html`<span>${t('admin.cancels')}: <b>${u.cancelCount || 0}</b></span>`);
+      else {
+        if (k === 'company' && u.fleetSize) f.push(html`<span>${t('admin.p.fleet')}: <b>${u.fleetSize}</b></span>`);
+        if (k === 'driver' && u.vehicleType) f.push(html`<span>${t('vehicle.' + u.vehicleType)}</span>`);
+        f.push(html`<span>${t('admin.trips')}: <b>${u.completedOrders || 0}</b></span>`);
+        if (u.latePoints > 0) f.push(html`<span class="stamp s-pending">${t('late.pts', { n: u.latePoints })}</span>`);
+        if (u.trust) f.push(trustBadge(u.trust));
+      }
+      f.push(html`<span>${rate}</span>`, html`<span>${fmtDate(u.createdAt)}</span>`);
+      return f;
+    };
+    const row = (u) => {
+      const k = kindOf(u), title = k === 'company' ? (u.companyName || u.name) : u.name, wa = waLink(u.phone), pend = u.status === 'pending';
+      return html`<article class="pl-row" data-status="${u.status}">
+        <div class="pl-av k-${k}" aria-hidden="true">${String(title || '?').trim().charAt(0)}</div>
+        <div class="pl-main"><div class="pl-name"><b>${title}</b>${stamp(u.status)}${kind ? '' : html`<span class="pl-kind k-${k}">${t(roleKey(u))}</span>`}</div>
+          <div class="pl-sub"><span dir="ltr">${u.phone}</span>${k === 'company' && u.companyName ? html` · ${u.name}` : ''}${u.area ? html` · ${u.area}` : ''}</div>
+          <div class="pl-facts">${facts(u)}</div></div>
+        <div class="pl-acts">${u.phone ? html`<a class="btn ghost sm" href="tel:${u.phone}">${t('admin.p.call')}</a>` : ''}${wa ? html`<a class="btn ghost sm" href="${wa}" target="_blank" rel="noopener">${t('admin.p.wa')}</a>` : ''}
+          ${pend ? html`<button class="btn ok sm" data-q="active" data-uid="${u.id}">${t('admin.approve')}</button><button class="btn danger sm" data-q="rejected" data-uid="${u.id}">${t('admin.reject')}</button>` : ''}
+          <button class="btn sm ${pend ? 'primary' : 'ghost'}" data-id="${u.id}">${t('admin.review')}</button></div></article>`;
+    };
+    const paint = () => {
+      const base = visible(), cnt = (s) => base.filter((u) => u.status === s).length, rows = base.filter((u) => !status || u.status === status);
+      render($('#chips', body), html`${chip('status', '', !status, t('admin.p.all'), base.length)}${PEOPLE_STATUS.filter((st) => st === 'pending' || st === 'active' || cnt(st) || status === st).map((st) => chip('status', st, status === st, t('status.' + st), cnt(st), st === 'pending' && cnt(st) > 0))}`);
+      if (!kind) { const ok = inRange(), pool = all.filter((u) => ok(u.createdAt)), tk = (k) => pool.filter((u) => kindOf(u) === k).length;
+        render($('#types', body), html`${chip('type', '', !type, t('admin.p.all'), pool.length)}${['customer', 'driver', 'company'].map((k) => chip('type', k, type === k, t('admin.tab.' + k + 's'), tk(k)))}`); }
+      render($('#list', body), rows.length ? html`<div class="pl-list">${rows.map(row)}</div>${all.length >= 300 ? html`<p class="hint">${t('admin.p.cap')}</p>` : ''}`
+        : html`<div class="empty">${all.length && (status || type || $('#fq', body).value) ? t('admin.noneUsers') : t('admin.p.empty.' + (kind || 'all'))}</div>`);
+    };
+    async function load() {
+      try { all = (await api('admin/users', { kind: kind || '', status: '', q: $('#fq', body).value })).users; paint(); }
+      catch (e) { render($('#list', body), html`<div class="empty">${errMsg(e)}</div>`); }
+    }
+    $('#fq', body).addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(load, 350); });
+    ['#fd', '#fto'].forEach((sel) => $(sel, body).addEventListener('change', paint)); // فلتر التاريخ في الذاكرة (من غير فهارس مركّبة)
+    $('#dtog', body).addEventListener('click', (e) => { const r = $('#drow', body); r.hidden = !r.hidden; e.currentTarget.setAttribute('aria-expanded', String(!r.hidden)); });
+    $('#csv', body).addEventListener('click', () => { const rows = visible().filter((u) => !status || u.status === status);
+      downloadCsv(`${kind || 'users'}-${new Date().toLocaleDateString('en-CA')}.csv`, toCsv([{ h: t('auth.name'), v: (u) => u.name }, { h: t('admin.role'), v: (u) => t(roleKey(u)) }, { h: t('auth.phone'), v: (u) => u.phone }, { h: t('admin.status'), v: (u) => t('status.' + u.status) },
+        { h: t('admin.trips'), v: (u) => u.completedOrders || 0 }, { h: t('admin.rating'), v: (u) => (u.ratingCount ? (u.ratingSum / u.ratingCount).toFixed(1) : '') }, { h: t('admin.joined'), v: (u) => new Date(u.createdAt || 0).toISOString().slice(0, 10) }], rows)); });
+    body.addEventListener('click', (e) => {
+      const c = e.target.closest('[data-status]:not(article)'); if (c) { status = c.dataset.status; return paint(); }
+      const ty = e.target.closest('[data-type]'); if (ty) { type = ty.dataset.type; return paint(); }
+      const q = e.target.closest('[data-q]');
+      if (q) return void busy(q, async () => { // قبول/رفض سريع من القائمة (المستندات بتتشاف من «مراجعة»)
+        try {
+          let reason = '';
+          if (q.dataset.q === 'rejected') { reason = await promptDialog(t('admin.rejectReason'), { required: true }); if (reason === null) return; }
+          await api('admin/user', { uid: q.dataset.uid, status: q.dataset.q, reason, blacklist: false });
+          toast(t('common.done')); await load(); badges.now();
+        } catch (er) { onError(er); }
+      });
+      const b = e.target.closest('button[data-id]'); if (b) userModal(all.find((u) => u.id === b.dataset.id), async () => { await load(); badges.now(); });
+    });
+    load();
+    return () => clearTimeout(timer);
+  };
 }
+const users = people(null), customers = people('customer'), drivers = people('driver'), companies = people('company');
 
 // =====================================================================  طلبات الانضمام (سواقين وشركات شحن معلّقين) — مستنداتهم ظاهرة مباشرة للمراجعة
 function joins(body, badges) {
