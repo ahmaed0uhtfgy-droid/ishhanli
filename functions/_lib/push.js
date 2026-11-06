@@ -104,10 +104,16 @@ const fill = (s, v) => s.replace(/\{(\w+)\}/g, (_, k) => String(v[k] ?? ''));
 export const orderNo = (id) => '#' + String(id).slice(0, 6).toUpperCase();
 
 /** يبعت إشعار لمجموعة مستخدمين. ما بيرميش أخطاء أبداً. بيرجّع عدد الإشعارات اللي اتبعتت. */
+/** نص الإشعار جاهز للعرض بلغة معيّنة (بيستخدمه صندوق الإشعارات جوّه الموقع) */
+export const renderMsg = (type, lang, vars = {}) => { const m = MSG[type]?.[lang === 'en' ? 'en' : 'ar']; return m ? { title: fill(m[0], vars), body: fill(m[1], vars) } : null; };
+
 export async function notify(env, uids, type, vars = {}, { url = '/', tag } = {}) {
   try {
-    if (!pushEnabled(env) || !uids?.length || !MSG[type]) return 0;
+    if (!uids?.length || !MSG[type]) return 0;
     const ids = [...new Set(uids)].slice(0, 12);
+    // صندوق الإشعارات جوّه الموقع (الجرس): بيتسجّل حتى لو إشعارات الجهاز مقفولة أو مش مدعومة
+    try { const at = Date.now(); await F.run(env, ids.map((uid) => F.create(`inbox/${crypto.randomUUID()}`, { uid, type, vars: JSON.stringify(vars), url, at, read: false }))); } catch (e) { console.error('inbox_failed', e?.message || e); }
+    if (!pushEnabled(env)) return 0;
     // حد أقصى 30 جهاز في الإرسال الواحد (الخطة المجانية = 50 subrequest للطلب الكامل)
     const toks = (await F.query(env, 'push_tokens', { inn: { uid: ids } })).slice(0, 30);
     const users = await F.getMany(env, 'users', toks.map((t) => t.uid), ['lang']);

@@ -6,7 +6,7 @@ import { randomBase32, verifyTotp, otpauthURL } from '../_lib/totp.js';
 import { loadSettings, clearSettingsCache, sanitizeSettings, distanceKm, calcPrice, calcPassengerPrice, effectiveCommissionPct, canServe, cancelSplit, couponDiscount, haversineM, split, dueOf, lateKinds, guardOf, codPeriodOf, codPeriodBounds, codSplit, codStatements, codBlocked } from '../_lib/logic.js';
 import { dcDue, dcBlocked, dcPayable, dcFeesOn, kmFeeOf, vehicleOfSize, fineCredit } from '../_lib/logic.js';
 import { saveFile, ownFiles, readFile } from '../_lib/files.js';
-import { notify, dispatchNewOrder, adminIds, orderNo, pushEnabled } from '../_lib/push.js';
+import { notify, dispatchNewOrder, adminIds, orderNo, pushEnabled, renderMsg } from '../_lib/push.js';
 import { trustOf } from '../_lib/trust.js';
 import { flushMetrics, recordError, sentryCapture } from '../_lib/metrics.js';
 
@@ -842,6 +842,21 @@ const ROUTES = {
     if (c.body.lat != null) { const p = point(c.body, false); data.lat = p.lat; data.lng = p.lng; } // من غير إحداثيات: بنحتفظ بآخر موقع معروف
     await F.run(c.env, [F.patch(`driver_presence/${c.uid}`, data)]);
     return { online };
+  },
+
+  // ---------- صندوق الإشعارات (الجرس): آخر الإشعارات للمستخدم + تعليمها مقروءة ----------
+  async 'inbox/list'(c) {
+    const rows = (await F.query(c.env, 'inbox', { eq: { uid: c.uid }, limit: 100 })).sort(byDesc('at'));
+    const old = rows.slice(60); if (old.length) await F.run(c.env, old.map((r) => F.del(`inbox/${r._id}`))); // نحتفظ بآخر 60 بس
+    const lang = (await F.get(c.env, `users/${c.uid}`))?.lang === 'en' ? 'en' : 'ar';
+    const items = rows.slice(0, 40).map((r) => { let v = {}; try { v = JSON.parse(r.vars || '{}'); } catch { /* تالف */ } const m = renderMsg(r.type, lang, v); return m && { id: r._id, type: r.type, title: m.title, body: m.body, url: r.url || '/', at: r.at, read: r.read === true }; }).filter(Boolean);
+    return { items, unread: rows.filter((r) => r.read !== true).length };
+  },
+  async 'inbox/read'(c) {
+    const id = c.body.id ? str(c.body.id, 10, 64) : null;
+    const rows = (await F.query(c.env, 'inbox', { eq: { uid: c.uid }, limit: 100 })).filter((r) => r.read !== true && (!id || r._id === id));
+    if (rows.length) await F.run(c.env, rows.map((r) => F.patch(`inbox/${r._id}`, { read: true })));
+    return { ok: true, marked: rows.length };
   },
 
   // ---------- أجهزة الإشعارات (معرّف المستند = SHA-256 للتوكن عشان طوله وحروفه) ----------

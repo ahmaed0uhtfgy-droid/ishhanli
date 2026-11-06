@@ -127,6 +127,10 @@ const num = (v, d, min = 0, max = 1e9) => (Number.isFinite(Number(v)) && v !== n
 // بتتحدّث فوراً في نفس الـ isolate لما الأدمن يحفظ (clearSettingsCache)، وفي الباقي خلال SETTINGS_TTL_MS (افتراضي 15 ثانية).
 let settingsCache = { v: null, exp: 0 };
 export const clearSettingsCache = () => { settingsCache = { v: null, exp: 0 }; };
+// إعدادات محفوظة قبل v22 كان الجامبو فيها أكبر حجم (xlarge) والنقل «large». الترتيب الجديد: الجامبو large (بين النص نقل والثقيل) والنقل الثقيل xlarge.
+// لو اكتشفنا الشكل القديم بنستخدم جدول العربيات والأحجام الجديد (الأدمن يعدّله بعد كده). تسعير كل نوع (vehiclePricing) بيفضل زي ما هو.
+const legacyJumbo = (d) => d?.vehicleGuide?.jumbo?.size === 'xlarge' && d?.vehicleGuide?.truck?.size === 'large';
+
 export async function loadSettings(env) {
   const ttl = Number(env.SETTINGS_TTL_MS ?? 15000);
   let row;
@@ -160,7 +164,7 @@ export async function loadSettings(env) {
     instapay: { handle: d.instapay?.handle || D.instapay.handle, name: d.instapay?.name || D.instapay.name },
     company: Object.fromEntries(COMPANY_KEYS.map((k) => [k, typeof d.company?.[k] === 'string' ? d.company[k] : COMPANY_DEFAULT[k]])),
     categories: d.categories && Object.keys(d.categories).length ? d.categories : D.categories,
-    sizes: (() => { const z = d.sizes && Object.keys(d.sizes).length ? d.sizes : D.sizes; return z.xlarge ? z : { ...z, xlarge: D.sizes.xlarge }; })(), // الجامبو حجم أساسي: لو مش متخزّن بيتضاف تلقائياً
+    sizes: (() => { const z = d.sizes && Object.keys(d.sizes).length && !legacyJumbo(d) ? d.sizes : D.sizes; return z.xlarge ? z : { ...z, xlarge: D.sizes.xlarge }; })(), // الجامبو حجم أساسي: لو مش متخزّن بيتضاف تلقائياً
     codEnabled: d.codEnabled === true, codCommissionPct: Math.round(num(d.codCommissionPct, D.codCommissionPct, 0, 30) * 10) / 10,
     codPeriodDays: Math.floor(num(d.codPeriodDays, D.codPeriodDays, 1, 31)), codGraceDays: Math.floor(num(d.codGraceDays, D.codGraceDays, 0, 30)),
     codMaxAmount: Math.floor(num(d.codMaxAmount, D.codMaxAmount, 100, 1000000)), codBlockScope: d.codBlockScope === 'all' ? 'all' : 'cod',
@@ -172,12 +176,12 @@ export async function loadSettings(env) {
     fineDriverSharePct: num(d.fineDriverSharePct, D.fineDriverSharePct, 0, 99), fineCollectorPct: num(d.fineCollectorPct, D.fineCollectorPct, 0, 50),
     fineMonthlyCap: Math.floor(num(d.fineMonthlyCap, D.fineMonthlyCap, 0, 1e6)), fineMaxClaimsPerDay: Math.floor(num(d.fineMaxClaimsPerDay, D.fineMaxClaimsPerDay, 0, 1000)), fineBlockLimit: Math.floor(num(d.fineBlockLimit, D.fineBlockLimit, 0, 1e6)),
     samePickupMeters: Math.floor(num(d.samePickupMeters, D.samePickupMeters, 0, 5000)), samePickupMax: Math.floor(num(d.samePickupMax, D.samePickupMax, 0, 50)),
-    vehiclePricing: Object.fromEntries(PRICE_VEHICLES.map((k) => { const v = d.vehiclePricing?.[k] || D.vehiclePricing[k] || {}; return [k, { base: num(v.base, 0, 0, 1e6), perKm: num(v.perKm, 0, 0, 10000), minPrice: num(v.minPrice, 0, 0, 1e6), kmFee: num(v.kmFee, 0, 0, 10000) }]; })),
+    vehiclePricing: Object.fromEntries(PRICE_VEHICLES.map((k) => { const st = d.vehiclePricing?.[k], v = (st && !(legacyJumbo(d) && !st.base && !st.perKm && !st.minPrice && !st.kmFee) ? st : null) || D.vehiclePricing[k] || {}; return [k, { base: num(v.base, 0, 0, 1e6), perKm: num(v.perKm, 0, 0, 10000), minPrice: num(v.minPrice, 0, 0, 1e6), kmFee: num(v.kmFee, 0, 0, 10000) }]; })),
     dcPerKm: num(d.dcPerKm, 0, 0, 10000), fineCreditToWallet: d.fineCreditToWallet === true,
     dcAutoCompleteHours: Math.floor(num(d.dcAutoCompleteHours, D.dcAutoCompleteHours, 0, 720)), jobsRadiusKm: Math.round(num(d.jobsRadiusKm, D.jobsRadiusKm, 0, 500) * 10) / 10,
     dcPay: { wallet: typeof d.dcPay?.wallet === 'string' ? d.dcPay.wallet.slice(0, 40) : '', walletName: typeof d.dcPay?.walletName === 'string' ? d.dcPay.walletName.slice(0, 80) : '' },
     companionAsk: d.companionAsk !== false, vehicleGuideOn: d.vehicleGuideOn !== false,
-    vehicleGuide: Object.fromEntries(VEHICLE_KEYS.map((k) => [k, { maxKg: Math.floor(num(d.vehicleGuide?.[k]?.maxKg, D.vehicleGuide[k].maxKg, 0, 100000)), size: typeof d.vehicleGuide?.[k]?.size === 'string' ? d.vehicleGuide[k].size : D.vehicleGuide[k].size }])),
+    vehicleGuide: Object.fromEntries(VEHICLE_KEYS.map((k) => [k, legacyJumbo(d) ? { ...D.vehicleGuide[k] } : { maxKg: Math.floor(num(d.vehicleGuide?.[k]?.maxKg, D.vehicleGuide[k].maxKg, 0, 100000)), size: typeof d.vehicleGuide?.[k]?.size === 'string' ? d.vehicleGuide[k].size : D.vehicleGuide[k].size }])),
     passengersEnabled: d.passengersEnabled === true,
     passengerClasses: d.passengerClasses && Object.keys(d.passengerClasses).length ? d.passengerClasses : D.passengerClasses,
     trustRules: Object.fromEntries(['trusted', 'pro', 'elite'].map((k) => [k, { avg: num(d.trustRules?.[k]?.avg, D.trustRules[k].avg, 1, 5), ratings: Math.floor(num(d.trustRules?.[k]?.ratings, D.trustRules[k].ratings, 1, 100000)) }])),

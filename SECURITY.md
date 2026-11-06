@@ -21,7 +21,7 @@
 - كل مسار فيه فحص ملكية للطلب (عميل/سواق/أدمن). قواعد Firestore مقفولة بالكامل.
 - الواجهة بتعمل escape لكل نص، ومفيش `eval` ولا `document.write` بمحتوى مستخدم.
 - الـAPI بيستخدم Bearer token مش كوكيز (مفيش CSRF).
-- ملفات البطاقة والرخصة والسجل التجاري للمالك والأدمن بس.
+- ملفات البطاقة والسيلفي والرخصة والاستمارة وأي مستند رسمي للشركة للمالك والأدمن بس.
 
 ## لازم تعمله إنت (إعدادات برّه الكود)
 1. **قيّد مفتاح Firebase API:** Google Cloud Console ← APIs & Services ← Credentials ← المفتاح ← *Application restrictions: HTTP referrers* ← `https://ishhanli.pages.dev/*` (وأي دومين تضيفه).

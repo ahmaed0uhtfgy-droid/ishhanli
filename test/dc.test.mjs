@@ -601,6 +601,22 @@ await ok('رسوم 2 جنيه/كم والنسبة 0', sv9({ vehiclePricing: VP, 
 { // توقيف بسبب الحد حتى لو النسبة 0 (فيه رسوم كيلومتر)
   FS.patch('users/drvFF', { dc_gross: 1000 }); check('رسوم كيلومتر + مكسب فوق الحد = متوقف', (await call('drvFF', 'dc/summary', {}, eS)).blocked === true);
   const id = (await mk()).id; await bad('المتوقف مايقبلش', call('drvFF', 'orders/accept', { orderId: id }, eS), 403, 'dc_blocked'); FS.patch('users/drvFF', { dc_gross: 0 }); }
+{ // إشعار فوري للسواق لما طلب بالذات يعدّيه حد الأرباح (مرة واحدة بس) وفيه رابط صفحة رسوم المنصة
+  await ok('نظبط النسبة والحد', sv9({ dcPct: 2, dcPerKm: 0, dcLimit: 1000 }));
+  const tk = 'tok-dclimit-' + 'x'.repeat(30); await ok('جهاز السواق', call('drvXX', 'push/register', { token: tk }, eS));
+  FS.patch('users/drvXX', { dc_gross: 950, dc_kmfee: 0, dc_km: 0, km_total: 0, vehicle_type: 'pickup' });
+  const id = (await mk()).id; setPrice(id, 100); patchData(id, { vehiclePick: 'pickup' });
+  await ok('سواق يقبل وهو تحت الحد', call('drvXX', 'orders/accept', { orderId: id }, eS)); await drive('drvXX', id);
+  fcm.length = 0; const eP = { ...eS, PUSH_DISABLED: '0' };
+  await ok('تسليم يعدّي الحد', call('drvXX', 'orders/status', { orderId: id, next: 'delivered', photoRef: await up('drvXX', 'handover'), loc: GIZA }, eP));
+  check('السواق اتوقف (1050 فوق الحد)', (await call('drvXX', 'dc/summary', {}, eS)).blocked === true);
+  check('اتبعتله إشعار «وصلت للحد» برابط صفحة رسوم المنصة', fcm.some((m) => m.token === tk && m.type === 'dc_limit_reached' && String(m.url).includes('/driver/fees')));
+  { const inb = await call('drvXX', 'inbox/list', {}, eS), it = inb.items.find((x) => x.type === 'dc_limit_reached');
+    check('الإشعار ظاهر في صندوق الجرس بعنوان ونص ورابط، وغير مقروء', !!it && it.title.length > 5 && it.body.includes('1000') && it.url === '/#/driver/fees' && it.read === false && inb.unread >= 1);
+    check('إشعارات سواق مش بتظهر لغيره', !(await call('cF', 'inbox/list', {}, eS)).items.some((x) => x.type === 'dc_limit_reached'));
+    await ok('تعليم الإشعارات مقروءة', call('drvXX', 'inbox/read', {}, eS));
+    check('بعد القراءة مفيش غير مقروء', (await call('drvXX', 'inbox/list', {}, eS)).unread === 0); }
+  FS.patch('users/drvXX', { dc_gross: 0 }); }
 await ok('نقفل رسوم الكيلومتر (حتى الخاصة بالنقل)', sv9({ vehiclePricing: { ...VP, jumbo: { ...VP.jumbo, kmFee: 0 } }, dcPct: 0, dcPerKm: 0, dcLimit: 1000 }));
 { const id = (await mk()).id; setPrice(id, 400); patchData(id, { distanceKm: 50, vehiclePick: 'pickup' }); FS.patch('users/drvXX', { dc_km: 0, dc_kmfee: 0, dc_gross: 0, km_total: 0 });
   await ok('سواق يقبل', call('drvXX', 'orders/accept', { orderId: id }, eS)); await drive('drvXX', id); await ok('تسليم', finish('drvXX', id));

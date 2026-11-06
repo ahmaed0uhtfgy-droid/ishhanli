@@ -162,6 +162,16 @@ check('النقل الثقيل يخدم كل الأحجام', ['small', 'medium'
   const after = (await ok('الطلب بعد القبول', call('cV', 'orders/get', { orderId: a.id }))).order;
   check('بعد القبول العميل شايف صورة عربية السواق ونوعها', after.driverVehiclePhoto === vref && after.driverVehicle === 'half_ton'); }
 
+// ===== 7ب) ترحيل تلقائي لإعدادات محفوظة قبل v22 (الجامبو كان أكبر حجم) =====
+{ const before = FS.get('settings/pricing');
+  FS.patch('settings/pricing', { v: JSON.stringify({ ...(before?.v ? JSON.parse(before.v) : {}), vehicleGuide: { pickup: { maxKg: 800, size: 'small' }, half_ton: { maxKg: 2000, size: 'medium' }, truck: { maxKg: 8000, size: 'large' }, jumbo: { maxKg: 50000, size: 'xlarge' } }, sizes: { small: { ar: 'صغير', en: 'S', mult: 1 }, medium: { ar: 'متوسط', en: 'M', mult: 1.4 }, large: { ar: 'كبير (نقل ثقيل)', en: 'Large (heavy truck)', mult: 2 }, xlarge: { ar: 'جامبو (حمولة كبيرة جداً)', en: 'Jumbo', mult: 3 } }, vehiclePricing: { pickup: { base: 0, perKm: 0, minPrice: 0, kmFee: 0 }, half_ton: { base: 0, perKm: 0, minPrice: 0, kmFee: 0 }, truck: { base: 0, perKm: 0, minPrice: 0, kmFee: 0 }, jumbo: { base: 0, perKm: 0, minPrice: 0, kmFee: 0 } } }) });
+  const keep = { ...__ESC.vehiclePricing }; __ESC.vehiclePricing.jumbo = { base: 300, perKm: 15, minPrice: 600, kmFee: 0 }; __ESC.vehiclePricing.truck = { base: 600, perKm: 24, minPrice: 1200, kmFee: 0 }; // قيم الافتراضي الفعلي (الملف ده بيصفّرها للاختبارات التانية)
+  const m = (await call('cV', 'settings')).settings; Object.assign(__ESC.vehiclePricing, keep);
+  check('الإعدادات القديمة اتحوّلت: الجامبو large بحد 5000 والنقل الثقيل xlarge', m.vehicleGuide.jumbo.size === 'large' && m.vehicleGuide.jumbo.maxKg === 5000 && m.vehicleGuide.truck.size === 'xlarge' && m.vehicleGuide.truck.maxKg === 50000);
+  check('أسماء الأحجام الجديدة (جامبو / نقل ثقيل) بدل القديمة', m.sizes.large.ar.startsWith('جامبو') && m.sizes.xlarge.ar.startsWith('نقل ثقيل'));
+  check('التسعير الصفري القديم لكل نوع اتبدّل بالقيم الجديدة', m.vehiclePricing.jumbo.perKm > 0 && m.vehiclePricing.truck.perKm > m.vehiclePricing.jumbo.perKm);
+  FS.patch('settings/pricing', { v: before?.v ?? JSON.stringify({}) }); }
+
 // ===== 8) رسمات العربيات (وحدة) =====
 { const { vehicleSvg, vehicleImgKey } = await import('../public/js/vehicles.js');
   for (const k of ['pickup', 'half_ton', 'truck', 'jumbo', 'passengers', 'car', 'van', 'microbus', 'minibus', 'tuktuk', 'reefer', 'flatbed', 'tanker', 'dump', 'curtain', 'carcarrier', 'غريب']) { const x = vehicleSvg(k); check(`رسمة ${k} صالحة`, x.startsWith('<svg') && x.endsWith('</svg>') && x.includes('class="wheel"')); }
