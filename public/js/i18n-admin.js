@@ -404,4 +404,18 @@ registerRows([
   ['admin.p.empty.all', 'لسه مفيش مستخدمين.', 'No users yet.'],
   ['admin.qa.title', 'وصول سريع', 'Quick access'],
   ['admin.qa.active', '{n} مفعّل', '{n} active'],
+  // ---- لوحة المعلومات (الرئيسية) ----
+  ['admin.dash.hello', 'أهلاً {name}', 'Welcome, {name}'],
+  ['admin.dash.attention', 'محتاج انتباهك', 'Needs your attention'],
+  ['admin.dash.allGood', 'كله تمام. مفيش حاجة معلّقة.', 'All clear. Nothing is waiting.'],
+  ['admin.dash.today', 'طلبات النهاردة', "Today's orders"],
+  ['admin.dash.activeNow', '{n} جاري دلوقتي', '{n} in progress'],
+  ['admin.dash.vsYest', '{n} عن امبارح', '{n} vs yesterday'],
+  ['admin.dash.sameYest', 'زي امبارح', 'Same as yesterday'],
+  ['admin.dash.last14Total', '{n} طلب في آخر 14 يوم', '{n} orders in the last 14 days'],
+  ['admin.dash.byStatus', 'حالة الطلبات', 'Orders by status'],
+  ['admin.dash.s.open', 'بانتظار سواق', 'Waiting for a driver'],
+  ['admin.dash.s.progress', 'جاري التنفيذ', 'In progress'],
+  ['admin.dash.noTrips', 'لسه مفيش رحلات مكتملة.', 'No completed trips yet.'],
+  ['admin.dash.noOrders', 'لسه مفيش طلبات.', 'No orders yet.'],
 ]);

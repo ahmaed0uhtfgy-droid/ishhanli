@@ -40,11 +40,13 @@ const ICON = {
 const ico = (k) => raw(`<svg class="ic" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>`);
 
 // أرقام الشارات (طلبات معلّقة): بتتحط على التبويبات والأقسام وكروت الوصول السريع
-let lastBadges = {}, shownTabs = TABS;
+let lastBadges = {}, badgesReady = false, shownTabs = TABS;
 const setDot = (d, n) => { if (d) { d.textContent = n; d.hidden = !n; } };
 function applyBadges(root) {
   const b = lastBadges;
   $$('[data-badge]', root).forEach((d) => setDot(d, b[d.dataset.badge] || 0));
+  $$('[data-att]', root).forEach((a) => { a.hidden = !(b[a.dataset.att] || 0); }); // كروت «محتاج انتباهك»: بتظهر بس لو في معلّق
+  const ok = $('#att-ok', root); if (ok) ok.hidden = !badgesReady || !!$$('[data-att]:not([hidden])', root).length;
   $$('[data-tab]', root).forEach((a) => setDot($('.dot', a), b[TAB_BADGE[a.dataset.tab]] || 0));
   $$('[data-grp]', root).forEach((a) => { const g = GROUPS.find((x) => x.id === a.dataset.grp); setDot($('.dot', a), g.tabs.filter((k) => shownTabs.includes(k)).reduce((n, k) => n + (b[TAB_BADGE[k]] || 0), 0)); });
 }
@@ -58,7 +60,7 @@ export function renderAdmin(el, tab) {
     ${sub.length > 1 ? html`<nav class="tabs" aria-label="${t('admin.grp.' + grp.id)}">${sub.map((k) => html`<a href="#/admin/${k}" data-tab="${k}" class="${k === tab ? 'on' : ''}">${t('admin.tab.' + k)}<span class="dot" hidden></span></a>`)}</nav>` : ''}<div id="body">${spinner()}</div>`);
   applyBadges(el);
   // شارات الأعداد المعلّقة (استعلامات خفيفة على index الحالة) — كل 20 ثانية
-  const badges = gpoll(['orders', 'users', 'withdrawals', 'disputes', 'refunds', 'reports'], () => api('admin/badges'), 20000, ({ badges: b }) => { lastBadges = b; applyBadges(el); }, { dedupe: true });
+  const badges = gpoll(['orders', 'users', 'withdrawals', 'disputes', 'refunds', 'reports'], () => api('admin/badges'), 20000, ({ badges: b }) => { lastBadges = b; badgesReady = true; applyBadges(el); }, { dedupe: true });
   const body = $('#body', el);
   const stop = { overview, finance, payments, users, customers, drivers, companies, joins, orders, withdrawals, disputes, refunds, reports, coupons, referrals, cod, dc, fines, settings, blacklist, audit, monitoring }[tab](body, badges);
   return () => { badges(); stop?.(); };
@@ -69,26 +71,55 @@ function overview(body) {
   return gpoll(['orders', 'users', 'refunds'], () => api('admin/stats'), 120000, (s) => {
     const days = [...Array(14)].map((_, i) => { const d = new Date(); d.setDate(d.getDate() - (13 - i)); return d.toLocaleDateString('en-CA'); }); // YYYY-MM-DD
     const per = Object.fromEntries(s.perDay.map((x) => [x.d, x.n]));
-    const perDay = days.map((d) => per[d] || 0), mx = Math.max(1, ...perDay), T = s.totals, money = (n) => (n == null ? '—' : fmtMoney(n));
-    render(body, html`<div class="stack">
+    const perDay = days.map((d) => per[d] || 0), T = s.totals, money = (n) => (n == null ? '—' : fmtMoney(n)), sum14 = perDay.reduce((a, b) => a + b, 0);
+    const today = perDay[13], diff = today - perDay[12], legacy = !legacyHidden();
+    const name = String(state.profile?.name || '').split(' ')[0], dateTxt = new Date().toLocaleDateString(getLang() === 'en' ? 'en-GB' : 'ar-EG', { weekday: 'long', day: 'numeric', month: 'long' });
+
+    // مؤشرات رئيسية
+    const spark = (() => { const mx = Math.max(1, ...perDay), pts = perDay.map((n, i) => `${(i * 100) / 13},${26 - (n / mx) * 22}`).join(' '); return raw(`<svg class="spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/></svg>`); })();
+    const kpis = [
+      { ic: 'box', tone: 'blue', label: t('admin.ordersTotal'), val: T.total, sub: t('admin.dash.activeNow', { n: T.active }), extra: spark },
+      { ic: 'chart', tone: 'gold', label: t('admin.dash.today'), val: today, sub: diff ? t('admin.dash.vsYest', { n: (diff > 0 ? '+' : '−') + Math.abs(diff) }) : t('admin.dash.sameYest'), trend: diff > 0 ? 'up' : diff < 0 ? 'down' : '' },
+      { ic: 'coins', tone: 'green', label: t('admin.revenue'), val: money(T.revenue) },
+      { ic: 'coins', tone: 'gold', label: t('admin.commissions'), val: money(T.commission) },
+      { ic: 'truck', tone: 'teal', label: t('admin.activeDrivers'), val: s.activeDrivers, href: 'drivers' },
+      { ic: 'user', tone: 'blue', label: t('admin.activeCustomers'), val: s.activeCustomers, href: 'customers' },
+      ...(legacy ? [{ ic: 'coins', tone: 'gold', label: t('admin.escrowHeld'), val: money(T.held) }, { ic: 'alert', tone: 'red', label: t('admin.refundsDue'), val: money(s.refundsDue) }] : []),
+    ];
+    const kpi = (k) => { const inner = html`<span class="kpi-ic">${ico(k.ic)}</span><span class="kpi-l">${k.label}</span><b class="kpi-v">${k.val}</b>${k.sub ? html`<small class="kpi-s ${k.trend || ''}">${k.sub}</small>` : ''}${k.extra || ''}`;
+      return k.href ? html`<a class="kpi k-${k.tone}" href="#/admin/${k.href}">${inner}</a>` : html`<div class="kpi k-${k.tone}">${inner}</div>`; };
+
+    // رسم الطلبات (أعمدة SVG بخطوط شبكة ومحاور)
+    const step = Math.max(1, Math.ceil(Math.max(...perDay) / 4)), ymax = step * 4, W = 560, H = 200, L = 30, B = 24, bw = (W - L) / 14;
+    const bars = perDay.map((n, i) => { const h = (n / ymax) * (H - B - 8), x = L + i * bw + bw * 0.2, y = H - B - h; return `<g><title>${days[i].slice(5)} · ${n}</title><rect class="ch-hit" x="${L + i * bw}" y="0" width="${bw}" height="${H - B}"/><rect class="ch-bar${i === 13 ? ' now' : ''}" x="${x}" y="${n ? y : H - B - 2}" width="${bw * 0.6}" height="${n ? h : 2}" rx="4"/>${n ? `<text class="ch-v" x="${x + bw * 0.3}" y="${y - 5}" text-anchor="middle">${n}</text>` : ''}<text class="ch-x" x="${x + bw * 0.3}" y="${H - 7}" text-anchor="middle">${days[i].slice(8)}</text></g>`; }).join('');
+    const grid = [0, 1, 2, 3, 4].map((i) => { const y = H - B - (i / 4) * (H - B - 8); return `<line class="ch-g" x1="${L}" x2="${W}" y1="${y}" y2="${y}"/><text class="ch-y" x="${L - 6}" y="${y + 4}" text-anchor="end">${i * step}</text>`; }).join('');
+    const chart = raw(`<svg class="ch" viewBox="0 0 ${W} ${H}" role="img" aria-label="${t('admin.last14')}" style="direction:ltr">${grid}${bars}</svg>`);
+
+    // دونات حالات الطلبات
+    const bs = s.byStatus || { open: 0, progress: 0, completed: 0, cancelled: 0 }, tot = bs.open + bs.progress + bs.completed + bs.cancelled, R = 52, C = 2 * Math.PI * R;
+    const segs = [['open', 'var(--line)', t('admin.dash.s.open')], ['progress', 'var(--blue)', t('admin.dash.s.progress')], ['completed', 'var(--nile)', t('status.completed')], ['cancelled', 'var(--brick)', t('status.cancelled')]];
+    let acc = 0;
+    const arcs = tot ? segs.map(([k, col]) => { const len = (bs[k] / tot) * C, o = `<circle cx="70" cy="70" r="${R}" fill="none" stroke="${col}" stroke-width="16" stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-acc}" transform="rotate(-90 70 70)"/>`; acc += len; return len ? o : ''; }).join('') : '';
+    const donut = raw(`<svg class="dn" viewBox="0 0 140 140" role="img" aria-label="${t('admin.dash.byStatus')}"><circle cx="70" cy="70" r="${R}" fill="none" stroke="var(--rule)" stroke-width="16"/>${arcs}<text x="70" y="68" text-anchor="middle" class="dn-n">${tot}</text><text x="70" y="86" text-anchor="middle" class="dn-l">${t('admin.ordersTotal')}</text></svg>`);
+
+    // أكتر السواقين نشاطاً
+    const topMax = Math.max(1, ...s.topDrivers.map((d) => d.n));
+    const QA = [['customers', 'user'], ['drivers', 'truck'], ['companies', 'building'], ['joins', 'inbox', 'users'], ['orders', 'box'], ['reports', 'alert', 'reports'], ['finance', 'chart'], ['settings', 'gear']];
+    const ATT = [['joins', 'users'], ['reports', 'reports'], ...(legacy ? [['disputes', 'disputes'], ['refunds', 'refunds'], ['withdrawals', 'withdrawals'], ['payments', 'payments']] : [])];
+
+    render(body, html`<div class="stack dash">
       ${(s.warnings || []).length ? html`<div class="action warn"><b>${t('admin.indexMissing')}</b><p class="hint">${t('admin.indexMissingHint')}</p>${s.warnings.map((w) => { const url = (w.detail.match(/https?:\/\/\S+/) || [])[0]; return html`<p class="small" dir="ltr" style="word-break:break-all">${w.what}: ${url ? html`<a href="${url}" target="_blank" rel="noopener">${url}</a>` : w.detail}</p>`; })}</div>` : ''}
-      <section aria-label="${t('admin.qa.title')}"><h3>${t('admin.qa.title')}</h3><nav class="qa">${[
-        ['customers', 'user', t('admin.qa.active', { n: s.activeCustomers })], ['drivers', 'truck', t('admin.qa.active', { n: s.activeDrivers })], ['companies', 'building', ''],
-        ['joins', 'inbox', '', 'users'], ['orders', 'box', ''], ['reports', 'alert', '', 'reports'], ['finance', 'chart', ''], ['settings', 'gear', ''],
-      ].map(([k, ic, sub, badge]) => html`<a class="qa-i" href="#/admin/${k}">${ico(ic)}<b>${t('admin.tab.' + k)}</b>${sub ? html`<small>${sub}</small>` : ''}${badge ? html`<span class="dot" data-badge="${badge}" hidden></span>` : ''}</a>`)}</nav></section>
-      <div class="tiles">
-        <div class="tile"><b>${T.total}</b><span>${t('admin.ordersTotal')}</span></div>
-        <div class="tile"><b>${T.active}</b><span>${t('admin.ordersActive')}</span></div>
-        <div class="tile"><b>${money(T.revenue)}</b><span>${t('admin.revenue')}</span></div>
-        <div class="tile"><b>${money(T.commission)}</b><span>${t('admin.commissions')}</span></div>
-        ${legacyHidden() ? '' : html`<div class="tile"><b>${money(T.held)}</b><span>${t('admin.escrowHeld')}</span></div>
-        <div class="tile"><b>${money(s.refundsDue)}</b><span>${t('admin.refundsDue')}</span></div>`}
-        <div class="tile"><b>${s.activeDrivers}</b><span>${t('admin.activeDrivers')}</span></div>
-        <div class="tile"><b>${s.activeCustomers}</b><span>${t('admin.activeCustomers')}</span></div>
+      <header class="dh"><div><h2>${t('admin.dash.hello', { name })}</h2><p>${dateTxt}</p></div></header>
+      <section class="att" aria-label="${t('admin.dash.attention')}"><b>${t('admin.dash.attention')}</b>
+        <div class="att-list">${ATT.map(([tab, key]) => html`<a class="att-i" href="#/admin/${tab}" data-att="${key}" hidden>${t('admin.tab.' + tab)}<span class="att-n" data-badge="${key}">0</span></a>`)}<span class="att-ok" id="att-ok">${ico('home')}${t('admin.dash.allGood')}</span></div></section>
+      <div class="kpis" style="--c:${kpis.length > 6 ? 4 : 3}">${kpis.map(kpi)}</div>
+      <div class="dg">
+        <div class="card"><div class="card-h"><h3>${t('admin.last14')}</h3><small>${t('admin.dash.last14Total', { n: sum14 })}</small></div>${sum14 || T.total ? chart : html`<p class="muted">${t('admin.dash.noOrders')}</p>`}</div>
+        <div class="card"><div class="card-h"><h3>${t('admin.dash.byStatus')}</h3></div>${tot ? html`<div class="dn-wrap">${donut}<ul class="dn-lg">${segs.map(([k, col, lb]) => html`<li><i style="background:${col}"></i><span>${lb}</span><b>${bs[k]}</b></li>`)}</ul></div>` : html`<p class="muted">${t('admin.dash.noOrders')}</p>`}</div>
       </div>
-      <div class="grid-2">
-        <div class="card"><h3>${t('admin.last14')}</h3><div class="bars" role="img" aria-label="${t('admin.last14')}">${perDay.map((n) => raw(`<div data-n="${n}" style="height:${Math.max(3, (n / mx) * 100)}%"></div>`))}</div></div>
-        <div class="card"><h3>${t('admin.topDrivers')}</h3>${s.topDrivers.length ? html`<table><tbody>${s.topDrivers.map((d) => html`<tr><td>${d.name}</td><td class="num">${d.n} ${t('admin.trips')}</td><td class="num">${fmtMoney(d.earned)}</td></tr>`)}</tbody></table>` : html`<p class="muted">—</p>`}</div>
+      <div class="dg2">
+        <div class="card"><div class="card-h"><h3>${t('admin.topDrivers')}</h3></div>${s.topDrivers.length ? html`<ol class="top">${s.topDrivers.map((d, i) => html`<li><span class="top-r">${i + 1}</span><div class="top-m"><div class="top-t"><b>${d.name}</b><span>${d.n} ${t('admin.trips')} · ${fmtMoney(d.earned)}</span></div><div class="top-b"><i style="width:${Math.max(6, (d.n / topMax) * 100)}%"></i></div></div></li>`)}</ol>` : html`<p class="muted">${t('admin.dash.noTrips')}</p>`}</div>
+        <div class="card"><div class="card-h"><h3>${t('admin.qa.title')}</h3></div><nav class="qa2">${QA.map(([k, ic, badge]) => html`<a href="#/admin/${k}">${ico(ic)}<span>${t('admin.tab.' + k)}</span>${badge ? html`<span class="dot" data-badge="${badge}" hidden></span>` : ''}</a>`)}</nav></div>
       </div><p class="hint">${t('admin.statsNote')}</p></div>`);
     applyBadges(body);
   }, { dedupe: true, onError });
