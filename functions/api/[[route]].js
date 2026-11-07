@@ -1510,7 +1510,7 @@ const ROUTES = {
     const days = Array.from({ length: 15 }, (_, i) => dayKey(now() - (14 - i) * 86400e3));
     // التجميعات المالية ممكن تحتاج فهرس مركّب في Firestore: لو فشلت وحدة، باقي اللوحة تفضل شغالة والمبلغ يظهر «—» مع رابط إنشاء الفهرس
     const soft = (p) => p.then((v) => ({ v }), (e) => { console.error('admin/stats aggregate failed', e?.code, e?.detail || e?.message); return { e }; });
-    const [total, terminal, rev, held, drivers, customers, top, daily, refunds] = await Promise.all([
+    const [total, terminal, rev, held, drivers, customers, top, daily, refunds, nOpen, nDone, nCancel] = await Promise.all([
       F.count(E, 'orders'),
       F.count(E, 'orders', { inn: { status: TERMINAL } }),
       soft(F.aggregate(E, 'orders', { inn: { escrow_status: ['released', 'settled'] } }, { price: ['sum', 'price'], refund: ['sum', 'customer_refund'], commission: ['sum', 'commission'] })),
@@ -1520,6 +1520,7 @@ const ROUTES = {
       F.query(E, 'users', { order: ['completed_orders', 'desc'], limit: 40 }),
       F.getMany(E, 'daily', days),
       soft(F.aggregate(E, 'refunds', { eq: { status: 'pending' } }, { n: ['sum', 'amount'] })),
+      F.count(E, 'orders', { eq: { status: 'open' } }), F.count(E, 'orders', { inn: { status: ['completed', 'resolved'] } }), F.count(E, 'orders', { eq: { status: 'cancelled' } }), // توزيع الحالات للدونات (عدّاد على حقل واحد: من غير فهارس مركّبة)
     ]);
     const warnings = [['revenue', rev], ['escrowHeld', held], ['refundsDue', refunds]].filter(([, x]) => x.e).map(([what, x]) => ({ what, detail: String(x.e.detail || x.e.code || x.e.message || 'error').slice(0, 700) }));
     const tops = top.filter((u) => u.role === 'driver' && u.completed_orders > 0).slice(0, 5);
@@ -1528,6 +1529,7 @@ const ROUTES = {
       totals: { total, active: total - terminal, revenue: rev.e ? null : rev.v.price - rev.v.refund, commission: rev.e ? null : rev.v.commission, held: held.e ? null : held.v.price },
       warnings,
       activeDrivers: drivers, activeCustomers: customers,
+      byStatus: { open: nOpen, progress: Math.max(0, total - nOpen - nDone - nCancel), completed: nDone, cancelled: nCancel },
       topDrivers: tops.map((u, i) => ({ name: u.name, n: u.completed_orders, earned: ws[i]?.total_earned || 0 })), // "earned" = إجمالي ربح المحفظة
       perDay: daily.map((r, i) => (r && r.n > 0 ? { d: days[i], n: r.n } : null)).filter(Boolean),
       refundsDue: refunds.e ? null : refunds.v.n,
