@@ -57,7 +57,7 @@ export function renderPage(kind, { settings = {}, site: rawSite, company = {}, e
       + H('العمولة') + P(val('faq.4a'));
     cta = [val('join.c.cta'), '/#/register?role=driver'];
   }
-  const url = `${LP_ORIGIN}${PAGE_PATHS[kind]}`, logo = site.logoUrl || '/img/logo.png';
+  const url = `${LP_ORIGIN}${PAGE_PATHS[kind]}`, logo = site.logoUrl || '/img/logo.webp';
   const ld = (o) => `<script type="application/ld+json">${JSON.stringify(o).replace(/</g, '\\u003c')}</script>`;
   const crumbs = { '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: [{ '@type': 'ListItem', position: 1, name: 'اشحنلي', item: `${LP_ORIGIN}/` }, { '@type': 'ListItem', position: 2, name: h1, item: url }] };
   const faqLd = faq ? ld({ '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: faq.map(([q, a]) => ({ '@type': 'Question', name: q, acceptedAnswer: { '@type': 'Answer', text: a } })) }) : '';

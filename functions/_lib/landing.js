@@ -31,7 +31,7 @@ export function buildLanding({ settings = {}, site: rawSite, company = {}, env =
   const attrs = (id) => (ov[id] ? '' : ` data-i18n="${slots[id].key}" data-i18n-em${slots[id].vars ? ` data-i18n-vars='${esc(JSON.stringify(slots[id].vars))}'` : ''}`);
   const el = (tag, id, cls = '', extra = '') => `<${tag}${cls ? ` class="${cls}"` : ''}${extra}${attrs(id)}>${em(val(id))}</${tag}>`;
   const k = (key, vars) => `<span data-i18n="${key}"${vars ? ` data-i18n-vars='${esc(JSON.stringify(vars))}'` : ''}>${esc(lpText(key, vars, 'ar'))}</span>`;
-  const logo = site.logoUrl || '/img/logo.png';
+  const logo = site.logoUrl || '/img/logo.webp';
   const img = (cls = '', extra = '') => `<img class="${cls}" src="${esc(logo)}" alt="${esc(lpText('lp.logo.alt'))}" data-i18n-alt="lp.logo.alt" width="330" height="298" decoding="async"${extra}>`;
   const REG_C = '/#/register?role=customer', REG_D = '/#/register?role=driver';
 
