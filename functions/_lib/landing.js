@@ -150,6 +150,8 @@ ${foot}</div>`;
 export function injectShell(shell, L) {
   let out = shell.replace(/<title>[\s\S]*?<\/title>/i, '').replace('<!--LP_HEAD-->', L.head).replace('<!--LP_BODY-->', L.body);
   out = out.replace(/<html([^>]*)>/i, (m, a) => `<html${a.replace(/\sdata-(theme|lp-title|design)="[^"]*"/g, '')} data-lp-title="1" data-design="${L.design}" data-theme="${L.mode}">`);
+  // الـtopbar والفوتر مخفيين على الصفحة الرئيسية؛ نحط الكلاس من السيرفر عشان الصفحة ما تنزل 64px لحد ما JS يضيفه (CLS)
+  out = out.replace(/<body(?![^>]*\bclass=)([^>]*)>/i, '<body class="on-landing"$1>');
   return out;
 }
 export { LP_SECTIONS };
