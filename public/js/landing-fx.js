@@ -76,7 +76,7 @@ export async function startFx(root) {
       fade('.lpb-f p', { y: 40, opacity: 0 }); fade('.lpb-fin h2', { scale: 0.8, opacity: 0 });
     } else {
       gsap.timeline({ defaults: { ease: 'power4.out' } }).to(hw, { yPercent: 0, duration: 1.1, stagger: 0.08 }, 0.2).from(qa('.lpa-eyebrow,.lpa-lead,.lpa-hin .lp-cta'), { y: 30, opacity: 0, duration: 0.9, stagger: 0.12 }, 0.6)
-        .from('#lpMark', { scale: 0.6, opacity: 0, rotate: -8, duration: 1.4 }, 0.3).from('#lpHalo', { scale: 0.7, opacity: 0, duration: 1.4 }, 0.3);
+        .from('#lpMark', { scale: 0.6, rotate: -8, duration: 1.4 }, 0.3).from('#lpHalo', { scale: 0.7, opacity: 0, duration: 1.4 }, 0.3);
       gsap.to('#lpHalo', { rotate: 360, duration: 60, ease: 'none', repeat: -1 });
       gsap.to('#lpMark', { y: -14, duration: 3, ease: 'sine.inOut', yoyo: true, repeat: -1 });
       gsap.to('#lpDash', { x: -70, duration: 1.2, ease: 'none', repeat: -1 });
