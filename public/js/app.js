@@ -10,10 +10,13 @@ import { renderLogin, renderRegister, renderForgot, renderStatus } from './pages
 import { initEstimate } from './pages/estimate-widget.js';
 import { showLanding, hideLanding, lpPublicPricing } from './landing.js';
 import { initErrorReporting } from './report.js';
+// app.css بيتحمّل غير حاجب على الصفحة الرئيسية (الـHTML فيه CSS الحرج)؛ نفعّله أول ما التطبيق يشتغل.
+{ const ac = document.getElementById('appcss'); if (ac) ac.media = 'all'; }
 
 // الصفحات التقيلة (الأدمن، السواق، الطلب...) بتتحمّل عند أول دخول عليها بس: الزائر والصفحة الرئيسية ما بيحمّلوهاش. بتفضل ترجّع دالة تنضيف زي ما كانت.
 let leafletP = null; // Leaflet (الخرائط) بيتحمّل بس لما صفحة محتاجاه، مش على الصفحة الرئيسية
-const loadLeaflet = () => window.L ? Promise.resolve() : (leafletP ||= new Promise((ok, no) => { if (!document.querySelector('link[data-leaflet]')) { const lk = document.createElement('link'); lk.rel = 'stylesheet'; lk.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css'; lk.dataset.leaflet = '1'; document.head.appendChild(lk); }
+const loadLeaflet = () => window.L?.map ? Promise.resolve() : // window.L?.map مش window.L بس: lenis.min.js بيسرّب متغيّر عالمي اسمه L (function) فكان بيتفسّر غلط إن Leaflet اتحمّل
+   (leafletP ||= new Promise((ok, no) => { if (!document.querySelector('link[data-leaflet]')) { const lk = document.createElement('link'); lk.rel = 'stylesheet'; lk.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css'; lk.dataset.leaflet = '1'; document.head.appendChild(lk); }
   const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js'; sc.onload = ok; sc.onerror = () => { leafletP = null; no(new Error('leaflet')); }; document.head.appendChild(sc); }));
 const lazy = (load, name, map = false) => (...args) => {
   let inner = null, dead = false;
