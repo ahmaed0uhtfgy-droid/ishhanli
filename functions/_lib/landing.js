@@ -147,8 +147,18 @@ ${foot}</div>`;
 }
 
 /** بيركّب الصفحة الجاهزة جوه قالب index.html (الـshell) */
-export function injectShell(shell, L) {
+export function injectShell(shell, L, opts = {}) {
   let out = shell.replace(/<title>[\s\S]*?<\/title>/i, '').replace('<!--LP_HEAD-->', L.head).replace('<!--LP_BODY-->', L.body);
+  // أداء الموبايل: الصفحة الرئيسية بتضمّن CSS الحرج (أساسيات app.css + landing.css) جوه الـHTML وبتحمّل باقي app.css من غير حجب العرض.
+  // opts.css = { base, landing } بيجيبهم functions/index.js من ملفات الـCSS نفسها، فالملفات تفضل المصدر الوحيد.
+  if (opts.css && opts.css.base && opts.css.landing) {
+    const LINK_L = '<link rel="stylesheet" href="/css/landing.css">', LINK_A = '<link rel="stylesheet" href="/css/app.css">';
+    if (out.includes(LINK_L) && out.includes(LINK_A)) {
+      // نفس ترتيب الـcascade الأصلي بالظبط: [الأساسيات] ثم app.css (غير حاجب) ثم landing.css
+      out = out.replace(LINK_A, () => `<style>${opts.css.base}</style><link rel="stylesheet" href="/css/app.css" media="print" id="appcss"><noscript><link rel="stylesheet" href="/css/app.css"></noscript>`)
+        .replace(LINK_L, () => `<style>${opts.css.landing}</style>`);
+    }
+  }
   out = out.replace(/<html([^>]*)>/i, (m, a) => `<html${a.replace(/\sdata-(theme|lp-title|design)="[^"]*"/g, '')} data-lp-title="1" data-design="${L.design}" data-theme="${L.mode}">`);
   // الـtopbar والفوتر مخفيين على الصفحة الرئيسية؛ نحط الكلاس من السيرفر عشان الصفحة ما تنزل 64px لحد ما JS يضيفه (CLS)
   out = out.replace(/<body(?![^>]*\bclass=)([^>]*)>/i, '<body class="on-landing"$1>');
