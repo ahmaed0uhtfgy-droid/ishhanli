@@ -4,6 +4,12 @@ import { LP_ORIGIN, SITE_DEFAULTS, cleanSite, lpFacts, lpSlots, lpText } from '.
 import { esc } from './landing.js';
 
 const plain = (s) => String(s).replace(/\*([^*]+)\*/g, '$1');
+// ملفات _headers بتتطبق على الملفات الثابتة بس، مش على ردود الـFunctions — فالهيدرز الأمنية لصفحات السيرفر بتتحط هنا (الصفحات دي من غير JavaScript: JSON-LD وCSS وخطوط وصور من نفس الدومين بس)
+export const PAGE_SEC = {
+  'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+  'Content-Security-Policy': "default-src 'none'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+};
 export const PAGE_PATHS = { how: '/how-it-works', pricing: '/pricing', vehicles: '/vehicles', drivers: '/for-drivers', companies: '/for-companies' };
 const VEH = { pickup: 'ربع نقل', half_ton: 'نص نقل', truck: 'نقل ثقيل', jumbo: 'جامبو' };
 const kg = (n) => `${Number(n).toLocaleString('en-US')} كجم`;

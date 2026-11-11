@@ -7,7 +7,7 @@ export const LP_SECTIONS = ['about', 'estimate', 'services', 'trust', 'join', 'f
 export const LP_ROWS = [
   ['lp.nav.how', 'إزاي بتشتغل', 'How it works'], ['lp.nav.services', 'الخدمات', 'Services'], ['lp.nav.price', 'السعر', 'Pricing'],
   ['lp.nav.trust', 'الثقة', 'Trust'], ['lp.nav.faq', 'أسئلة', 'FAQ'], ['lp.nav.contact', 'تواصل', 'Contact'],
-  ['lp.nav.login', 'دخول', 'Log in'], ['lp.nav.account', 'حسابي', 'My account'], ['lp.nav.order', 'اطلب نقل', 'Request transport'],
+  ['lp.nav.login', 'دخول', 'Log in'], ['lp.nav.account', 'حسابي', 'My account'], ['lp.nav.logout', 'خروج', 'Log out'], ['lp.nav.order', 'اطلب نقل', 'Request transport'],
   ['lp.mode.toggle', 'تبديل الوضع الليلي والنهاري', 'Toggle dark and light mode'], ['lp.nav.menu', 'القائمة', 'Menu'], ['lp.hero.scroll', 'اسحب لتحت', 'Scroll down'],
   ['lp.logo.alt', 'شعار اشحنلي: شاحنة بداخلها عين حورس', 'Ishhanli logo: a truck with the Eye of Horus'],
 

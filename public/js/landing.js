@@ -14,6 +14,7 @@ function hydrate(root, { user, home }) {
   root.querySelector('[data-lp=mode]')?.setAttribute('aria-pressed', String(theme));
   const login = root.querySelector('[data-lp=login]');
   if (login) { login.setAttribute('data-i18n', user ? 'lp.nav.account' : 'lp.nav.login'); login.setAttribute('href', user ? '/#' + (home || '/') : '/#/login'); }
+  const out = root.querySelector('[data-lp=logout]'); if (out) out.hidden = !user; // زرار الخروج ظاهر لما المستخدم يكون داخل
   applyI18n(root);
   root.querySelectorAll('[data-lp-en]').forEach((dt) => { dt.textContent = en ? dt.dataset.lpEn : LABELS[dt.dataset.lpEn]; });
 }
@@ -28,6 +29,7 @@ function bind(root) {
       return;
     }
     const tool = e.target.closest('[data-lp]')?.dataset.lp;
+    if (tool === 'logout') { window.dispatchEvent(new Event('app:logout')); return; }
     if (tool === 'mode') { window.dispatchEvent(new CustomEvent('app:set-theme', { detail: document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark' })); root.querySelector('[data-lp=mode]')?.setAttribute('aria-pressed', String(document.documentElement.dataset.theme === 'dark')); }
     if (tool === 'lang') { stop(); setLang(getLang() === 'ar' ? 'en' : 'ar'); applyI18n(document); window.dispatchEvent(new Event('app:refresh')); }
   });

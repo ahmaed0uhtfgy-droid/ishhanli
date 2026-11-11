@@ -10,6 +10,8 @@ const AR_LEVEL = { new: 'جديد', trusted: 'موثوق', pro: 'محترف', el
 const AR_BADGE = { verified: 'موثّق', phone: 'موبايل مُؤكّد', top_rated: 'الأعلى تقييماً', reliable: 'منتظم' };
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/** JSON آمن داخل <script>: اسم سواق فيه </script> كان بيكسر الوسم وينفّذ كود (XSS مخزّن) — بنهرّب < و> و& وفواصل السطور الخاصة */
+const ldJson = (o) => JSON.stringify(o).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 /** اسم مختصر للعرض العام: الاسم الأول + أول حرف من التالي. */
 const maskName = (name) => {
   const p = String(name || '').trim().split(/\s+/).filter(Boolean);
@@ -58,14 +60,20 @@ const page = ({ title, desc, canonical, origin, body, jsonld }) => `<!doctype ht
 <meta property="og:description" content="${esc(desc)}"><meta property="og:url" content="${esc(canonical)}">
 <meta property="og:site_name" content="اشحنلي"><meta name="twitter:card" content="summary">
 <link rel="icon" href="/favicon.svg">
-${jsonld ? `<script type="application/ld+json">${JSON.stringify(jsonld)}</script>` : ''}
+${jsonld ? `<script type="application/ld+json">${ldJson(jsonld)}</script>` : ''}
 <style>${STYLE}</style></head>
 <body><header><a href="/" style="color:var(--fg);text-decoration:none;font-weight:800">اشحنلي</a></header>
 <main class="wrap">${body}<p style="margin-top:22px"><a class="btn" href="${esc(origin)}/#/register">سجّل مجاناً في اشحنلي</a></p></main>
 <footer>اشحنلي — نقل بضائع بسعر فوري وسواقين موثّقين. البيانات المعروضة عامة ومختصرة.</footer>
 </body></html>`;
 
-const html = (body, status = 200, extra = {}) => new Response(body, { status, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=600', ...extra } });
+// ملفات _headers بتتطبق على الملفات الثابتة بس، مش على ردود الـFunctions — فالهيدرز الأمنية لازم تتحط هنا صراحةً
+export const SEC_HEADERS = {
+  'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+  'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+};
+const html = (body, status = 200, extra = {}) => new Response(body, { status, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=600', ...SEC_HEADERS, ...extra } });
 
 export const notFound = () => html('<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>غير موجود</title><body style="font-family:system-ui;text-align:center;padding:60px;background:#0f1115;color:#eef1f5"><h1>الصفحة غير متوفرة</h1><p><a href="/" style="color:#16a34a">العودة للرئيسية</a></p></body></html>', 404, { 'Cache-Control': 'no-store' });
 

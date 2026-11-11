@@ -55,6 +55,21 @@ export async function verifyTotp(secret, code, window = 1, step = 30) {
   return ok;
 }
 
+/** زي verifyTotp لكن بيرجّع العدّاد (رقم الخطوة) اللي طابق، أو null — بيتستخدم لمنع إعادة استخدام نفس الكود (replay) */
+export async function totpMatch(secret, code, window = 1, step = 30) {
+  const c = String(code || '').replace(/\D/g, '');
+  if (!secret || c.length !== 6) return null;
+  const counter = Math.floor(Date.now() / 1000 / step);
+  let hit = null;
+  for (let i = -window; i <= window; i++) {
+    const expect = await totpCode(secret, counter + i);
+    let diff = 0;
+    for (let k = 0; k < 6; k++) diff |= expect.charCodeAt(k) ^ c.charCodeAt(k);
+    if (diff === 0) hit = counter + i;
+  }
+  return hit;
+}
+
 /** رابط otpauth لإضافته في تطبيق المصادقة (Google Authenticator / Authy …) */
 export function otpauthURL(secret, label, issuer = 'Ashhanli') {
   return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(label || 'admin')}`

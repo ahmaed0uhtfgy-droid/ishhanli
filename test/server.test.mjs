@@ -1141,10 +1141,13 @@ console.log('\n— الإلغاء برسوم والبلاغات والطوارئ
   const setup = await ok('إعداد 2FA', call('admin1', 'admin/2fa/setup'));
   check('فيه سرّ ورابط otpauth', typeof setup.secret === 'string' && setup.secret.length >= 16 && setup.otpauth.startsWith('otpauth://'));
   const counter = Math.floor(Date.now() / 1000 / 30);
-  const code1 = await totpCode(setup.secret, counter);
+  // كل عملية بكود بعدّاد أحدث من اللي قبله (منع إعادة استخدام الكود): enable بـ counter-1 ← verify بـ counter ← disable بـ counter+1
+  const codeA = await totpCode(setup.secret, counter - 1), code1 = await totpCode(setup.secret, counter), codeC = await totpCode(setup.secret, counter + 1);
   check('الكود 6 أرقام', /^\d{6}$/.test(code1));
   await bad('كود غلط ما بيفعّلش', call('admin1', 'admin/2fa/enable', { code: '000000' }), 400, 'totp_bad_code');
-  await ok('تفعيل 2FA بكود صح', call('admin1', 'admin/2fa/enable', { code: code1 }));
+  await ok('تفعيل 2FA بكود صح', call('admin1', 'admin/2fa/enable', { code: codeA }));
+  await bad('إعادة استخدام نفس الكود ممنوعة (replay)', call('admin1', 'admin/2fa/verify', { code: codeA }), 400, 'totp_bad_code');
+  await bad('كود أقدم من آخر كود متقبَّل ممنوع', call('admin1', 'admin/2fa/verify', { code: await totpCode(setup.secret, counter - 1) }), 400, 'totp_bad_code');
   const st1 = await ok('الحالة بعد التفعيل', call('admin1', 'admin/2fa/status'));
   check('2FA مفعّل وجلسة غير محقّقة', st1.enabled === true && st1.verified === false);
 
@@ -1155,7 +1158,8 @@ console.log('\n— الإلغاء برسوم والبلاغات والطوارئ
   check('رجع سجل العمليات', Array.isArray(audit2.entries));
   await bad('توكن جلسة غلط مرفوض', call2fa('admin1', 'admin/audit', {}, { 'x-2fa': 'bogus' }), 403, 'totp_required');
 
-  await ok('إغلاق 2FA بكود صح', call('admin1', 'admin/2fa/disable', { code: code1 }));
+  await bad('إعادة استخدام كود الجلسة ممنوعة', call('admin1', 'admin/2fa/disable', { code: code1 }), 400, 'totp_bad_code');
+  await ok('إغلاق 2FA بكود صح', call('admin1', 'admin/2fa/disable', { code: codeC }));
   const st2 = await ok('الحالة بعد الإغلاق', call('admin1', 'admin/2fa/status'));
   check('2FA اتقفل تاني', st2.enabled === false);
   await ok('مسار الأدمن رجع من غير جلسة', call('admin1', 'admin/audit'));
@@ -1169,6 +1173,13 @@ console.log('\n— الإلغاء برسوم والبلاغات والطوارئ
   await bad('حدّ مركزي: الطلب التالت مرفوض', call('admin1', 'admin/audit', {}, envRL), 429, 'too_many_requests');
   await ok('مسار الاستطلاع (sync) مستثنى من الحدّ', call('admin1', 'sync', {}, envRL));
   await ok('مسار me مستثنى من الحدّ', call('admin1', 'me', {}, envRL));
+}
+
+// ------------------ حدّ التسجيل لكل IP (30/ساعة) ------------------
+{
+  const envReg = { ...env, API_RATE_DISABLED: '0' };
+  for (let i = 0; i < 30; i++) await bad(`تسجيل غلط ${i + 1} (لسه جوه الحد)`, call(`regflood${i}`, 'register', { role: 'nobody' }, envReg), 400, 'bad_role');
+  await bad('التسجيل رقم 31 من نفس الـIP مرفوض', call('regflood31', 'register', { role: 'nobody' }, envReg), 429, 'too_many_requests');
 }
 
 // ------------------ شركة شحن: بتتعامل كسواق + سواقينها مسجّلين، وكل شحنة مربوطة بالسواق اللي استلمها ------------------

@@ -39,6 +39,7 @@ export function buildLanding({ settings = {}, site: rawSite, company = {}, env =
   const navHtml = nav.map(([id, key]) => `<a href="#/${id}" data-scroll="${id}">${k(key)}</a>`).join('');
   const tools = `<button class="lp-tool" type="button" data-lp="lang" aria-label="English / عربي">EN</button><button class="lp-tool" type="button" data-lp="mode" data-i18n-aria="lp.mode.toggle" aria-label="${esc(lpText('lp.mode.toggle'))}" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9c0-.5-.5-.7-.9-.5A6 6 0 0 1 12.5 3.9c.2-.4 0-.9-.5-.9z" fill="currentColor"/></svg></button>`;
   const loginA = `<a class="lp-link" href="/#/login" data-lp="login">${k('lp.nav.login')}</a>`;
+  const logoutA = `<button class="lp-link lp-out" type="button" data-lp="logout" hidden>${k('lp.nav.logout')}</button>`; // بيظهر بس لما المستخدم يكون داخل (hydrate في landing.js)
 
   // ---------- أجزاء مشتركة ----------
   const stats = [`<div><strong data-n="${f.minPrice}">${f.minPrice}</strong><small>${k('lp.stat.min')}</small></div>`,
@@ -70,7 +71,7 @@ export function buildLanding({ settings = {}, site: rawSite, company = {}, env =
     const svc = services.map(([ic, p], i) => `<div class="lpb-row" data-i="${i}" data-ic="${ic}"><span class="n">${NUM[i]}</span>${el('h3', `${p}.t`)}${el('p', `${p}.d`)}<span class="lpb-ico" aria-hidden="true">${ICON[ic]}</span></div>`).join('');
     const stack = ['s1', 's2', 's3', 's4'].map((s, i) => `<div class="lpb-sc ${s}"><b aria-hidden="true">${NUM[i]}</b><div><h3${attrs(`trust.${i + 1}t`)}>${em(val(`trust.${i + 1}t`))}</h3><p${attrs(`trust.${i + 1}d`)}>${em(val(`trust.${i + 1}d`))}</p></div></div>`).join('');
     body = `<div class="lp lpb" data-design="b">
-<header class="lp-head lpb-head"><a class="lpb-pill" href="#/top" data-scroll="top"><span class="lpb-cream">${img()}</span><b data-i18n="brand">اشحنلي</b></a><nav class="lp-nav" aria-label="main">${navHtml}</nav><div class="lp-act">${tools}${loginA}<a class="lp-btn g sm" href="${REG_C}" data-lp="order">${k('lp.nav.order')}</a></div></header>
+<header class="lp-head lpb-head"><a class="lpb-pill" href="#/top" data-scroll="top"><span class="lpb-cream">${img()}</span><b data-i18n="brand">اشحنلي</b></a><nav class="lp-nav" aria-label="main">${navHtml}</nav><div class="lp-act">${tools}${loginA}${logoutA}<a class="lp-btn g sm" href="${REG_C}" data-lp="order">${k('lp.nav.order')}</a></div></header>
 <section class="lpb-hero" id="top"><div class="lpb-big" aria-hidden="true">اشحنلي</div><div class="lpb-badge" id="lpBd">${img('', ' fetchpriority="high"')}</div>
   ${el('h1', 'hero.h1', 'lpb-h1', ' id="lpH1"')}${el('p', 'hero.sub', 'lpb-sub')}
   <div class="lp-cta"><a class="lp-btn g" href="${REG_C}" data-lp="order">${em(val('hero.cta1'))} ←</a><a class="lp-btn o" href="${REG_D}">${em(val('hero.cta2'))}</a></div></section>
@@ -96,7 +97,7 @@ ${foot}</div>`;
     const svc = services.map(([ic, p]) => `<div class="lpa-card"><span class="lpa-ic" aria-hidden="true">${ICON[ic]}</span>${el('h3', `${p}.t`)}${el('p', `${p}.d`)}</div>`).join('');
     const steps = [1, 2, 3].map((n) => `<div class="lpa-step"><div class="art"><span class="num" aria-hidden="true">${NUM[n - 1]}</span>${ART[n - 1]}</div><div class="txt"><h3${attrs(`how.s${n}t`)}>${em(val(`how.s${n}t`))}</h3><p${attrs(`how.s${n}d`)}>${em(val(`how.s${n}d`))}</p></div></div>`).join('');
     body = `<div class="lp lpa" data-design="a">
-<header class="lp-head lpa-head"><a class="lp-brand" href="#/top" data-scroll="top">${img('lp-logo-s')}<span data-i18n="brand">اشحنلي</span></a><nav class="lp-nav" aria-label="main">${navHtml}</nav><div class="lp-act">${tools}${loginA}<a class="lp-btn fill sm" href="${REG_C}" data-lp="order">${k('lp.nav.order')}</a></div></header>
+<header class="lp-head lpa-head"><a class="lp-brand" href="#/top" data-scroll="top">${img('lp-logo-s')}<span data-i18n="brand">اشحنلي</span></a><nav class="lp-nav" aria-label="main">${navHtml}</nav><div class="lp-act">${tools}${loginA}${logoutA}<a class="lp-btn fill sm" href="${REG_C}" data-lp="order">${k('lp.nav.order')}</a></div></header>
 <section class="lpa-hero" id="top"><div class="lpa-hin"><div>${el('span', 'hero.eyebrow', 'lpa-eyebrow')}${el('h1', 'hero.h1', 'lpa-h1', ' id="lpH1"')}${el('p', 'hero.sub', 'lpa-lead')}
   <div class="lp-cta"><a class="lp-btn fill" href="${REG_C}" data-lp="order">${em(val('hero.cta1'))} ←</a><a class="lp-btn ghost" href="${REG_D}">${em(val('hero.cta2'))}</a></div></div>
   <div class="lpa-mark"><div class="halo2"></div><div class="halo" id="lpHalo"></div>${img('', ' id="lpMark" fetchpriority="high"')}</div></div>

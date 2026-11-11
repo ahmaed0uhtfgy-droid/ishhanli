@@ -19,6 +19,32 @@
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/fonts/cairo-arabic-800-normal.woff2">
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/fonts/cairo-arabic-400-normal.woff2">
   <link rel="preload" as="font" type="font/woff2" crossorigin href="/fonts/cairo-arabic-700-normal.woff2">
+  <!-- أداء: Firebase من gstatic + تحميل مسبق لكل وحدات app.js الثابتة مرة واحدة (بدل سلسلة app.js ← الوحدات ← Firebase). اختبار test/preload.test.mjs بيتأكد إن القائمة مطابقة لشجرة الاستيراد -->
+  <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+  <link rel="modulepreload" href="/js/app.js">
+  <link rel="modulepreload" href="/js/firebase.js">
+  <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js" crossorigin>
+  <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js" crossorigin>
+  <link rel="modulepreload" href="/js/config.js">
+  <link rel="modulepreload" href="/js/api.js">
+  <link rel="modulepreload" href="/js/poll.js">
+  <link rel="modulepreload" href="/js/storage.js">
+  <link rel="modulepreload" href="/js/docCheck.js">
+  <link rel="modulepreload" href="/js/ui.js">
+  <link rel="modulepreload" href="/js/i18n.js">
+  <link rel="modulepreload" href="/js/landing-content.js">
+  <link rel="modulepreload" href="/js/state.js">
+  <link rel="modulepreload" href="/js/push.js">
+  <link rel="modulepreload" href="/js/pages/auth.js">
+  <link rel="modulepreload" href="/js/vpicker.js">
+  <link rel="modulepreload" href="/js/vehicles.js">
+  <link rel="modulepreload" href="/js/sync.js">
+  <link rel="modulepreload" href="/js/gate.js">
+  <link rel="modulepreload" href="/js/pages/estimate-widget.js">
+  <link rel="modulepreload" href="/js/estimate.js">
+  <link rel="modulepreload" href="/js/landing.js">
+  <link rel="modulepreload" href="/js/landing-fx.js">
+  <link rel="modulepreload" href="/js/report.js">
 
 </head>
 <body>

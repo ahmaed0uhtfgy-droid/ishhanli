@@ -84,6 +84,8 @@ const inbox = { items: [], unread: 0, open: false, menu: false, seen: null, time
 const ICON = {
   bell: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>',
   moon: '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>',
+  logout: '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>',
+  chev: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>',
   lang: '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
 };
 const initial = (n) => [...String(n || '?').trim()][0] || '?';
@@ -124,7 +126,7 @@ function renderTopbar() {
       <div class="pop-head"><b>${p.name}</b><span class="muted small">${t('auth.role' + (p.accountType === 'company' ? 'Company' : p.role === 'driver' ? 'Driver' : p.role === 'admin' ? 'Admin' : 'Customer'))}</span></div>
       <a class="menu-item" role="menuitem" href="#/account">${t('nav.account')}</a>
       <div class="menu-item fsz-row"><span>${t('ui.fontUp')}</span><span class="fsz"><button class="btn ghost sm" id="fdown" type="button" aria-label="${t('ui.fontDown')}">A−</button><button class="btn ghost sm" id="fup" type="button" aria-label="${t('ui.fontUp')}">A+</button></span></div>
-      <button class="menu-item danger" role="menuitem" id="logout" type="button">${t('nav.logout')}</button>
+      <button class="menu-item danger" role="menuitem" data-logout type="button">${t('nav.logout')}</button>
     </div>`;
   render(topbar, html`<div class="wrap">
     <a class="brand" href="#/">${raw(LOGO)}<span>${t('brand')}</span></a>
@@ -134,11 +136,13 @@ function renderTopbar() {
       ${p ? html`<div class="tb-act"><button class="icon-btn" id="inboxBtn" type="button" aria-haspopup="dialog" aria-expanded="${inbox.open}" aria-label="${t('notif.title')}">${raw(ICON.bell)}${inbox.unread ? html`<b class="badge">${inbox.unread > 9 ? '9+' : inbox.unread}</b>` : ''}</button>${bellPanel}</div>` : ''}
       <button class="icon-btn" id="theme" type="button" aria-label="${t('ui.theme')}" aria-pressed="${theme === 'dark'}" title="${t('ui.theme')}">${raw(ICON.moon)}</button>
       <button class="icon-btn lang-btn" id="lang" type="button" aria-label="${getLang() === 'ar' ? 'English' : 'العربية'}"><span aria-hidden="true">${getLang() === 'ar' ? 'EN' : 'ع'}</span></button>
-      ${p ? html`<div class="tb-user"><button class="avatar-btn" id="userBtn" type="button" aria-haspopup="menu" aria-expanded="${inbox.menu}" aria-label="${p.name}"><span class="avatar">${initial(p.name)}</span><span class="who">${p.name}</span></button>${userMenu}</div>`
-        : state.user ? html`<button class="btn ghost sm" id="logout" type="button">${t('nav.logout')}</button>` : html`<a class="btn primary sm" href="#/login">${t('nav.login')}</a>`}
+      ${p ? html`<div class="tb-user"><button class="avatar-btn" id="userBtn" type="button" aria-haspopup="menu" aria-expanded="${inbox.menu}" aria-label="${p.name}"><span class="avatar">${initial(p.name)}</span><span class="who">${p.name}</span><span class="chev">${raw(ICON.chev)}</span></button>${userMenu}</div><button class="icon-btn tb-out" data-logout type="button" title="${t('nav.logout')}" aria-label="${t('nav.logout')}">${raw(ICON.logout)}<span class="tb-out-t">${t('nav.logout')}</span></button>`
+        : state.user ? html`<button class="btn ghost sm" data-logout type="button">${t('nav.logout')}</button>` : html`<a class="btn primary sm" href="#/login">${t('nav.login')}</a>`}
     </div>
   </div>`);
 }
+async function doLogout() { await unregisterPush(); clearInterval(inbox.timer); inbox.menu = false; await signOut(auth); go('/'); }
+window.addEventListener('app:logout', doLogout); // من زرار الخروج في الصفحة الرئيسية
 topbar.addEventListener('click', async (e) => {
   if (e.target.closest('#fup')) setFont(+1); if (e.target.closest('#fdown')) setFont(-1);
   if (e.target.closest('#theme')) { setTheme(theme === 'dark' ? 'light' : 'dark'); e.target.closest('#theme').setAttribute('aria-pressed', String(theme === 'dark')); }
@@ -159,7 +163,7 @@ topbar.addEventListener('click', async (e) => {
     const key = { granted: 'push.enabled', denied: 'push.denied', unsupported: 'push.unsupported', not_configured: 'push.notConfigured' }[r] || 'push.error';
     toast(t(key), r !== 'granted'); renderTopbar();
   }
-  if (e.target.closest('#logout')) { await unregisterPush(); clearInterval(inbox.timer); inbox.menu = false; await signOut(auth); go('/'); }
+  if (e.target.closest('[data-logout]')) await doLogout();
   if (e.target.closest('.menu-item[href]')) { inbox.menu = false; renderTopbar(); }
 });
 

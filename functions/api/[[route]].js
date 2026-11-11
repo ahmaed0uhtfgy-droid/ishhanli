@@ -2,7 +2,7 @@
 // البيانات في Firestore، والمتصفح مالوش وصول مباشر ليها: كل قراءة وكتابة بتعدّي من هنا وبتتفلتر حسب دور المستخدم.
 import { HttpError, verifyIdToken, newId } from '../_lib/core.js';
 import { F, STAMP_KINDS, STAMP_PATH, now, rateLimit, rateTake, walletCredit, walletTx, userOut, fleetOut, withdrawalOut, txOut, disputeOut, loadOrder, hydrateOrder, orderUpdate, orderOut, auditLog } from '../_lib/db.js';
-import { randomBase32, verifyTotp, otpauthURL } from '../_lib/totp.js';
+import { randomBase32, totpMatch, otpauthURL } from '../_lib/totp.js';
 import { loadSettings, clearSettingsCache, sanitizeSettings, distanceKm, calcPrice, calcPassengerPrice, effectiveCommissionPct, canServe, cancelSplit, couponDiscount, haversineM, split, dueOf, lateKinds, guardOf, codPeriodOf, codPeriodBounds, codSplit, codStatements, codBlocked } from '../_lib/logic.js';
 import { dcDue, dcBlocked, dcPayable, dcFeesOn, kmFeeOf, vehicleOfSize, fineCredit } from '../_lib/logic.js';
 import { saveFile, ownFiles, readFile } from '../_lib/files.js';
@@ -124,6 +124,12 @@ async function need(c, roles, opts = {}) {
 }
 // حدّ محاولات التحقق بخطوتين (كود 6 أرقام): 8 محاولات كل 10 دقايق للمستخدم — بدونها التخمين محدود بالحد العام بس
 async function totpGate(c) { if (c.env.API_RATE_DISABLED === '1') return; await rateTake(c.env, 'totp', c.uid, 600e3, 8, 'too_many_attempts'); }
+/** يتحقق من كود TOTP ويمنع إعادة استخدامه: لازم عدّاد أحدث من آخر عدّاد اتقبل (totp_last). بيرجّع العدّاد عشان يتكتب مع الـpatch بتاع نفس العملية. */
+async function totpUse(u, code) {
+  const k = await totpMatch(u.totp_secret, code);
+  if (k == null || k <= Number(u.totp_last || 0)) throw new HttpError(400, 'totp_bad_code');
+  return k;
+}
 async function needCompany(c) { const u = await need(c, ['driver']); if (u.accountType !== 'company') throw new HttpError(403, 'company_only'); return u; }
 async function viewer(c) { // أي مستخدم مفعّل (أو أدمن) للقراءة
   const u = userOut(await F.get(c.env, `users/${c.uid}`));
@@ -429,8 +435,10 @@ const ROUTES = {
   },
 
   // ---------- التسجيل: فحص القائمة السوداء + منع التكرار (مستندات uniq بـ create = مضمونة ضد السباق) ----------
-  async register({ env, uid, token, body }) {
+  async register({ env, uid, token, body, request }) {
     if (await F.get(env, `users/${uid}`)) throw new HttpError(409, 'already_registered');
+    // حدّ تسجيل لكل IP (hash مش الـIP نفسه): 30/ساعة — عالي عشان شبكات الموبايل المشتركة (CGNAT) ما تمنعش ناس حقيقيين، ومنخفض كفاية لمنع إنشاء حسابات بالجملة
+    if (env.API_RATE_DISABLED !== '1') await rateTake(env, 'reg', (await sha256hex('ip:' + (request?.headers?.get('CF-Connecting-IP') || 'local'))).slice(0, 24), 3600e3, 30, 'too_many_requests');
     const role = body.role;
     if (!['customer', 'driver'].includes(role)) throw new HttpError(400, 'bad_role');
     const phone = phoneOf(body.phone);
@@ -1409,7 +1417,7 @@ const ROUTES = {
     const u = await F.get(c.env, `users/${c.uid}`);
     await need(c, ['admin'], { skip2fa: !u?.totp_enabled });
     const secret = randomBase32(32);
-    await F.run(c.env, [F.patch(`users/${c.uid}`, { totp_secret: secret, totp_enabled: false, totp_setup_at: now(), updated_at: now() }, u?._ut)]);
+    await F.run(c.env, [F.patch(`users/${c.uid}`, { totp_secret: secret, totp_enabled: false, totp_last: 0, totp_setup_at: now(), updated_at: now() }, u?._ut)]);
     return { secret, otpauth: otpauthURL(secret, u?.email || c.uid) };
   },
   async 'admin/2fa/enable'(c) {
@@ -1417,9 +1425,9 @@ const ROUTES = {
     const u = await F.get(c.env, `users/${c.uid}`);
     if (!u?.totp_secret) throw new HttpError(400, 'totp_no_setup');
     await totpGate(c);
-    if (!(await verifyTotp(u.totp_secret, c.body.code))) throw new HttpError(400, 'totp_bad_code');
+    const k = await totpUse(u, c.body.code);
     await F.run(c.env, [
-      F.patch(`users/${c.uid}`, { totp_enabled: true, totp_enabled_at: now(), updated_at: now() }, u._ut),
+      F.patch(`users/${c.uid}`, { totp_enabled: true, totp_enabled_at: now(), totp_last: k, updated_at: now() }, u._ut),
       auditLog(admin, 'admin.2fa.enable', { targetType: 'user', targetId: c.uid }),
     ]);
     return { ok: true, enabled: true };
@@ -1429,9 +1437,9 @@ const ROUTES = {
     const u = await F.get(c.env, `users/${c.uid}`);
     if (!u?.totp_enabled) throw new HttpError(400, 'totp_not_enabled');
     await totpGate(c);
-    if (!(await verifyTotp(u.totp_secret, c.body.code))) throw new HttpError(400, 'totp_bad_code');
+    await totpUse(u, c.body.code);
     await F.run(c.env, [
-      F.patch(`users/${c.uid}`, { totp_enabled: false, totp_secret: null, totp_disabled_at: now(), updated_at: now() }, u._ut),
+      F.patch(`users/${c.uid}`, { totp_enabled: false, totp_secret: null, totp_last: 0, totp_disabled_at: now(), updated_at: now() }, u._ut),
       auditLog(admin, 'admin.2fa.disable', { targetType: 'user', targetId: c.uid }),
     ]);
     return { ok: true, enabled: false };
@@ -1441,10 +1449,11 @@ const ROUTES = {
     const u = await F.get(c.env, `users/${c.uid}`);
     if (!u?.totp_enabled) throw new HttpError(400, 'totp_not_enabled');
     await totpGate(c);
-    if (!(await verifyTotp(u.totp_secret, c.body.code))) throw new HttpError(400, 'totp_bad_code');
+    const k = await totpUse(u, c.body.code);
     const token = newId() + newId();
     const exp = now() + 12 * 3600e3;
-    await F.run(c.env, [F.set(`admin_2fa/${token}`, { token, uid: c.uid, exp, at: now() })]);
+    try { await F.run(c.env, [F.patch(`users/${c.uid}`, { totp_last: k }, u._ut), F.set(`admin_2fa/${token}`, { token, uid: c.uid, exp, at: now() })]); }
+    catch (e) { if (e.code === 'conflict') throw new HttpError(409, 'conflict'); throw e; }
     return { token, exp };
   },
 
@@ -2290,14 +2299,19 @@ const ROUTES = {
 
 // =====================================================================
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
-  status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
+  status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' },
 });
 
 // تشخيص الربط: افتح /api/health بعد النشر. بيرجّع true/false فقط (بدون أي قيم سرية).
+let healthCache = { at: 0, key: '', v: null }; // كاش 30 ثانية: الـendpoint عام، وبدون كاش كل طلب كان بيعمل قراءة Firestore (استنزاف كوتا). المفتاح مشتق من الإعدادات (مش هوية الـenv) عشان لو الإعدادات اتغيّرت النتيجة القديمة ما تتعرضش
 async function health(env) {
+  const sa = String(typeof env.FIREBASE_SERVICE_ACCOUNT === 'string' ? env.FIREBASE_SERVICE_ACCOUNT : JSON.stringify(env.FIREBASE_SERVICE_ACCOUNT ?? ''));
+  const key = `${env.FIREBASE_PROJECT_ID}|${sa.length}|${sa.slice(-24)}|${env.PUSH_DISABLED ?? ''}`;
+  if (healthCache.v && healthCache.key === key && Date.now() - healthCache.at < 30e3) return healthCache.v;
   const out = { db: !!env.FIREBASE_SERVICE_ACCOUNT, firestore: false, push: pushEnabled(env), projectId: !!env.FIREBASE_PROJECT_ID && !String(env.FIREBASE_PROJECT_ID).startsWith('YOUR_') };
   if (out.db && out.projectId) out.firestore = await F.get(env, 'settings/pricing').then(() => true).catch(() => false); // null (مفيش مستند) برضو معناها إن Firestore شغّال
   out.ok = out.db && out.firestore && out.projectId;
+  healthCache = { at: Date.now(), key, v: out };
   return out;
 }
 

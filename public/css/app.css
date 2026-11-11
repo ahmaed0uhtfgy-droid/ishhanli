@@ -375,6 +375,9 @@ a.waybill:hover { transform: translateY(-2px); box-shadow: 0 8px 22px -10px rgba
 .badge { position: absolute; top: -4px; inset-inline-end: -4px; min-width: 19px; height: 19px; padding: 0 5px; border-radius: 999px; background: var(--brick); color: #fff; font-size: .7rem; line-height: 19px; text-align: center; border: 2px solid var(--asphalt); }
 .avatar-btn { display: inline-flex; align-items: center; gap: .5rem; height: 40px; padding: 0 .75rem 0 .3rem; border-radius: 999px; border: 1px solid rgba(255, 255, 255, .18); background: rgba(255, 255, 255, .06); color: #fff; cursor: pointer; font: inherit; }
 .avatar-btn:hover { background: rgba(255, 255, 255, .16); }
+.avatar-btn .chev { display: inline-grid; opacity: .75; }
+.tb-out { width: auto; padding: 0 .85rem; gap: .4rem; border-radius: 999px; }
+.tb-out-t { font-weight: 700; font-size: .85rem; }
 .avatar { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--line); color: var(--asphalt); font-weight: 800; }
 .topbar .who { color: #fff; font-weight: 600; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pop { position: absolute; top: calc(100% + 10px); inset-inline-end: 0; z-index: 1000; width: min(380px, 92vw); background: var(--paper); color: var(--ink); border: 1px solid var(--rule); border-radius: 16px; box-shadow: 0 18px 50px -16px rgba(0, 0, 0, .45); overflow: hidden; animation: pop-in .14s ease-out; }
@@ -398,6 +401,7 @@ a.waybill:hover { transform: translateY(-2px); box-shadow: 0 8px 22px -10px rgba
   .topbar .wrap { gap: .35rem .5rem; } .tb-tools { gap: .35rem; }
   .topbar .nav { order: 5; flex: 1 1 100%; margin: 0; padding-bottom: .15rem; }
   .topbar .who { display: none; } .avatar-btn { padding: 0 .3rem; }
+  .tb-out { width: 40px; padding: 0; } .tb-out-t { display: none; }
   .brand span { font-size: 1.05rem; }
   .pop { position: fixed; top: 70px; inset-inline: .6rem; width: auto; }
 }
