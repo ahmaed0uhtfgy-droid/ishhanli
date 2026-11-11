@@ -115,28 +115,41 @@ function renderTopbar() {
   const roleLinks = !p ? [] : p.role === 'customer' ? [['/customer', 'nav.myOrders'], ['/customer/new', 'nav.newOrder']]
     : p.role === 'driver' ? [['/driver', 'nav.available'], ['/driver/jobs', 'nav.jobs'], ...(state.settings?.dcEnabled === false ? [['/driver/wallet', 'nav.wallet']] : []), ...(state.settings?.dcEnabled === false ? [] : [['/driver/fees', 'nav.fees']]), ['/driver/dashboard', 'nav.dash']]
       : p.role === 'admin' ? [['/customer', 'nav.myOrders'], ['/customer/new', 'nav.newOrder'], ['/admin', 'nav.admin']] : [];
-  const links = [...roleLinks, ['/about', 'nav.about']];
+  const links = [...roleLinks, ...(p ? [] : [['/about', 'nav.about']])]; // «عن اشحنلي» للمسجّل جوه قايمة الحساب (الشريط أنضف)
   const canPush = p && (p.status === 'active' || p.role === 'admin') && pushSupport() === 'default';
   const bellPanel = !inbox.open ? '' : html`<div class="pop notif-pop" role="dialog" aria-label="${t('notif.title')}">
       <div class="pop-head"><b>${t('notif.title')}</b>${inbox.unread ? html`<button class="link-btn" id="markAll" type="button">${t('notif.markAll')}</button>` : ''}</div>
       <div class="pop-body">${inbox.items.length ? inbox.items.map((n) => html`<button type="button" class="notif-item ${n.read ? '' : 'unread'}" data-id="${n.id}" data-url="${n.url}"><span class="dot" aria-hidden="true"></span><span class="nt"><b>${n.title}</b><span>${n.body}</span><time>${ago(n.at)}</time></span></button>`) : html`<p class="pop-empty">${t('notif.empty')}</p>`}</div>
       ${canPush ? html`<div class="pop-foot"><button class="btn sm primary block" id="pushOn" type="button">${t('notif.enablePush')}</button></div>` : ''}
     </div>`;
+  const push = pushSupport(), chevL = raw('<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>');
+  const seg = (attr, cur, opts) => html`<span class="seg" role="group">${opts.map(([v, label]) => html`<button type="button" class="${v === cur ? 'on' : ''}" ${attr}="${v}" aria-pressed="${v === cur}">${label}</button>`)}</span>`;
   const userMenu = !inbox.menu ? '' : html`<div class="pop user-pop" role="menu">
-      <div class="pop-head"><b>${p.name}</b><span class="muted small">${t('auth.role' + (p.accountType === 'company' ? 'Company' : p.role === 'driver' ? 'Driver' : p.role === 'admin' ? 'Admin' : 'Customer'))}</span></div>
-      <a class="menu-item" role="menuitem" href="#/account">${t('nav.account')}</a>
-      <div class="menu-item fsz-row"><span>${t('ui.fontUp')}</span><span class="fsz"><button class="btn ghost sm" id="fdown" type="button" aria-label="${t('ui.fontDown')}">A−</button><button class="btn ghost sm" id="fup" type="button" aria-label="${t('ui.fontUp')}">A+</button></span></div>
-      <button class="menu-item danger" role="menuitem" data-logout type="button">${t('nav.logout')}</button>
+      <div class="pop-head um-head"><span class="avatar big" aria-hidden="true">${initial(p.name)}</span><span class="um-who"><b>${p.name}</b><span class="muted small">${t('auth.role' + (p.accountType === 'company' ? 'Company' : p.role === 'driver' ? 'Driver' : p.role === 'admin' ? 'Admin' : 'Customer'))}</span></span></div>
+      <div class="um-grp">${t('nav.account')}</div>
+      <a class="menu-item" role="menuitem" href="#/account"><span>${t('menu.profile')}<small>${t('menu.profileSub')}</small></span>${chevL}</a>
+      ${p.role === 'admin' ? html`<a class="menu-item" role="menuitem" href="#/account"><span>${t('menu.tfa')}<small>${t('menu.tfaSub')}</small></span>${chevL}</a>` : ''}
+      ${push === 'default' ? html`<div class="menu-item"><span>${t('menu.notif')}</span><button class="btn sm primary" id="pushOn" type="button">${t('menu.notifEnable')}</button></div>`
+        : push === 'granted' ? html`<div class="menu-item"><span>${t('menu.notif')}</span><span class="muted small">${t('menu.notifOn')}</span></div>` : ''}
+      <div class="um-grp">${t('menu.look')}</div>
+      <div class="menu-item fsz-row"><span>${t('menu.lang')}</span>${seg('data-set-lang', getLang(), [['ar', 'عربي'], ['en', 'EN']])}</div>
+      <div class="menu-item fsz-row"><span>${t('menu.theme')}</span>${seg('data-set-theme', theme, [['light', t('menu.light')], ['dark', t('menu.dark')]])}</div>
+      <div class="menu-item fsz-row"><span>${t('menu.font')}</span><span class="seg"><button type="button" id="fdown" aria-label="${t('ui.fontDown')}">A−</button><button type="button" id="fup" aria-label="${t('ui.fontUp')}">A+</button></span></div>
+      <div class="um-grp">${t('menu.info')}</div>
+      <a class="menu-item" role="menuitem" href="#/about">${t('nav.about')}</a>
+      <a class="menu-item" role="menuitem" href="#/rules">${t('footer.rules')}</a>
+      <a class="menu-item" role="menuitem" href="#/terms">${t('footer.terms')}</a>
+      <a class="menu-item" role="menuitem" href="#/privacy">${t('footer.privacy')}</a>
+      <button class="menu-item danger" role="menuitem" data-logout type="button">${raw(ICON.logout)}<span>${t('nav.logout')}</span></button>
     </div>`;
   render(topbar, html`<div class="wrap">
     <a class="brand" href="#/">${raw(LOGO)}<span>${t('brand')}</span></a>
     <nav class="nav" aria-label="main">${links.map(([href, k]) => html`<a href="#${href}" class="${here === '#' + href || (href === '/admin' && here.startsWith('#/admin')) ? 'on' : ''}${href === '/admin' ? ' nav-admin' : ''}">${t(k)}</a>`)}</nav>
-    <span class="grow"></span>
     <div class="tb-tools">
       ${p ? html`<div class="tb-act"><button class="icon-btn" id="inboxBtn" type="button" aria-haspopup="dialog" aria-expanded="${inbox.open}" aria-label="${t('notif.title')}">${raw(ICON.bell)}${inbox.unread ? html`<b class="badge">${inbox.unread > 9 ? '9+' : inbox.unread}</b>` : ''}</button>${bellPanel}</div>` : ''}
-      <button class="icon-btn" id="theme" type="button" aria-label="${t('ui.theme')}" aria-pressed="${theme === 'dark'}" title="${t('ui.theme')}">${raw(ICON.moon)}</button>
-      <button class="icon-btn lang-btn" id="lang" type="button" aria-label="${getLang() === 'ar' ? 'English' : 'العربية'}"><span aria-hidden="true">${getLang() === 'ar' ? 'EN' : 'ع'}</span></button>
-      ${p ? html`<div class="tb-user"><button class="avatar-btn" id="userBtn" type="button" aria-haspopup="menu" aria-expanded="${inbox.menu}" aria-label="${p.name}"><span class="avatar">${initial(p.name)}</span><span class="who">${p.name}</span><span class="chev">${raw(ICON.chev)}</span></button>${userMenu}</div><button class="icon-btn tb-out" data-logout type="button" title="${t('nav.logout')}" aria-label="${t('nav.logout')}">${raw(ICON.logout)}<span class="tb-out-t">${t('nav.logout')}</span></button>`
+      ${p ? '' : html`<button class="icon-btn" id="theme" type="button" aria-label="${t('ui.theme')}" aria-pressed="${theme === 'dark'}" title="${t('ui.theme')}">${raw(ICON.moon)}</button>
+      <button class="icon-btn lang-btn" id="lang" type="button" aria-label="${getLang() === 'ar' ? 'English' : 'العربية'}"><span aria-hidden="true">${getLang() === 'ar' ? 'EN' : 'ع'}</span></button>`}
+      ${p ? html`<div class="tb-user"><button class="avatar-btn" id="userBtn" type="button" aria-haspopup="menu" aria-expanded="${inbox.menu}" aria-label="${p.name}"><span class="avatar">${initial(p.name)}</span><span class="who">${p.name}</span><span class="chev">${raw(ICON.chev)}</span></button>${userMenu}</div>${inbox.menu ? html`<div class="scrim" aria-hidden="true"></div>` : ''}<button class="icon-btn tb-out" data-logout type="button" title="${t('nav.logout')}" aria-label="${t('nav.logout')}">${raw(ICON.logout)}<span class="tb-out-t">${t('nav.logout')}</span></button>`
         : state.user ? html`<button class="btn ghost sm" data-logout type="button">${t('nav.logout')}</button>` : html`<a class="btn primary sm" href="#/login">${t('nav.login')}</a>`}
     </div>
   </div>`);
@@ -148,6 +161,8 @@ topbar.addEventListener('click', async (e) => {
   if (e.target.closest('#theme')) { setTheme(theme === 'dark' ? 'light' : 'dark'); e.target.closest('#theme').setAttribute('aria-pressed', String(theme === 'dark')); }
   if (e.target.closest('#lang')) { setLang(getLang() === 'ar' ? 'en' : 'ar'); applyI18n(document); inbox.open = inbox.menu = false; renderTopbar(); route(); loadInbox(); }
   if (e.target.closest('#inboxBtn')) { inbox.open = !inbox.open; inbox.menu = false; renderTopbar(); if (inbox.open) loadInbox({ quiet: false }); return; }
+  const sl = e.target.closest('[data-set-lang]'); if (sl) { if (getLang() !== sl.dataset.setLang) { setLang(sl.dataset.setLang); applyI18n(document); inbox.open = false; renderTopbar(); route(); loadInbox(); } return; }
+  const st = e.target.closest('[data-set-theme]'); if (st) { setTheme(st.dataset.setTheme); renderTopbar(); return; }
   if (e.target.closest('#userBtn')) { inbox.menu = !inbox.menu; inbox.open = false; renderTopbar(); return; }
   if (e.target.closest('#markAll')) { try { await api('inbox/read', {}); } catch { /* تجاهل */ } inbox.items.forEach((n) => { n.read = true; }); inbox.unread = 0; renderTopbar(); return; }
   const it = e.target.closest('.notif-item');

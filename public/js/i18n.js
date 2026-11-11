@@ -15,7 +15,12 @@ const ROWS = [
   ['common.ok', 'تمام', 'OK'], ['common.close', 'إغلاق', 'Close'], ['common.save', 'حفظ التغييرات', 'Save changes'], ['common.search', 'بحث', 'Search'],
   ['common.done', 'تم', 'Done'], ['common.retry', 'إعادة المحاولة', 'Retry'], ['common.sure', 'متأكد؟', 'Are you sure?'], ['common.loading', 'جاري التحميل', 'Loading'],
   ['common.km', 'كم', 'km'], ['common.kg', 'كجم', 'kg'], ['common.egp', 'جنيه', 'EGP'], ['common.noRating', 'لا يوجد تقييم بعد', 'No rating yet'], ['common.edit', 'تعديل', 'Edit'], ['common.delete', 'حذف', 'Delete'],
-  ['nav.login', 'دخول', 'Log in'], ['nav.logout', 'خروج', 'Log out'], ['nav.myOrders', 'طلباتي', 'My orders'], ['nav.newOrder', 'طلب نقل جديد', 'New shipment'],
+  ['nav.login', 'دخول', 'Log in'], ['nav.logout', 'خروج', 'Log out'],
+  ['menu.profile', 'بياناتي وعناويني', 'Profile & addresses'], ['menu.profileSub', 'الاسم · العناوين المحفوظة · كلمة السر · كود الإحالة', 'Name · saved addresses · password · referral code'],
+  ['menu.tfa', 'التحقق بخطوتين', 'Two-step verification'], ['menu.tfaSub', 'حماية دخول الأدمن', 'Protects admin sign-in'],
+  ['menu.notif', 'الإشعارات', 'Notifications'], ['menu.notifOn', 'مفعّلة', 'On'], ['menu.notifEnable', 'تفعيل', 'Turn on'],
+  ['menu.look', 'الشكل واللغة', 'Appearance & language'], ['menu.lang', 'اللغة', 'Language'], ['menu.theme', 'المظهر', 'Theme'],
+  ['menu.light', 'فاتح', 'Light'], ['menu.dark', 'ليلي', 'Dark'], ['menu.font', 'حجم الخط', 'Text size'], ['menu.info', 'معلومات', 'Info'], ['nav.myOrders', 'طلباتي', 'My orders'], ['nav.newOrder', 'طلب نقل جديد', 'New shipment'],
   ['nav.available', 'الطلبات المتاحة', 'Available jobs'], ['nav.jobs', 'شغلي', 'My jobs'], ['nav.wallet', 'المحفظة', 'Wallet'], ['nav.admin', 'لوحة التحكم', 'Dashboard'], ['nav.account', 'حسابي', 'My account'],
 
   // ---------- الصفحة الرئيسية ----------

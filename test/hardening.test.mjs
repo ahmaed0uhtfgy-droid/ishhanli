@@ -63,4 +63,21 @@ const EVIL = '</script><script>alert(1)</script>';
   const lp = readFileSync(new URL('../public/js/landing.js', import.meta.url), 'utf8');
   check('الرئيسية: الزرار بيظهر بس لما المستخدم داخل', /out\.hidden = !user/.test(lp) && /app:logout/.test(lp));
 }
+// 6) قايمة الحساب الجديدة + الشريط المرتب + CSS
+{
+  const app = readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../public/css/app.css', import.meta.url), 'utf8');
+  const i18n = readFileSync(new URL('../public/js/i18n.js', import.meta.url), 'utf8');
+  for (const k of ['menu.profile', 'menu.profileSub', 'menu.tfa', 'menu.tfaSub', 'menu.notif', 'menu.notifOn', 'menu.notifEnable', 'menu.look', 'menu.lang', 'menu.theme', 'menu.light', 'menu.dark', 'menu.font', 'menu.info']) {
+    check(`ترجمة ${k} عربي+إنجليزي`, new RegExp(`\\['${k.replace('.', '\\.')}', '[^']+', '[^']+'\\]`).test(i18n));
+    check(`${k} مستخدم في القايمة`, app.includes(`t('${k}')`));
+  }
+  check('قايمة الحساب: لغة + مظهر + خط + معلومات', /data-set-lang/.test(app) && /data-set-theme/.test(app) && /id="fup"/.test(app) && /href="#\/privacy"/.test(app) && /href="#\/rules"/.test(app));
+  check('2FA في القايمة للأدمن بس', /p\.role === 'admin' \? html`<a class="menu-item" role="menuitem" href="#\/account">/.test(app));
+  check('عن اشحنلي للمسجّل في القايمة مش الشريط', /\.\.\.\(p \? \[\] : \[\['\/about'/.test(app));
+  check('الوضع الليلي واللغة في الشريط للزائر بس', /\$\{p \? '' : html`<button class="icon-btn" id="theme"/.test(app));
+  check('زرار الخروج: صف أفقي (مش أيقونة فوق نص)', /\.icon-btn\.tb-out \{ display: inline-flex; flex-direction: row;/.test(css) && /white-space: nowrap/.test(css));
+  check('CSS متوازن الأقواس', (css.match(/\{/g) || []).length === (css.match(/\}/g) || []).length);
+  check('موبايل: القايمة بتتفتح من تحت (sheet)', /\.user-pop \{ position: fixed; z-index: 1000; top: auto; bottom: 0;/.test(css));
+}
 console.log('✅ hardening tests passed');

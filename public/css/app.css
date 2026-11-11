@@ -408,6 +408,55 @@ a.waybill:hover { transform: translateY(-2px); box-shadow: 0 8px 22px -10px rgba
 @media (prefers-reduced-motion: reduce) { .pop { animation: none; } }
 .fsz-row .fsz { display: inline-flex !important; }
 
+/* ===== توحيد الشكل مع الصفحة التعريفية (v23): شريط فاتح، قوائم كبسولات، كروت ناعمة ===== */
+.topbar { background: var(--mist); color: var(--ink); border-bottom: 1px solid var(--rule); box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.topbar .wrap { min-height: 70px; gap: .9rem; }
+.topbar .grow { display: none; }
+.brand { color: var(--ink); font-weight: 900; font-size: 1.45rem; }
+.topbar .nav { margin-inline: auto; padding: 5px; gap: .2rem; background: var(--paper); border: 1px solid var(--rule); border-radius: 999px; }
+.topbar .nav a { color: var(--ink); padding: .5rem 1.15rem; }
+.topbar .nav a:hover { background: var(--line-soft); color: var(--ink); }
+.topbar .nav a.on { background: var(--btn); color: #fff; }
+.topbar .nav a.nav-admin { background: var(--line-soft); color: #7a5c1f; } .topbar .nav a.nav-admin.on { background: var(--btn); color: #fff; }
+html[data-theme="dark"] .topbar .nav a.nav-admin { color: #F1DFAF; }
+.icon-btn { width: 44px; height: 44px; border: 1px solid var(--rule); background: var(--paper); color: var(--ink); }
+.icon-btn:hover { background: var(--line-soft); }
+.badge { border-color: var(--mist); }
+.avatar-btn { height: 44px; border: 2px solid var(--line); background: var(--paper); color: var(--ink); padding: 0 .8rem 0 .3rem; }
+.avatar-btn:hover { background: var(--line-soft); } .topbar .who { color: var(--ink); }
+.avatar { background: var(--line); color: #fff; } .avatar.big { width: 46px; height: 46px; font-size: 1.2rem; flex: 0 0 auto; }
+.icon-btn.tb-out { display: inline-flex; flex-direction: row; align-items: center; justify-content: center; width: auto; height: 44px; padding: 0 1rem; gap: .45rem; border: 2px solid var(--ink); background: transparent; border-radius: 999px; white-space: nowrap; }
+.icon-btn.tb-out:hover { background: var(--ink); color: var(--mist); }
+.tb-out-t { font-weight: 800; font-size: .9rem; white-space: nowrap; }
+.topbar .btn.ghost { --fg: var(--ink); border-color: var(--rule); }
+.tb-tools { gap: .55rem; }
+/* قايمة الحساب */
+.user-pop { width: min(350px, 92vw); max-height: calc(100vh - 96px); overflow-y: auto; border-radius: 22px; }
+.um-head { justify-content: flex-start; gap: .8rem; padding: 1rem 1.1rem; background: var(--mist); }
+.um-who { display: grid; line-height: 1.35; } .um-who b { font-size: 1.05rem; }
+.um-grp { padding: .8rem 1.1rem .25rem; font-size: .78rem; font-weight: 800; color: #7a5c1f; }
+html[data-theme="dark"] .um-grp { color: #E3C57F; }
+.menu-item small { display: block; font-weight: 400; font-size: .78rem; color: var(--slate); }
+.menu-item.danger { margin: .6rem .9rem .9rem; width: auto; justify-content: center; gap: .5rem; border: 0; border-radius: 14px; background: var(--brick-soft); font-weight: 800; padding: .75rem; }
+.seg { display: inline-flex; padding: 3px; border: 1px solid var(--rule); border-radius: 999px; background: var(--mist); }
+.seg button { border: 0; background: transparent; color: var(--ink); font: 600 .85rem var(--font-body); padding: .3rem .85rem; min-width: 40px; min-height: 34px; border-radius: 999px; cursor: pointer; }
+.seg button.on { background: var(--btn); color: #fff; }
+.scrim { display: none; }
+/* أزرار وكروت: نفس لغة الصفحة التعريفية */
+.btn { border-radius: 999px; padding-inline: 1.4rem; } .btn.block { border-radius: 999px; }
+.card { border-radius: 20px; }
+input, select, textarea { border-radius: 12px; }
+footer.site { position: relative; margin-top: 3rem; padding-top: 2.4rem; }
+footer.site::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 14px; background: var(--btn); border-bottom: 3px dashed var(--line-soft); }
+@media (max-width: 760px) {
+  .topbar .wrap { min-height: 0; }
+  .topbar .nav { border-radius: 16px; }
+  .icon-btn.tb-out { display: none; }
+  .scrim { display: block; position: fixed; inset: 0; background: rgba(15, 46, 58, .45); z-index: 990; }
+  .user-pop { position: fixed; z-index: 1000; top: auto; bottom: 0; inset-inline: 0; width: auto; max-height: 82vh; border-radius: 24px 24px 0 0; animation: sheet-in .18s ease-out; }
+}
+@keyframes sheet-in { from { transform: translateY(24px); opacity: .6; } to { transform: none; opacity: 1; } }
+
 /* ---------- لوحة الأدمن: تنقّل مجمّع + صفحات العملاء/السواقين/الشركات ---------- */
 .gnav { display: grid; grid-template-columns: repeat(5, 1fr); gap: .5rem; margin-bottom: .75rem; }
 .gnav a { position: relative; display: flex; align-items: center; justify-content: center; gap: .5rem; min-height: 52px; padding: .5rem .4rem; border-radius: 12px; background: var(--paper); color: var(--ink); border: 1.5px solid var(--rule); text-decoration: none; font-weight: 700; }
