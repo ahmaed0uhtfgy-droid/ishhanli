@@ -68,16 +68,28 @@ const EVIL = '</script><script>alert(1)</script>';
   const app = readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../public/css/app.css', import.meta.url), 'utf8');
   const i18n = readFileSync(new URL('../public/js/i18n.js', import.meta.url), 'utf8');
-  for (const k of ['menu.profile', 'menu.profileSub', 'menu.tfa', 'menu.tfaSub', 'menu.notif', 'menu.notifOn', 'menu.notifEnable', 'menu.look', 'menu.lang', 'menu.theme', 'menu.light', 'menu.dark', 'menu.font', 'menu.info']) {
+  for (const k of ['menu.profile', 'menu.profileSub', 'menu.notif', 'menu.notifOn', 'menu.notifEnable', 'menu.look', 'menu.lang', 'menu.theme', 'menu.light', 'menu.dark', 'menu.font', 'menu.info']) {
     check(`ترجمة ${k} عربي+إنجليزي`, new RegExp(`\\['${k.replace('.', '\\.')}', '[^']+', '[^']+'\\]`).test(i18n));
     check(`${k} مستخدم في القايمة`, app.includes(`t('${k}')`));
   }
   check('قايمة الحساب: لغة + مظهر + خط + معلومات', /data-set-lang/.test(app) && /data-set-theme/.test(app) && /id="fup"/.test(app) && /href="#\/privacy"/.test(app) && /href="#\/rules"/.test(app));
-  check('2FA في القايمة للأدمن بس', /p\.role === 'admin' \? html`<a class="menu-item" role="menuitem" href="#\/account">/.test(app));
+  check('صف التحقق بخطوتين اتشال من القايمة (الميزة نفسها لسه في صفحة الحساب)', !/t\('menu\.tfa'\)/.test(app) && /tfaBody/.test(readFileSync(new URL('../public/js/pages/account.js', import.meta.url), 'utf8')));
+  check('عناصر القايمة class منفصل (segp) مش .seg القديم', /class="segp"/.test(app) && !/class="seg"/.test(app) && /\.segp \{/.test(css));
+  check('زرار الخروج على الشاشة العريضة: عرض كامل في القايمة', /\.menu-item\.danger \{[^}]*width: calc\(100% - 1\.8rem\)/.test(css));
+  check('الإغلاق خارج القايمة بيستخدم composedPath (مش closest على عنصر اتشال)', /composedPath\(\)\.some/.test(app));
   check('عن اشحنلي للمسجّل في القايمة مش الشريط', /\.\.\.\(p \? \[\] : \[\['\/about'/.test(app));
   check('الوضع الليلي واللغة في الشريط للزائر بس', /\$\{p \? '' : html`<button class="icon-btn" id="theme"/.test(app));
   check('زرار الخروج: صف أفقي (مش أيقونة فوق نص)', /\.icon-btn\.tb-out \{ display: inline-flex; flex-direction: row;/.test(css) && /white-space: nowrap/.test(css));
   check('CSS متوازن الأقواس', (css.match(/\{/g) || []).length === (css.match(/\}/g) || []).length);
   check('موبايل: القايمة بتتفتح من تحت (sheet)', /\.user-pop \{ position: fixed; z-index: 1000; top: auto; bottom: 0;/.test(css));
+}
+// 7) شريط أخف + فوتر لآخر الصفحة (v24)
+{
+  const app = readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../public/css/app.css', import.meta.url), 'utf8');
+  check('زرار «طلب نقل جديد» في الشريط له class nav-cta', /href === '\/customer\/new' \? ' nav-cta'/.test(app) && /\.topbar \.nav a\.nav-cta \{/.test(css));
+  check('الصفحة الحالية في الشريط عليها خط ذهبي', /\.topbar \.nav a\.on::after \{/.test(css));
+  check('الفوتر بيلزق في آخر الصفحة (body flex + main flex:1)', /body \{ display: flex; flex-direction: column; \}/.test(css) && /main#view \{ flex: 1 0 auto;/.test(css));
+  check('زرار رأس طلباتي بيختفي لما القايمة فاضية', /\.page-head:has\(~ #list \.empty\) > \.btn \{ display: none; \}/.test(css));
 }
 console.log('✅ hardening tests passed');

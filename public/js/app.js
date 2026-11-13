@@ -107,7 +107,9 @@ function startInbox() {
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) loadInbox(); });
 const closePops = () => { if (inbox.open || inbox.menu) { inbox.open = inbox.menu = false; renderTopbar(); } };
-document.addEventListener('click', (e) => { if (!e.target.closest('#topbar .tb-act, #topbar .tb-user')) closePops(); });
+// ملاحظة مهمة: render() بيستبدل innerHTML، فبعد ما معالج الشريط يعيد الرسم الزرار المضغوط بيتشال من الـDOM، و e.target.closest('#topbar …') بيرجّع null
+// فكانت القايمة بتتقفل في نفس الضغطة (قايمة الحساب والجرس مكانوش بيتفتحوا). composedPath بيتحسب وقت الضغط فبيفضل صحيح.
+document.addEventListener('click', (e) => { if (!e.composedPath().some((n) => n.classList?.contains('tb-act') || n.classList?.contains('tb-user'))) closePops(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePops(); });
 
 function renderTopbar() {
@@ -123,18 +125,17 @@ function renderTopbar() {
       ${canPush ? html`<div class="pop-foot"><button class="btn sm primary block" id="pushOn" type="button">${t('notif.enablePush')}</button></div>` : ''}
     </div>`;
   const push = pushSupport(), chevL = raw('<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>');
-  const seg = (attr, cur, opts) => html`<span class="seg" role="group">${opts.map(([v, label]) => html`<button type="button" class="${v === cur ? 'on' : ''}" ${attr}="${v}" aria-pressed="${v === cur}">${label}</button>`)}</span>`;
+  const seg = (attr, cur, opts) => html`<span class="segp" role="group">${opts.map(([v, label]) => html`<button type="button" class="${v === cur ? 'on' : ''}" ${attr}="${v}" aria-pressed="${v === cur}">${label}</button>`)}</span>`;
   const userMenu = !inbox.menu ? '' : html`<div class="pop user-pop" role="menu">
       <div class="pop-head um-head"><span class="avatar big" aria-hidden="true">${initial(p.name)}</span><span class="um-who"><b>${p.name}</b><span class="muted small">${t('auth.role' + (p.accountType === 'company' ? 'Company' : p.role === 'driver' ? 'Driver' : p.role === 'admin' ? 'Admin' : 'Customer'))}</span></span></div>
       <div class="um-grp">${t('nav.account')}</div>
       <a class="menu-item" role="menuitem" href="#/account"><span>${t('menu.profile')}<small>${t('menu.profileSub')}</small></span>${chevL}</a>
-      ${p.role === 'admin' ? html`<a class="menu-item" role="menuitem" href="#/account"><span>${t('menu.tfa')}<small>${t('menu.tfaSub')}</small></span>${chevL}</a>` : ''}
       ${push === 'default' ? html`<div class="menu-item"><span>${t('menu.notif')}</span><button class="btn sm primary" id="pushOn" type="button">${t('menu.notifEnable')}</button></div>`
         : push === 'granted' ? html`<div class="menu-item"><span>${t('menu.notif')}</span><span class="muted small">${t('menu.notifOn')}</span></div>` : ''}
       <div class="um-grp">${t('menu.look')}</div>
       <div class="menu-item fsz-row"><span>${t('menu.lang')}</span>${seg('data-set-lang', getLang(), [['ar', 'عربي'], ['en', 'EN']])}</div>
       <div class="menu-item fsz-row"><span>${t('menu.theme')}</span>${seg('data-set-theme', theme, [['light', t('menu.light')], ['dark', t('menu.dark')]])}</div>
-      <div class="menu-item fsz-row"><span>${t('menu.font')}</span><span class="seg"><button type="button" id="fdown" aria-label="${t('ui.fontDown')}">A−</button><button type="button" id="fup" aria-label="${t('ui.fontUp')}">A+</button></span></div>
+      <div class="menu-item fsz-row"><span>${t('menu.font')}</span><span class="segp"><button type="button" id="fdown" aria-label="${t('ui.fontDown')}">A−</button><button type="button" id="fup" aria-label="${t('ui.fontUp')}">A+</button></span></div>
       <div class="um-grp">${t('menu.info')}</div>
       <a class="menu-item" role="menuitem" href="#/about">${t('nav.about')}</a>
       <a class="menu-item" role="menuitem" href="#/rules">${t('footer.rules')}</a>
@@ -144,7 +145,7 @@ function renderTopbar() {
     </div>`;
   render(topbar, html`<div class="wrap">
     <a class="brand" href="#/">${raw(LOGO)}<span>${t('brand')}</span></a>
-    <nav class="nav" aria-label="main">${links.map(([href, k]) => html`<a href="#${href}" class="${here === '#' + href || (href === '/admin' && here.startsWith('#/admin')) ? 'on' : ''}${href === '/admin' ? ' nav-admin' : ''}">${t(k)}</a>`)}</nav>
+    <nav class="nav" aria-label="main">${links.map(([href, k]) => html`<a href="#${href}" class="${here === '#' + href || (href === '/admin' && here.startsWith('#/admin')) ? 'on' : ''}${href === '/admin' ? ' nav-admin' : ''}${href === '/customer/new' ? ' nav-cta' : ''}">${t(k)}</a>`)}</nav>
     <div class="tb-tools">
       ${p ? html`<div class="tb-act"><button class="icon-btn" id="inboxBtn" type="button" aria-haspopup="dialog" aria-expanded="${inbox.open}" aria-label="${t('notif.title')}">${raw(ICON.bell)}${inbox.unread ? html`<b class="badge">${inbox.unread > 9 ? '9+' : inbox.unread}</b>` : ''}</button>${bellPanel}</div>` : ''}
       ${p ? '' : html`<button class="icon-btn" id="theme" type="button" aria-label="${t('ui.theme')}" aria-pressed="${theme === 'dark'}" title="${t('ui.theme')}">${raw(ICON.moon)}</button>

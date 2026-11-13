@@ -17,7 +17,6 @@ const ROWS = [
   ['common.km', 'كم', 'km'], ['common.kg', 'كجم', 'kg'], ['common.egp', 'جنيه', 'EGP'], ['common.noRating', 'لا يوجد تقييم بعد', 'No rating yet'], ['common.edit', 'تعديل', 'Edit'], ['common.delete', 'حذف', 'Delete'],
   ['nav.login', 'دخول', 'Log in'], ['nav.logout', 'خروج', 'Log out'],
   ['menu.profile', 'بياناتي وعناويني', 'Profile & addresses'], ['menu.profileSub', 'الاسم · العناوين المحفوظة · كلمة السر · كود الإحالة', 'Name · saved addresses · password · referral code'],
-  ['menu.tfa', 'التحقق بخطوتين', 'Two-step verification'], ['menu.tfaSub', 'حماية دخول الأدمن', 'Protects admin sign-in'],
   ['menu.notif', 'الإشعارات', 'Notifications'], ['menu.notifOn', 'مفعّلة', 'On'], ['menu.notifEnable', 'تفعيل', 'Turn on'],
   ['menu.look', 'الشكل واللغة', 'Appearance & language'], ['menu.lang', 'اللغة', 'Language'], ['menu.theme', 'المظهر', 'Theme'],
   ['menu.light', 'فاتح', 'Light'], ['menu.dark', 'ليلي', 'Dark'], ['menu.font', 'حجم الخط', 'Text size'], ['menu.info', 'معلومات', 'Info'], ['nav.myOrders', 'طلباتي', 'My orders'], ['nav.newOrder', 'طلب نقل جديد', 'New shipment'],
