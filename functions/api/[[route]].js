@@ -16,6 +16,13 @@ const str = (v, min, max, code = 'bad_input') => {
   if (s.length < min || s.length > max) throw new HttpError(400, code);
   return s;
 };
+// منع تكرار الطلب: المفتاح من العميل + uid => نفس معرّف الطلب دايماً (ضغطة مرتين/إعادة محاولة ما تعملش طلب تاني)
+const idemId = async (uid, key) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${uid}:${key}`)))].map((x) => x.toString(16).padStart(2, '0')).join('').slice(0, 20);
+const dupOrder = async (env, id, uid) => {
+  const row = await F.get(env, `orders/${id}`); if (!row || row.customer_id !== uid) return null;
+  let d = {}; try { d = JSON.parse(row.data || '{}'); } catch { /* ignore */ }
+  return { id, price: row.price, prepay: d.payMode === 'before', discount: d.discount || 0, amountDue: d.amountDue ?? row.price, duplicate: true };
+};
 const int = (v, min, max, code = 'bad_input') => {
   const n = Math.floor(Number(v));
   if (!Number.isFinite(n) || n < min || n > max) throw new HttpError(400, code);
@@ -665,6 +672,7 @@ const ROUTES = {
     const prev = await F.get(c.env, `live_locations/${o.id}`), t = now();
     const moved = !prev || haversineM(p, { lat: prev.lat, lng: prev.lng }) > 100;
     const trailDue = (!prev?.trail_at || t - prev.trail_at >= 60000) && (prev?.trail_n || 0) < 600; // نقطة مسار كل دقيقة (دليل في النزاعات)
+    if (prev && !moved && !trailDue && t - prev.at < 45000) return { ok: true, skipped: true }; // واقف مكانه: مفيش كتابة جديدة (بنوفّر كتابات Firestore المجانية)
     await F.run(c.env, [
       F.patch(`live_locations/${o.id}`, { order_id: o.id, lat: p.lat, lng: p.lng, acc: int(c.body.acc ?? 0, 0, 100000), at: t, ...(moved ? { moved_at: t } : {}), ...(trailDue ? { trail_at: t, trail_n: (prev?.trail_n || 0) + 1 } : {}) }),
       ...(trailDue ? [F.create(`order_trail/${o.id}_${t}`, { order_id: o.id, lat: p.lat, lng: p.lng, at: t })] : []),
@@ -677,6 +685,8 @@ const ROUTES = {
     const u = await need(c, ['customer']);
     const s = await loadSettings(c.env), b = c.body;
     if (u.role === 'customer' && !u.phone) throw new HttpError(400, 'phone_required'); // رقم التواصل إجباري (السواق محتاج يوصل للعميل)
+    const key = typeof b.key === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(b.key) ? b.key : null, keyedId = key ? await idemId(c.uid, key) : null;
+    if (keyedId) { const dup = await dupOrder(c.env, keyedId, c.uid); if (dup) return dup; } // نفس الطلب اتبعت قبل كده: نرجّع نتيجته من غير ما نعمل طلب تاني
     const mine = await F.query(c.env, 'orders', { eq: { customer_id: c.uid }, limit: 100 });
     const mineOpen = mine.filter((r) => ['open', 'accepted', 'payment_review', 'awaiting_payment'].includes(r.status)).length;
     if (mineOpen >= 10) throw new HttpError(429, 'too_many_open');
@@ -726,7 +736,7 @@ const ROUTES = {
     const cp = code ? await applyCoupon(c.env, code, price, c.uid) : null;
     const discount = cp ? cp.discount : 0;
     const amountDue = price - discount;
-    const id = newId(), t = now();
+    const id = keyedId || newId(), t = now();
     const direct = s.dcEnabled === true; // الدفع المباشر: العميل بيدفع للسواق، مفيش دفع على المنصة
     const prepay = !direct && (trip || b.prepay === true), first = prepay ? 'awaiting_payment' : 'open'; // الركاب دايماً دفع مقدم؛ البضاعة باختيار العميل (إلا في الدفع المباشر)
     const data = {
@@ -734,7 +744,7 @@ const ROUTES = {
       description: trip ? str(b.description ?? '', 0, 500) : str(b.description ?? '', 10, 1000), photos, pickup, dropoff, distanceKm: d.km, distanceSource: d.source,
       graceMin, deliveryAt, guard, priceOriginal: price, couponCode: code || null, discount, amountDue, instant: prepay ? true : b.instant !== false, payMode: direct ? 'direct' : prepay ? 'before' : 'after', direct, ...(direct && fineDue > 0 ? { fineDue } : {}), commissionPct: s.commissionPct, log: [{ ...L(first, c.uid), at: t }],
     };
-    await F.run(c.env, [
+    try { await F.run(c.env, [
       F.create(`orders/${id}`, { id, customer_id: c.uid, driver_id: null, status: first, escrow_status: 'none', price, commission: null, driver_net: null, customer_refund: null, scheduled_at: when.getTime(), created_at: t, updated_at: t, version: 1, data: JSON.stringify(data) }),
       F.inc(`daily/${dayKey(t)}`, { n: 1 }, { day: dayKey(t) }), // عدّاد يومي للإحصائيات (من غير ما نقرا كل الطلبات)
       ...(code ? [ // استهلاك الكوبون (إجمالي + لكل مستخدم) في نفس الـ commit بتاع الطلب
@@ -742,7 +752,10 @@ const ROUTES = {
         F.inc(`coupons/${code}`, { used_count: 1 }, { updated_at: t }, cp.coupon.max_uses > 0 ? cp.coupon._ut : undefined),
         { ...F.inc(`coupons/${code}/uses/${c.uid}`, { n: 1 }, { uid: c.uid, code, updated_at: t }), ...(cp.coupon.per_user > 0 && cp.discount > 0 ? { pre: cp.use ? { updateTime: cp.use._ut } : { exists: false } } : {}) },
       ] : []),
-    ]);
+    ]); } catch (e) { // طلبين متزامنين بنفس المفتاح: التاني بيفشل في commit ونرجّع الطلب الأول
+      if (keyedId && e?.status === 409) { const dup = await dupOrder(c.env, keyedId, c.uid); if (dup) return dup; }
+      throw e;
+    }
     if (!prepay) bg(c, dispatchNewOrder(c.env, { id, ...spec, pickup, dropoff, price }, s)); // المدفوع مقدماً بيتبعت للسواقين بعد تأكيد الدفع
     return { id, price, prepay, discount, amountDue };
   },
@@ -846,7 +859,9 @@ const ROUTES = {
       return { online: !!r?.online, seenAt: r?.seen_at || null };
     }
     const online = c.body.online === true;
-    const data = { uid: c.uid, online, seen_at: now() };
+    const ts = Number.isFinite(+c.body.ts) && +c.body.ts > 0 ? Math.floor(+c.body.ts) : null; // توقيت الجهاز: رسالة أقدم من اللي اتسجّل ما تمسحش الأحدث
+    if (ts) { const prev = await F.get(c.env, `driver_presence/${c.uid}`); if (prev?.client_ts > ts) return { online: !!prev.online, stale: true }; }
+    const data = { uid: c.uid, online, seen_at: now(), ...(ts ? { client_ts: ts } : {}) };
     if (c.body.lat != null) { const p = point(c.body, false); data.lat = p.lat; data.lng = p.lng; } // من غير إحداثيات: بنحتفظ بآخر موقع معروف
     await F.run(c.env, [F.patch(`driver_presence/${c.uid}`, data)]);
     return { online };
