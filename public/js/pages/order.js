@@ -7,6 +7,8 @@ import { createMap, pinIcon, drawRoute, gmapsLink, distKm } from '../map.js';
 import { vehicleSvg } from '../vehicles.js';
 import { uploadImage, hydrate, imgTag } from '../storage.js';
 import { moneySteps } from '../money.js';
+import { pushSupport, enablePush } from '../push.js';
+import { showNextSteps, nextStepsCard } from './nextsteps.js';
 
 const ACTIVE = ['heading_pickup', 'picked_up', 'in_transit'];
 const HELD = ['paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered'];
@@ -394,7 +396,7 @@ export function renderOrder(el, id) {
     role = state.profile.role === 'admin' && o.customerId === uid ? 'customer' : state.profile.role; // الأدمن على طلب هو عمله بيتعامل كعميل
     render($('#title', el), html`${t('order.title')} ${orderNo(o.id)} ${stamp(o.status, o.service, o.direct)}`);
     render($('#rlink', el), RECEIPT_STATUS.includes(o.status) ? html`<a class="btn ghost sm" href="#/receipt/${o.id}">${t('receipt.open')}</a>` : '');
-    render(left, html`${stepsHtml(o)}${driverCard(o)}<div id="actions">${actionsHtml(o)}${handlerHtml(o)}</div>${codeHtml(o)}${tripHtml(o)}${guardHtml(o)}${timesHtml(o)}${o.late ? html`<div class="action bad"><p>${t('trip.late')}</p></div>` : ''}${role === 'admin' ? html`<div class="row"><button class="btn ghost sm" type="button" data-act="evidence">${t('evidence.btn')}</button></div>` : ''}${moneyHtml(o)}${shareHtml(o)}${reorderHtml(o)}${safetyHtml(o)}${detailsHtml(o)}`);
+    render(left, html`${stepsHtml(o)}${showNextSteps(o, role) ? nextStepsCard(pushSupport()) : ''}${driverCard(o)}<div id="actions">${actionsHtml(o)}${handlerHtml(o)}</div>${codeHtml(o)}${tripHtml(o)}${guardHtml(o)}${timesHtml(o)}${o.late ? html`<div class="action bad"><p>${t('trip.late')}</p></div>` : ''}${role === 'admin' ? html`<div class="row"><button class="btn ghost sm" type="button" data-act="evidence">${t('evidence.btn')}</button></div>` : ''}${moneyHtml(o)}${shareHtml(o)}${reorderHtml(o)}${safetyHtml(o)}${detailsHtml(o)}`);
     hydrate(left); ensureCode(o); startClock();
     const st = $('#stars', left); if (st) getStars = starsInput(st);
     drawMap(o); syncTracking(o); syncChat(o);
@@ -509,6 +511,7 @@ export function renderOrder(el, id) {
       if (navigator.share) await navigator.share({ title: t('brand'), text: t('track.shareText'), url }).catch(() => {});
       else { await navigator.clipboard?.writeText(url); toast(t('track.copied')); }
     },
+    async enablePush() { const s = await enablePush({ ask: true }).catch(() => 'error'); toast(t(s === 'granted' ? 'push.enabled' : s === 'denied' ? 'push.denied' : 'push.error')); if (order) paint(order); }, // بنستخدم دالة push.js الموجودة
     async unshareTrack() { await api('orders/unshare', { orderId: id }); toast(t('track.stopped')); },
     dispute: () => openDispute(),
     reorder() { state.reorder = order; location.hash = '#/customer/new'; },

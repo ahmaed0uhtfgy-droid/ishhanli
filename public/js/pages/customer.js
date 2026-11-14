@@ -7,6 +7,7 @@ import { createMap, pinIcon, geocode, reverse, drawRoute } from '../map.js';
 import { uploadImage } from '../storage.js';
 import { recommendVehicle, VEHICLE_KEYS } from '../estimate.js';
 import { vehicleSvg } from '../vehicles.js';
+import { welcomeCard } from './welcome.js';
 
 // غراماتي: الغرامة المستحقة (بتتحصّل مع الطلب الجاي) + مطالبات التعويض: «عوّضت السواق» أو «اعتراض» خلال المهلة
 const finesCustomer = (f) => !f || !(f.due > 0 || f.claims.length) ? '' : html`<section class="card stack"><h3>${t('fine.title')}</h3>
@@ -32,7 +33,7 @@ export function renderCustomerHome(el) {
   const stop = gpoll(['orders'], () => api('orders/list', state.profile.role === 'admin' ? { scope: 'mine' } : {}), 15000, ({ orders }) => {
     for (const o of orders) { const p = prev.get(o.id); if (!first && p && p !== o.status) toast(`${orderNo(o.id)} — ${t('status.' + o.status)}`); prev.set(o.id, o.status); }
     first = false;
-    render(list, orders.length ? html`${orders.map((o) => waybill(o))}` : html`<div class="empty"><p>${t('customer.empty')}</p><a class="btn primary" href="#/customer/new">${t('nav.newOrder')}</a></div>`);
+    render(list, orders.length ? html`${orders.map((o) => waybill(o))}` : welcomeCard());
   }, { dedupe: true, onError: (e) => toast(errMsg(e), true) });
   return () => { el.removeEventListener('click', onFine); if (typeof stop === 'function') stop(); };
 }
@@ -228,6 +229,7 @@ export function renderNewOrder(el) {
     render($('#previews', el), html`${urls.map((u) => html`<img src="${u}" alt="">`)}`);
   });
 
+  const idemKey = crypto.randomUUID().replace(/-/g, ''); // مفتاح منع تكرار الطلب: ضغطة مرتين أو إعادة محاولة بنفس المفتاح = نفس الطلب
   f.addEventListener('submit', (e) => {
     e.preventDefault(); err.textContent = '';
     const files = [...f.photos.files].slice(0, 5);
@@ -242,14 +244,14 @@ export function renderNewOrder(el) {
         for (let i = 0; !trip && i < files.length; i++) { $('#progress', el).textContent = `${t('auth.uploading')} ${i + 1}/${files.length}`; refs.push(await uploadImage(files[i], 'cargo')); }
         $('#progress', el).textContent = t('auth.saving');
         const r = await api('orders/create', {
-          pickup: pts.pickup, dropoff: pts.dropoff,
+          key: idemKey, pickup: pts.pickup, dropoff: pts.dropoff,
           prepay: !trip && !!f.prepay?.checked,
           ...(trip ? { service: 'passengers', vehicleClass: f.vehicleClass.value, passengers: f.passengers.value } : { service: 'cargo', category: f.category.value, size: f.size.value, weightKg: f.weightKg.value, itemsCount: f.itemsCount.value || 1, declaredValue: f.declaredValue.value || 0, ...(vpick ? { vehiclePick: vpick } : {}), ...(f.companion ? { companion: f.companion.checked } : {}), ...(f.codAmount && f.codAmount.value ? { codAmount: f.codAmount.value } : {}) }),
           description: trip ? f.descriptionTrip.value : f.description.value.trim(), photos: refs, instant: !(f.offersOnly && f.offersOnly.checked), scheduledAt: new Date(f.scheduledAt.value).toISOString(),
           ...(f.graceMin.value !== '' ? { graceMin: f.graceMin.value } : {}), ...(f.deliveryAt.value ? { deliveryAt: new Date(f.deliveryAt.value).toISOString() } : {}), // تتبّع التأخير (اختياري)
           coupon: f.coupon.value.trim(),
         });
-        toast(t('new.created')); location.hash = `#/order/${r.id}`;
+        toast(t('new.sent')); location.hash = `#/order/${r.id}`;
       } catch (er) { err.textContent = errMsg(er); $('#progress', el).textContent = ''; }
     });
   });

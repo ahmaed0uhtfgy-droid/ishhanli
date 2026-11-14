@@ -127,6 +127,17 @@ const ROWS = [
 
   // ---------- العميل: طلب جديد ----------
   ['customer.empty', 'مفيش طلبات لسه. ابدأ بأول طلب نقل.', 'No orders yet. Start with your first shipment.'],
+  ['welcome.title', 'أهلاً بيك في اشحنلي', 'Welcome to Ishhanli'], ['welcome.lead', 'اطلب نقل لشحنتك وإنت شايف السعر قبل ما تأكد.', 'Request a shipment and see the price before you confirm.'],
+  ['welcome.s1.t', 'حدّد الاستلام والتسليم', 'Set pickup and drop-off'], ['welcome.s1.d', 'علّم نقطة الاستلام ونقطة التسليم على الخريطة.', 'Mark the pickup and drop-off points on the map.'],
+  ['welcome.s2.t', 'شوف السعر قبل ما تأكد', 'See the price before you confirm'], ['welcome.s2.d', 'السعر بيظهر قدامك قبل ما تبعت الطلب.', 'The price shows up before you send the request.'],
+  ['welcome.s3.t', 'أقرب سائق أو شركة يقبل وتتابعه', 'The nearest driver or company accepts, and you follow it'], ['welcome.s3.d', 'الطلب بيوصل لأقرب سائق أو شركة متاحة، ولما حد يقبل تتابع شحنتك.', 'Your request goes to the nearest available driver or company, and once one accepts you can follow your shipment.'],
+  ['welcome.cta', 'اطلب نقل', 'Request a shipment'],
+  ['welcome.t1.t', 'السعر ظاهر قبل التأكيد', 'Price shown before confirming'], ['welcome.t1.d', 'بتشوف التقدير قبل ما تبعت الطلب.', 'You see the estimate before sending the request.'],
+  ['welcome.t2.t', 'تتبّع الشحنة', 'Shipment tracking'], ['welcome.t2.d', 'بتتابع حالة الطلب، وتقدر تبعت رابط متابعة للمستلم.', 'Follow the order status, and send a tracking link to the receiver.'],
+  ['new.sent', 'تم إرسال طلبك لأقرب سائق أو شركة متاحة، وهنبلّغك أول ما حد يقبله.', 'Your request was sent to the nearest available driver or company. We\'ll notify you as soon as one accepts.'],
+  ['order.next.title', 'الخطوات الجاية', 'What happens next'], ['order.next.s1', 'سائق أو شركة يقبل طلبك', 'A driver or company accepts your request'], ['order.next.s2', 'تتابع شحنتك', 'You follow your shipment'], ['order.next.s3', 'تستلم', 'You receive it'],
+  ['order.next.push', 'فعّل إشعارات المتصفح عشان يوصلك رد السواق.', 'Turn on browser notifications so you get the driver\'s reply.'], ['order.next.pushDenied', 'الإشعارات محظورة من إعدادات المتصفح. اسمح بيها عشان يوصلك رد السواق.', 'Notifications are blocked in your browser settings. Allow them so you get the driver\'s reply.'],
+  ['welcome.t3.t', 'مراجعة مستندات السواقين', 'Driver documents are reviewed'], ['welcome.t3.d', 'الإدارة بتراجع مستندات السواقين يدوياً قبل تفعيل حساباتهم.', 'Our team manually reviews driver documents before activating their accounts.'],
   ['new.pickMode', 'اختار النقطة اللي هتحددها', 'Choose which point to set'], ['new.mapHint', 'اضغط على الخريطة لتحديد النقطة، وتقدر تسحب الدبوس لتعديلها.', 'Tap the map to set the point; drag the pin to adjust it.'],
   ['new.search', 'ابحث عن مكان أو عنوان', 'Search for a place or address'], ['new.noResults', 'مفيش نتائج، جرّب كلمات تانية أو حدد على الخريطة.', 'No results — try other words or set it on the map.'],
   ['new.addr', 'العنوان بالتفصيل (اختياري)', 'Detailed address (optional)'], ['new.notesHint', 'دور، أسانسير، تفاصيل تفيد السواق…', 'Floor, elevator, anything that helps the driver…'],

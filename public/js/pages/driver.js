@@ -62,7 +62,7 @@ function presenceBar(box) {
   const paint = () => { const h = hintKey(); render(box, html`<div class="presence ${online ? 'on' : ''}"><div class="grow"><b>${t(online ? 'presence.on' : 'presence.off')}</b>
     <div class="small muted">${t(online ? 'presence.onHint' : 'presence.offHint')}</div></div><button class="switch" type="button" role="switch" aria-checked="${online}" aria-label="${t('presence.toggle')}"></button></div>
     ${h ? html`<p class="hint" style="margin:-.5rem 0 1rem">${t(h)}</p>` : ''}`); };
-  const send = async (on) => { const loc = await getPos().catch(() => null); return api('driver/presence', { online: on, ...(loc || {}) }); };
+  const send = async (on) => { const loc = await getPos().catch(() => null); return api('driver/presence', { online: on, ts: Date.now(), ...(loc || {}) }); };
   // بنجدّد الموقع كل دقيقتين والصفحة مفتوحة (المتصفح مابيسمحش بتتبع الخلفية)؛ الإشعارات بتفضل توصل حتى لو الصفحة اتقفلت
   const sync = () => { clearInterval(timer); if (online) timer = setInterval(() => { if (!document.hidden) send(true).catch(() => {}); }, 120000); };
   box.addEventListener('click', (e) => {
