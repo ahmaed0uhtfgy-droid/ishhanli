@@ -33,7 +33,7 @@ export function renderCustomerHome(el) {
   const stop = gpoll(['orders'], () => api('orders/list', state.profile.role === 'admin' ? { scope: 'mine' } : {}), 15000, ({ orders }) => {
     for (const o of orders) { const p = prev.get(o.id); if (!first && p && p !== o.status) toast(`${orderNo(o.id)} — ${t('status.' + o.status)}`); prev.set(o.id, o.status); }
     first = false;
-    render(list, orders.length ? html`${orders.map((o) => waybill(o))}` : welcomeCard());
+    render(list, orders.length ? html`${orders.map((o) => waybill(o))}` : html`<div class="empty"><p>${t('customer.empty')}</p><a class="btn primary" href="#/customer/new">${t('welcome.cta')}</a></div>`);
   }, { dedupe: true, onError: (e) => toast(errMsg(e), true) });
   return () => { el.removeEventListener('click', onFine); if (typeof stop === 'function') stop(); };
 }
@@ -49,6 +49,7 @@ export function renderNewOrder(el) {
   const saved = Array.isArray(state.profile?.addresses) ? state.profile.addresses : [];
 
   render(el, html`<div class="page-head"><h1>${t('nav.newOrder')}</h1></div>${state.profile?.fineDue > 0 ? html`<div class="action bad"><p>${t('fine.newOrderNote', { fine: fmtMoney(state.profile.fineDue) })}</p></div>` : ''}
+  <details class="howto card"><summary>${t('howto.summary')}</summary>${welcomeCard({ cta: false })}</details>
   <div class="order-layout">
     <form id="f" class="card stack" novalidate>
       ${S.passengersEnabled && classes.length ? html`<div><div class="seg" role="group" aria-label="${t('new.serviceLabel')}"><button type="button" data-svc="cargo" class="on">${t('service.cargo')}</button><button type="button" data-svc="passengers">${t('service.passengers')}</button></div></div>` : ''}

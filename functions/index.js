@@ -2,6 +2,8 @@
 // لو Firestore مش متاح بنرسم بالقيم الافتراضية (الصفحة ما تقعش أبداً). التطبيق (SPA) بيكمّل شغله فوق نفس الصفحة.
 import { DEFAULTS, loadSettings } from './_lib/logic.js';
 import { buildLanding, injectShell } from './_lib/landing.js';
+import { withSecurityHeaders } from './_lib/secHeaders.js';
+import { autoTickSafe } from './_lib/blog.js';
 
 // CSS الحرج للصفحة الرئيسية: أساسيات app.css (لحد قسم الهيدر) + landing.css كاملة. لو أي حاجة اتغيّرت أو فشلت بنرجع للـ<link> العادي.
 let cssCache = { at: 0, v: null };
@@ -20,9 +22,10 @@ async function criticalCss(env, request) {
   return cssCache.v;
 }
 
-export async function onRequest({ request, env }) {
+export async function onRequest({ request, env, waitUntil }) {
+  if (env.FIREBASE_SERVICE_ACCOUNT && request.method === 'GET' && waitUntil) { try { waitUntil(autoTickSafe(env)); } catch { /* waitUntil مش متاح */ } } // مقال تلقائي لو الأدمن شغّله والموعد جه (بيتأكد مرة كل 10 دقايق على الأكثر)
   const res = await env.ASSETS.fetch(request);
-  if ((request.method !== 'GET' && request.method !== 'HEAD') || !res.ok || !(res.headers.get('content-type') || '').includes('text/html')) return res;
+  if ((request.method !== 'GET' && request.method !== 'HEAD') || !res.ok || !(res.headers.get('content-type') || '').includes('text/html')) return (res.headers.get('content-type') || '').includes('text/html') ? withSecurityHeaders(res) : res;
   let settings = DEFAULTS;
   try { if (env.FIREBASE_SERVICE_ACCOUNT) settings = await loadSettings(env); } catch (e) { console.error('landing_settings_failed', e?.message || e); }
   try {
@@ -31,6 +34,6 @@ export async function onRequest({ request, env }) {
     if (isPv) L.head = L.head.replace('index,follow,max-image-preview:large,max-snippet:-1', 'noindex,nofollow');
     const h = new Headers(res.headers);
     h.set('Content-Type', 'text/html; charset=utf-8'); h.set('Cache-Control', isPv ? 'no-store' : 'public, max-age=0, s-maxage=60, stale-while-revalidate=300'); h.delete('Content-Length'); h.delete('ETag');
-    return new Response(request.method === 'HEAD' ? null : injectShell(await res.text(), L, { css: isPv ? null : await criticalCss(env, request) }), { status: 200, headers: h });
-  } catch (e) { console.error('landing_render_failed', e?.message || e); return env.ASSETS.fetch(request); }
+    return withSecurityHeaders(new Response(request.method === 'HEAD' ? null : injectShell(await res.text(), L, { css: isPv ? null : await criticalCss(env, request) }), { status: 200, headers: h }));
+  } catch (e) { console.error('landing_render_failed', e?.message || e); return withSecurityHeaders(await env.ASSETS.fetch(request)); }
 }

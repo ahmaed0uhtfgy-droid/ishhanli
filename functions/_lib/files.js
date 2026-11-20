@@ -3,8 +3,8 @@
 import { HttpError, newId } from './core.js';
 import { F, now, rateTake } from './db.js';
 
-export const KINDS = ['id', 'license', 'vehicle', 'vehiclePhoto', 'company', 'cargo', 'handover', 'payment', 'evidence'];
-const SHARED = ['cargo', 'handover', 'vehiclePhoto', 'evidence']; // باقي الأنواع (بطاقة/رخصة/استمارة/إثبات دفع) للمالك والأدمن فقط
+export const KINDS = ['id', 'license', 'vehicle', 'vehiclePhoto', 'company', 'cargo', 'handover', 'payment', 'evidence', 'blog']; // blog = صور المقالات العامة (رفع الأدمن بس)
+const SHARED = ['cargo', 'handover', 'vehiclePhoto']; // باقي الأنواع (بطاقة/رخصة/استمارة/إثبات دفع/أدلة النزاع) للمالك والأدمن فقط — أدلة النزاع فيها بيانات حساسة والواجهة بتعرضها للأدمن بس
 const REG_KINDS = ['id', 'license', 'vehicle', 'vehiclePhoto', 'company']; // company = سجل تجاري/بطاقة ضريبية (خاصة بالمالك والأدمن)    // المسموح رفعه قبل ما الحساب يتفعّل
 const MAX_B64 = 900_000;                                           // حد مستند Firestore = 1MiB
 
@@ -12,6 +12,7 @@ const b64ToBytes = (b64) => { const bin = atob(b64); const a = new Uint8Array(bi
 
 export async function saveFile(env, uid, profile, kind, dataUrl) {
   if (!KINDS.includes(kind)) throw new HttpError(400, 'bad_file');
+  if (kind === 'blog' && profile?.role !== 'admin') throw new HttpError(403, 'forbidden'); // صور المقالات بتتخدم للعامة: الأدمن بس يرفعها
   const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''));
   if (!m || m[1].length < 200 || m[1].length > MAX_B64 || !m[1].startsWith('/9j/')) throw new HttpError(400, 'bad_image'); // '/9j/' = توقيع JPEG
   if (!profile && !REG_KINDS.includes(kind)) throw new HttpError(403, 'no_profile');

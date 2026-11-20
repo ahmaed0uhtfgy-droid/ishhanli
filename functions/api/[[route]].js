@@ -8,6 +8,7 @@ import { dcDue, dcBlocked, dcPayable, dcFeesOn, kmFeeOf, vehicleOfSize, fineCred
 import { saveFile, ownFiles, readFile } from '../_lib/files.js';
 import { notify, dispatchNewOrder, adminIds, orderNo, pushEnabled, renderMsg } from '../_lib/push.js';
 import { trustOf } from '../_lib/trust.js';
+import * as Blog from '../_lib/blog.js';
 import { flushMetrics, recordError, sentryCapture } from '../_lib/metrics.js';
 
 // ---------- تحقق من المدخلات ----------
@@ -271,7 +272,7 @@ async function expireOrder(env, o) {
 }
 let lastSweep = 0;
 async function sweepExpired(env) {
-  if (Date.now() - lastSweep < Number(env.SWEEP_MIN_INTERVAL_MS ?? 30000)) return; // نفحص كل 30 ثانية كحد أقصى
+  if (Date.now() - lastSweep < Number(env.SWEEP_MIN_INTERVAL_MS ?? 120000)) return; // نفحص كل دقيقتين كحد أقصى (كل مرة بتتحاسب ≈ مستند لكل طلب شغّال؛ القياس: 121 قراءة لـ160 طلب) — التأخير مش محسوس لأن المهام بالدقايق/الساعات
   lastSweep = Date.now();
   const s = await loadSettings(env);
   const cutoff = now() - s.prepaidGraceMin * 60000;
@@ -405,7 +406,7 @@ const ROUTES = {
   // أرخص طلب ممكن (قراءة واحدة، من غير فحص المستخدم): عدّادات "إيه اللي اتغيّر" — الواجهة بتجيب القوائم الكبيرة بس لما عدّاد يتغيّر.
   async sync({ env, waitUntil }) {
     bg({ waitUntil }, sweepExpired(env)); // إنهاء الطلبات المدفوعة مقدماً اللي ماحدش قبلها بيحصل مع التحديث
-    const r = await F.get(env, STAMP_PATH);
+    const r = await F.stampGet(env);
     return { stamp: Object.fromEntries(STAMP_KINDS.map((k) => [k, r?.[k] || 0])) };
   },
   async settings({ env }) { return { settings: { ...(await loadSettings(env)), testPaymentsAllowed: env.ALLOW_TEST_PAYMENTS === '1', deliveryCodeAvailable: !!env.DELIVERY_CODE_SECRET } }; }, // الدفع التجريبي لازم يتفعّل كمان من متغيّر Cloudflare (fail-closed)
@@ -585,12 +586,13 @@ const ROUTES = {
     const u = await viewer(c);
     bg(c, sweepExpired(c.env)); // إنهاء الطلبات المدفوعة مقدماً اللي ماحدش قبلها (واسترجاعها)
     let rows;
+    const cap = (await loadSettings(c.env)).ordersListLimit; // من الأدمن (الإعدادات)
     const mine = u.role === 'customer' || (u.role === 'admin' && c.body.scope === 'mine'); // الأدمن كعميل: طلباته هو بس
-    if (mine) rows = (await F.query(c.env, 'orders', { eq: { customer_id: c.uid }, limit: 100 })).sort(byDesc('created_at'));
+    if (mine) rows = (await F.query(c.env, 'orders', { eq: { customer_id: c.uid }, limit: cap })).sort(byDesc('created_at'));
     else if (u.role === 'driver') {
       rows = c.body.scope === 'mine'
-        ? (await F.query(c.env, 'orders', { eq: { driver_id: c.uid }, limit: 100 })).sort(byDesc('updated_at'))
-        : (await F.query(c.env, 'orders', { eq: { status: 'open' }, limit: 100 })).sort(byDesc('created_at'));
+        ? (await F.query(c.env, 'orders', { eq: { driver_id: c.uid }, limit: cap })).sort(byDesc('updated_at'))
+        : (await F.query(c.env, 'orders', { eq: { status: 'open' }, limit: cap })).sort(byDesc('created_at'));
     } else {
       const status = c.body.status ? String(c.body.status) : null, lim = String(c.body.q ?? '').trim() ? 300 : int(c.body.limit ?? 200, 1, 300); // مع البحث بنفحص آخر 300 طلب
       rows = status ? (await F.query(c.env, 'orders', { eq: { status }, limit: lim })).sort(byDesc('created_at'))
@@ -2250,6 +2252,31 @@ const ROUTES = {
     return { settings: await loadSettings(c.env) };
   },
 
+  // ---------- المقالات (SEO) ----------
+  async 'admin/blog/list'(c) { await need(c, ['admin']); return Blog.admin.list(c.env); },
+  async 'admin/blog/get'(c) { await need(c, ['admin']); return Blog.admin.get(c.env, c.body.id); },
+  async 'admin/blog/save'(c) {
+    const admin = await need(c, ['admin']);
+    const a = await Blog.admin.save(c.env, c.body);
+    await F.run(c.env, [auditLog(admin, 'blog.save', { targetType: 'article', targetId: a.id, meta: { status: a.status, source: a.source } })]);
+    return { article: a };
+  },
+  async 'admin/blog/delete'(c) {
+    const admin = await need(c, ['admin']);
+    await Blog.deleteArticle(c.env, c.body.id);
+    await F.run(c.env, [auditLog(admin, 'blog.delete', { targetType: 'article', targetId: String(c.body.id).slice(0, 40) })]);
+    return { ok: true };
+  },
+  async 'admin/blog/generate'(c) { await need(c, ['admin']); return Blog.admin.generate(c.env, c.uid, c.body); },
+  async 'admin/blog/config'(c) { await need(c, ['admin']); return Blog.admin.config(c.env); },
+  async 'admin/blog/config/save'(c) {
+    const admin = await need(c, ['admin']);
+    const out = await Blog.admin.configSave(c.env, c.body);
+    await F.run(c.env, [auditLog(admin, 'blog.config', { meta: { autoEnabled: out.config.autoEnabled, everyHours: out.config.everyHours, autoPublish: out.config.autoPublish, topics: out.config.topics.length } })]);
+    return out;
+  },
+  async 'admin/blog/run'(c) { await need(c, ['admin']); await rateTake(c.env, 'blogai', c.uid, 3600e3, 40, 'too_many_requests'); return Blog.autoTick(c.env, { force: true }); }, // «شغّل دلوقتي»: مقال واحد من الموضوع التالي في الدورة
+
   async 'admin/blacklist'(c) {
     await need(c, ['admin']);
     return { items: (await F.query(c.env, 'blacklist', { order: ['at', 'desc'], limit: 500 })).map((r) => ({ id: r.k, type: r.type, value: r.value, reason: r.reason, at: r.at })) };
@@ -2340,6 +2367,11 @@ export async function onRequest({ request, env, params, waitUntil }) {
     if (request.method === 'POST' && route === 'track') return publicTrack(request, env); // من غير تسجيل دخول (محمي بالرمز العشوائي + حد محاولات بالـIP)
     if (request.method === 'GET' && route === 'about') { // بيانات الشركة للصفحة الرئيسية العامة (من غير تسجيل دخول): الحقول دي بس
       return new Response(JSON.stringify({ company: (await loadSettings(env)).company }), { headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=120' } });
+    }
+    if (route === 'blog/cron' && (request.method === 'POST' || request.method === 'GET')) { // تشغيل خارجي بمفتاح (اختياري: cron-job.org مثلاً): هيدر x-cron-key = BLOG_CRON_KEY
+      const k = request.headers.get('x-cron-key') || '';
+      if (!env.BLOG_CRON_KEY || k.length !== env.BLOG_CRON_KEY.length || !(await sha256hex(k) === await sha256hex(env.BLOG_CRON_KEY))) throw new HttpError(403, 'forbidden');
+      return json(await Blog.autoTick(env, { throttle: false }));
     }
     const bearer = (request.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
     const isFileGet = request.method === 'GET' && route.startsWith('files/');

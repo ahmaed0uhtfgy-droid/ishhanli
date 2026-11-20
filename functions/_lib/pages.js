@@ -2,6 +2,7 @@
 // نفس مصدر الحقائق بتاع الصفحة الرئيسية (إعدادات النظام) ونفس تعديلات الأدمن للنصوص، من غير أي كلام ثابت عن الدفع أو العمولة.
 import { LP_ORIGIN, SITE_DEFAULTS, cleanSite, lpFacts, lpSlots, lpText } from '../../public/js/landing-content.js';
 import { esc } from './landing.js';
+import { routesExampleTable, vehicleExample } from './routes.js';
 
 const plain = (s) => String(s).replace(/\*([^*]+)\*/g, '$1');
 // ملفات _headers بتتطبق على الملفات الثابتة بس، مش على ردود الـFunctions — فالهيدرز الأمنية لصفحات السيرفر بتتحط هنا (الصفحات دي من غير JavaScript: JSON-LD وCSS وخطوط وصور من نفس الدومين بس)
@@ -35,6 +36,7 @@ export function renderPage(kind, { settings = {}, site: rawSite, company = {}, e
       + H('معامل نوع الحمولة') + P('السعر بيتأثر بنوع الحمولة اللي بتنقلها، وده المعامل المستخدم لكل نوع حالياً:') + (cats.length ? LI(cats.map((c) => `${c.ar}: ${c.mult}`)) : '')
       + (f.vehiclePricing ? H('العربية المختارة') + P('بتتحدد العربية حسب وزن الشحنة، ولكل عربية سعر فتح وسعر كيلومتر خاص بيها.') : (sizes.length ? H('معامل الحجم') + P('وبيتحسب كمان حسب حجم الشحنة:') + LI(sizes.map((c) => `${c.ar}: ${c.mult}`)) : ''))
       + (f.offers ? H('عروض الأسعار') + P('لو السواق شايف سعر مختلف، بيقدر يقترحه عليك وأنت تقبله أو ترفضه.') : '')
+      + (routesExampleTable(settings) ? H('أمثلة على أسعار النقل بين المدن') + P('دي أمثلة تقديرية لبضائع عامة بين مدن كبيرة، محسوبة من أسعار المنصة الحالية، وكل طريق ليه صفحة بتفاصيله:') + routesExampleTable(settings) + `<p><a href="/routes">كل طرق النقل بين المحافظات</a></p>` : '')
       + H('احسب سعر شحنتك فوراً') + P('حاسبة السعر في الصفحة الرئيسية بتديك تقدير فوري بين المدن قبل ما تطلب، والسعر النهائي بيتحسب من المسافة الفعلية على الخريطة.');
     cta = ['احسب سعر شحنتك', '/#/price'];
   } else if (kind === 'vehicles') {
@@ -43,6 +45,7 @@ export function renderPage(kind, { settings = {}, site: rawSite, company = {}, e
     const guide = Object.entries(settings.vehicleGuide || {}).filter(([k, v]) => Number(v?.maxKg) > 0 && VEH[k]);
     const sizes = settings.sizes || {}, cats = Object.values(settings.categories || {}).filter((c) => c?.ar);
     body = (guide.length ? `<ul>${guide.map(([k, v]) => `<li><strong>${esc(VEH[k])}</strong>: أقصى وزن ${kg(v.maxKg)}${sizes[v.size]?.ar ? ` — ${esc(sizes[v.size].ar)}` : ''}</li>`).join('')}</ul>` : '')
+      + (vehicleExample(settings) ? H('مثال على السعر لكل عربية') + vehicleExample(settings) : '')
       + (settings.vehicleGuideOn !== false ? H('إزاي أختار العربية؟') + P('وقت الطلب بتدخل وزن الشحنة تقريباً، والمنصة بترشّح لك العربية المناسبة، وتقدر تختار غيرها.') : '')
       + (cats.length ? H('أنواع الحمولة اللي بننقلها') + LI(cats.map((c) => c.ar)) : '')
       + H('السعر') + P(val('price.text'));
@@ -53,21 +56,31 @@ export function renderPage(kind, { settings = {}, site: rawSite, company = {}, e
     body = H('التسجيل والمراجعة') + P(val('trust.1d')) + P('بعد التسجيل بتتراجع مستنداتك يدوي، وأول ما حسابك يتفعّل بتشوف الطلبات المتاحة.')
       + H('المطلوب منك في كل شحنة') + LI([val('trust.3d'), val('trust.4d')])
       + (f.offers ? H('الأسعار') + P('تقدر تقبل الطلب بالسعر المعروض، أو تقترح سعر مختلف يقبله العميل أو يرفضه.') : '')
+      + H('المستندات المطلوبة للتسجيل') + LI(['الرقم القومي وصورة البطاقة الشخصية', 'صورة رخصة القيادة', 'صورة استمارة العربية', 'صورة حقيقية للعربية'])
       + H('العمولة') + P(val('faq.4a'));
+    faq = [['إيه المستندات المطلوبة للتسجيل كسواق نقل؟', 'الرقم القومي وصورة البطاقة الشخصية، وصورة رخصة القيادة، وصورة استمارة العربية، وصورة حقيقية للعربية.'], ['هل بتتراجع المستندات قبل التفعيل؟', 'أيوه، بتتراجع مستنداتك يدوي، وأول ما حسابك يتفعّل بتشوف الطلبات المتاحة.'], ['إزاي بتتحدد عمولة المنصة؟', val('faq.4a')]];
     cta = [val('join.d.cta'), '/#/register?role=driver'];
   } else {
     title = 'لشركات الشحن: سجّل شركتك في اشحنلي'; desc = 'سجّل شركة الشحن ببطاقة المسؤول ومركبة واحدة على الأقل (من غير سجل تجاري)، وأضف سواقينك بمستنداتهم، وحدد مين يستلم كل شحنة.';
     h1 = val('join.c.title'); lead = val('join.c.text');
     body = H('التسجيل والمراجعة') + P(T('lp.svc.company.d')) + P('بعد التسجيل بتتراجع مستندات الشركة يدوي قبل التفعيل.')
       + H('المطلوب منكم في كل شحنة') + LI([val('trust.3d'), val('trust.4d')])
+      + H('المطلوب لتسجيل الشركة') + LI(['بطاقتك الشخصية كمسؤول عن الشركة', 'استمارة وصورة لمركبة واحدة على الأقل', 'أي مستند رسمي للشركة (اختياري: سجل تجاري أو بطاقة ضريبية أو عقد)'])
       + H('العمولة') + P(val('faq.4a'));
-    cta = [val('join.c.cta'), '/#/register?role=driver'];
+    faq = [['إيه المطلوب لتسجيل شركة شحن؟', 'بطاقة المسؤول عن الشركة، واستمارة وصورة لمركبة واحدة على الأقل. السجل التجاري والبطاقة الضريبية اختياريين.'], ['أقدر أضيف سواقين تابعين للشركة؟', 'أيوه، بتضيف سواقينك بمستنداتهم وبتحدد مين يستلم كل شحنة.'], ['إزاي بتتحدد عمولة المنصة؟', val('faq.4a')]];
+    cta = [val('join.c.cta'), '/#/register?role=company'];
   }
-  const url = `${LP_ORIGIN}${PAGE_PATHS[kind]}`, logo = site.logoUrl || '/img/logo.webp';
+  return renderShell({ title, desc, h1, lead, body, faq, cta, path: PAGE_PATHS[kind], site });
+}
+
+/** قالب صفحة SEO كامل (head + JSON-LD + هيدر + محتوى + فوتر). بيتستخدم في صفحات المحتوى وصفحات طرق النقل. */
+export function renderShell({ title, desc, h1, lead, body, faq = null, cta, path, site, crumbs: crumbList = null, extraLd = '' }) {
+  const url = `${LP_ORIGIN}${path}`, logo = site.logoUrl || '/img/logo.webp';
+  crumbList = crumbList || [['اشحنلي', '/'], [h1, path]];
   const ld = (o) => `<script type="application/ld+json">${JSON.stringify(o).replace(/</g, '\\u003c')}</script>`;
-  const crumbs = { '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: [{ '@type': 'ListItem', position: 1, name: 'اشحنلي', item: `${LP_ORIGIN}/` }, { '@type': 'ListItem', position: 2, name: h1, item: url }] };
+  const crumbs = { '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: crumbList.map(([name, href], i) => ({ '@type': 'ListItem', position: i + 1, name, item: `${LP_ORIGIN}${href}` })) };
   const faqLd = faq ? ld({ '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: faq.map(([q, a]) => ({ '@type': 'Question', name: q, acceptedAnswer: { '@type': 'Answer', text: a } })) }) : '';
-  const nav = [['/how-it-works', 'إزاي بتشتغل'], ['/pricing', 'الأسعار'], ['/vehicles', 'العربيات'], ['/for-drivers', 'للسواقين'], ['/for-companies', 'للشركات']].map(([h, l]) => `<a href="${h}">${l}</a>`).join('');
+  const nav = [['/how-it-works', 'إزاي بتشتغل'], ['/pricing', 'الأسعار'], ['/vehicles', 'العربيات'], ['/routes', 'طرق النقل'], ['/blog', 'المدونة'], ['/for-drivers', 'للسواقين'], ['/for-companies', 'للشركات']].map(([h, l]) => `<a href="${h}">${l}</a>`).join('');
   return `<!doctype html>
 <html lang="ar" dir="rtl" data-theme="light">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -75,7 +88,7 @@ export function renderPage(kind, { settings = {}, site: rawSite, company = {}, e
 <meta property="og:type" content="article"><meta property="og:site_name" content="اشحنلي"><meta property="og:locale" content="ar_EG"><meta property="og:url" content="${url}"><meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(desc)}"><meta property="og:image" content="${LP_ORIGIN}/img/og.jpg">
 <meta name="twitter:card" content="summary_large_image"><meta name="theme-color" content="#F7F4EC"><link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="icon" type="image/png" sizes="48x48" href="/icons/favicon-48.png"><link rel="apple-touch-icon" href="/icons/icon-180.png">
 <link rel="stylesheet" href="/css/landing.css"><link rel="preload" as="font" type="font/woff2" crossorigin href="/fonts/cairo-arabic-600-normal.woff2">
-${ld(crumbs)}${faqLd}</head>
+${ld(crumbs)}${faqLd}${extraLd}</head>
 <body class="lpp-body"><div class="lp lpa lpp">
 <header class="lpp-head"><a class="lp-brand" href="/"><img class="lp-logo-s" src="${esc(logo)}" alt="شعار اشحنلي" width="44" height="40"><span>اشحنلي</span></a><nav aria-label="main">${nav}</nav><a class="lp-btn fill sm" href="/#/login">دخول</a></header>
 <main class="lpp-main"><h1>${esc(h1)}</h1><p class="lpp-lead">${esc(lead)}</p>${body}

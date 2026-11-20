@@ -8,7 +8,7 @@ import { $, $$, html, raw, render, toast, errMsg, busy, spinner, stamp, orderNo,
 import { hydrate, imgTag } from '../storage.js';
 import { toCsv, downloadCsv, downloadJson } from '../csv.js';
 
-const TABS = ['overview', 'customers', 'drivers', 'companies', 'joins', 'users', 'orders', 'reports', 'disputes', 'refunds', 'payments', 'withdrawals', 'cod', 'finance', 'dc', 'fines', 'coupons', 'referrals', 'settings', 'blacklist', 'audit', 'monitoring'];
+const TABS = ['overview', 'customers', 'drivers', 'companies', 'joins', 'users', 'orders', 'reports', 'disputes', 'refunds', 'payments', 'withdrawals', 'cod', 'finance', 'dc', 'fines', 'coupons', 'referrals', 'settings', 'blog', 'blacklist', 'audit', 'monitoring'];
 const LEGACY_TABS = ['payments', 'withdrawals', 'disputes', 'refunds', 'cod']; // تبويبات نظام الضمان القديم: مخفية لما الدفع المباشر شغّال (إلا لو الأدمن فعّل إظهارها)
 // التبويبات متجمّعة في 5 أقسام بدل صف واحد طويل: القسم فوق، وتبويباته تحته
 const GROUPS = [
@@ -16,7 +16,7 @@ const GROUPS = [
   { id: 'people', icon: 'users', tabs: ['customers', 'drivers', 'companies', 'joins', 'users'] },
   { id: 'ops', icon: 'box', tabs: ['orders', 'reports', 'disputes', 'refunds', 'payments', 'withdrawals', 'cod'] },
   { id: 'money', icon: 'coins', tabs: ['finance', 'dc', 'fines', 'coupons', 'referrals'] },
-  { id: 'system', icon: 'gear', tabs: ['settings', 'blacklist', 'audit', 'monitoring'] },
+  { id: 'system', icon: 'gear', tabs: ['settings', 'blog', 'blacklist', 'audit', 'monitoring'] },
 ];
 const TAB_BADGE = { joins: 'users', payments: 'payments', withdrawals: 'withdrawals', disputes: 'disputes', refunds: 'refunds', reports: 'reports' }; // التبويب ← مفتاح الشارة
 const legacyHidden = () => state.settings?.dcEnabled !== false && state.settings?.adminShowLegacy !== true;
@@ -62,7 +62,7 @@ export function renderAdmin(el, tab) {
   // شارات الأعداد المعلّقة (استعلامات خفيفة على index الحالة) — كل 20 ثانية
   const badges = gpoll(['orders', 'users', 'withdrawals', 'disputes', 'refunds', 'reports'], () => api('admin/badges'), 20000, ({ badges: b }) => { lastBadges = b; badgesReady = true; applyBadges(el); }, { dedupe: true });
   const body = $('#body', el);
-  const stop = { overview, finance, payments, users, customers, drivers, companies, joins, orders, withdrawals, disputes, refunds, reports, coupons, referrals, cod, dc, fines, settings, blacklist, audit, monitoring }[tab](body, badges);
+  const stop = { overview, finance, payments, users, customers, drivers, companies, joins, orders, withdrawals, disputes, refunds, reports, coupons, referrals, cod, dc, fines, settings, blog, blacklist, audit, monitoring }[tab](body, badges);
   return () => { badges(); stop?.(); };
 }
 
@@ -642,23 +642,47 @@ export function siteCard(S) {
 export const readSite = (f) => ({ design: f.elements['site.design'].value, mode: f.elements['site.mode'].value, logoUrl: f.elements['site.logoUrl'].value.trim(), hide: LP_SECTIONS.filter((id) => !f.elements['site.show.' + id].checked),
   seo: { title: f.elements['site.seo.title'].value.trim(), description: f.elements['site.seo.description'].value.trim(), google: f.elements['site.seo.google'].value.trim(), bing: f.elements['site.seo.bing'].value.trim() }, texts: Object.fromEntries(LP_FIELDS.map((x) => [x.id, f.elements['site.t.' + x.id].value.trim()])) });
 
+function blog(body) { // المقالات (SEO): الوحدة بتتحمّل عند فتح التبويب بس
+  render(body, spinner()); let stop = () => {}, dead = false;
+  import('./admin-blog.js').then((m) => { if (!dead) stop = m.renderBlog(body) || stop; }).catch(onError);
+  return () => { dead = true; stop(); };
+}
+
 function settings(body) {
   const S = state.settings;
   const kvRow = (k, v = {}, seats = false) => html`<tr><td><input data-k value="${k}" ${k ? 'readonly' : ''} placeholder="key" style="min-width:110px"></td><td><input data-ar value="${v.ar || ''}"></td><td><input data-en value="${v.en || ''}" dir="ltr"></td><td><input data-m type="number" step="0.05" min="0.1" value="${v.mult ?? 1}" style="width:90px"></td>${seats ? html`<td><input data-seats type="number" min="1" max="100" value="${v.seats ?? 4}" style="width:80px"></td>` : ''}<td><button type="button" class="btn ghost sm" data-del>✕</button></td></tr>`;
   const kvRows = (name, obj, seats = false) => html`<div class="table-wrap"><table data-kv="${name}" data-seats="${seats ? 1 : 0}"><thead><tr><th>${t('admin.key')}</th><th>عربي</th><th>English</th><th>${t('admin.mult')}</th>${seats ? html`<th>${t('admin.seats')}</th>` : ''}<th></th></tr></thead><tbody>
     ${Object.entries(obj || {}).map(([k, v]) => kvRow(k, v, seats))}</tbody></table></div><button type="button" class="btn ghost sm" data-add="${name}" style="margin-top:.5rem">+ ${t('admin.addRow')}</button>`;
   const num = (n, k, step = 'any', min = 0) => html`<label class="f">${t('admin.s.' + k)}<input type="number" name="${n}" step="${step}" min="${min}" value="${n.split('.').reduce((o, p) => o?.[p], S) ?? ''}" required></label>`;
-  render(body, html`<form id="sf" class="stack"><div class="card stack"><h3>${t('admin.pricing')}</h3><div class="formula" style="margin:0">${t('landing.formula')}</div>
+  const VK = ['pickup', 'half_ton', 'jumbo', 'truck'];
+  // مرجع تقديري (19 نوفمبر 2026): جدول أسعار شركة شحن واحدة (n=1) + تجربة شخصية واحدة. المسافات تقريبية (مش مقاسة). مش متوسط إحصائي.
+  const REF = [['القاهرة ← الإسكندرية', 220, 1900, 3450], ['القاهرة ← أسيوط', 375, 3100, 4600], ['القاهرة ← أسوان', 880, 6950, 10000], ['تجربة شخصية (أثاث، شفروليه دبابة)', 50, 1100, null]];
+  const REF_KG = { pickup: 850, half_ton: 1500, jumbo: 5000, truck: 45000 }; // أقصى حمولة مرجعية (من كلامك: ربع نقل 500–850 كجم، دبابة 1–1.5 طن، جامبو 3–5 طن، تريلا 25–45 طن)
+  const simpleCard = html`<div class="card stack"><h3>${t('admin.simple.title')}</h3><p class="hint">${t('admin.simple.hint')}</p>
+    <div class="table-wrap"><table><thead><tr><th>${t('admin.simple.vehicle')}</th><th>${t('admin.vguide.maxKg')}</th><th>${t('admin.vp.base')}</th><th>${t('admin.vp.perKm')}</th><th>${t('admin.vp.minPrice')}</th><th>${t('admin.simple.ex', { km: 50 })}</th><th>${t('admin.simple.ex', { km: 200 })}</th></tr></thead><tbody>
+    ${VK.map((k) => { const cur = S.vehiclePricing?.[k] || {}; return html`<tr><td><b>${t('vehicle.' + k)}</b></td>
+      <td><input type="number" name="vg.${k}.maxKg" min="0" max="100000" step="1" inputmode="numeric" value="${S.vehicleGuide?.[k]?.maxKg ?? 0}" required style="width:100px"></td>
+      ${['base', 'perKm', 'minPrice'].map((fld) => html`<td><input type="number" name="vp.${k}.${fld}" min="0" max="${fld === 'perKm' ? 10000 : 1000000}" step="0.1" inputmode="decimal" value="${cur[fld] ?? 0}" required style="width:90px"></td>`)}
+      <td class="num"><b data-ex="${k}:50"></b></td><td class="num"><b data-ex="${k}:200"></b></td></tr>`; })}</tbody></table></div>
+    <div class="grid-3">${num('roadFactor', 'roadFactor', 0.05, 1)}${num('ordersListLimit', 'ordersListLimit', 1, 20)}</div>
+    <div class="row"><button type="button" class="btn ghost sm" id="applyKg">${t('admin.simple.applyKg')}</button></div>
+    <p class="hint">${t('admin.simple.kgNote')}</p>
+    <h4>${t('admin.simple.refTitle')}</h4>
+    <div class="table-wrap"><table><thead><tr><th>${t('admin.simple.refRoute')}</th><th>${t('admin.simple.refKm')}</th><th>${t('admin.simple.refHalf')}</th><th>${t('admin.simple.perKmRef')}</th><th>${t('admin.simple.sysHalf')}</th><th>${t('admin.simple.refJumbo')}</th><th>${t('admin.simple.sysJumbo')}</th></tr></thead><tbody>
+    ${REF.map(([nm, km, half, jumbo]) => html`<tr><td>${nm}</td><td class="num">≈${fmtNum(km, 0)}</td><td class="num">${fmtNum(half, 0)}</td><td class="num">${fmtNum(half / km, 1)}</td><td class="num"><b data-ex="half_ton:${km}"></b></td><td class="num">${jumbo ? fmtNum(jumbo, 0) : '—'}</td><td class="num">${jumbo ? html`<b data-ex="jumbo:${km}"></b>` : '—'}</td></tr>`)}</tbody></table></div>
+    <p class="hint">${t('admin.simple.refNote')}</p></div>
+    <details class="card stack"><summary><b>${t('admin.simple.adv')}</b></summary>`;
+  render(body, html`<form id="sf" class="stack">${simpleCard}<div class="card stack"><h3>${t('admin.pricing')}</h3><div class="formula" style="margin:0">${t('landing.formula')}</div>
     <div class="grid-3">${num('perKm', 'perKm')}${num('minPrice', 'minPrice')}${num('commissionPct', 'commissionPct')}</div>
-    <div class="grid-3">${num('newDriver.orders', 'newDriverOrders', 1)}${num('newDriver.commissionPct', 'newDriverPct')}${num('roadFactor', 'roadFactor', 0.05, 1)}</div></div>
+    <div class="grid-3">${num('newDriver.orders', 'newDriverOrders', 1)}${num('newDriver.commissionPct', 'newDriverPct')}</div></div>
     <div class="card stack"><h3>${t('admin.categories')}</h3>${kvRows('categories', S.categories)}</div>
     <div class="card stack"><h3>${t('admin.sizes')}</h3>${kvRows('sizes', S.sizes)}</div>
     <div class="card stack"><h3>${t('admin.vguide.title')}</h3><p class="hint">${t('admin.vguide.hint')}</p>
       <label class="row"><input type="checkbox" name="companionAsk" ${S.companionAsk !== false ? 'checked' : ''}> <span>${t('admin.s.companionAsk')}</span></label>
       <label class="row"><input type="checkbox" name="vehicleGuideOn" ${S.vehicleGuideOn !== false ? 'checked' : ''}> <span>${t('admin.s.vehicleGuideOn')}</span></label>
       <div class="grid-2">${['pickup', 'half_ton', 'jumbo', 'truck'].map((k) => html`<div class="stack"><b>${t('vehicle.' + k)}</b>
-        <label class="f">${t('admin.vguide.maxKg')}<input type="number" name="vg.${k}.maxKg" min="0" max="100000" step="1" inputmode="numeric" value="${S.vehicleGuide?.[k]?.maxKg ?? 0}" required></label>
         <label class="f">${t('admin.vguide.size')}<select name="vg.${k}.size">${Object.entries(S.sizes || {}).map(([sk, sv]) => html`<option value="${sk}" ${S.vehicleGuide?.[k]?.size === sk ? 'selected' : ''}>${label(sv, sk)}</option>`)}</select></label></div>`)}</div></div>
+    </details>
     <div class="card stack"><h3>${t('admin.cod.settingsTitle')}</h3><p class="hint">${t('admin.cod.settingsHint')}</p>
       <label class="row"><input type="checkbox" name="codEnabled" ${S.codEnabled === true ? 'checked' : ''}> <span>${t('admin.s.codEnabled')}</span></label>
       <div class="grid-2"><label class="f">${t('admin.s.codPct')}<input type="number" name="codCommissionPct" min="0" max="30" step="0.1" inputmode="decimal" value="${S.codCommissionPct ?? 0}" required></label>
@@ -666,10 +690,9 @@ function settings(body) {
         <label class="f">${t('admin.s.codPeriod')}<input type="number" name="codPeriodDays" min="1" max="31" step="1" inputmode="numeric" value="${S.codPeriodDays ?? 7}" required></label>
         <label class="f">${t('admin.s.codGrace')}<input type="number" name="codGraceDays" min="0" max="30" step="1" inputmode="numeric" value="${S.codGraceDays ?? 3}" required></label></div>
       <label class="f">${t('admin.s.codScope')}<select name="codBlockScope"><option value="cod" ${S.codBlockScope !== 'all' ? 'selected' : ''}>${t('admin.s.codScope.cod')}</option><option value="all" ${S.codBlockScope === 'all' ? 'selected' : ''}>${t('admin.s.codScope.all')}</option></select></label></div>
-    <div class="card stack"><h3>${t('admin.vp.title')}</h3><p class="hint">${t('admin.vp.hint')}</p>
+    <div class="card stack"><h3>${t('admin.vp.title2')}</h3><p class="hint">${t('admin.vp.hint2')}</p>
       ${['pickup', 'half_ton', 'jumbo', 'truck'].map((k) => { const cur = S.vehiclePricing?.[k] || {}, gz = S.sizes?.[S.vehicleGuide?.[k]?.size]; return html`<div class="stack" style="gap:.3rem;border-top:1px solid var(--rule);padding-top:.5rem"><b>${t('vehicle.' + k)}</b>
-        <p class="hint">${t('admin.vp.current', { perKm: fmtNum((S.perKm || 0) * Number(gz?.mult || 1)), min: fmtNum(S.minPrice || 0) })}</p>
-        <div class="grid-2">${[['base', cur.base], ['perKm', cur.perKm], ['minPrice', cur.minPrice], ['kmFee', cur.kmFee]].map(([f, v]) => html`<label class="f">${t('admin.vp.' + f)}<input type="number" name="vp.${k}.${f}" min="0" max="${f === 'perKm' || f === 'kmFee' ? 10000 : 1000000}" step="0.1" inputmode="decimal" value="${v ?? 0}" required></label>`)}</div></div>`; })}
+        <div class="grid-2">${[['kmFee', cur.kmFee]].map(([f, v]) => html`<label class="f">${t('admin.vp.' + f)}<input type="number" name="vp.${k}.${f}" min="0" max="${f === 'perKm' || f === 'kmFee' ? 10000 : 1000000}" step="0.1" inputmode="decimal" value="${v ?? 0}" required></label>`)}</div></div>`; })}
       <label class="f">${t('admin.s.dcPerKm')}<input type="number" name="dcPerKm" min="0" max="10000" step="0.1" inputmode="decimal" value="${S.dcPerKm ?? 0}" required></label>
       <label class="row"><input type="checkbox" name="fineCreditToWallet" ${S.fineCreditToWallet === true ? 'checked' : ''}> <span>${t('admin.s.fineCreditToWallet')}</span></label></div>
     <div class="card stack"><h3>${t('admin.fines.settingsTitle')}</h3><p class="hint">${t('admin.fines.settingsHint')}</p>
@@ -726,6 +749,11 @@ function settings(body) {
       <p class="hint">${t('admin.referralGo')} <a href="#/admin/referrals">${t('admin.tab.referrals')}</a></p></div>
     <p class="err" id="serr" role="alert"></p><div><button class="btn primary" type="submit">${t('common.save')}</button></div></form>`);
   const f = $('#sf', body);
+  // أمثلة حيّة: نفس معادلة السيرفر لفئة بمعامل 1 — (سعر الفتح + سعر الكيلو × المسافة) وبحد أدنى (حد العربية أو الحد العام)
+  const sysPrice = (k, km) => { const g = (x) => Number(f.elements[`vp.${k}.${x}`]?.value) || 0; if (!(g('perKm') > 0)) return null; const min = g('minPrice') > 0 ? g('minPrice') : Number(f.elements.minPrice?.value) || 0; return Math.max(Math.ceil(min), Math.ceil(g('base') + g('perKm') * km)); };
+  const refreshEx = () => $$('[data-ex]', body).forEach((c) => { const [k, km] = c.dataset.ex.split(':'), v = sysPrice(k, +km); c.textContent = v == null ? '—' : fmtNum(v, 0); });
+  f.addEventListener('input', refreshEx); refreshEx();
+  $('#applyKg', body)?.addEventListener('click', () => { for (const k of VK) f.elements[`vg.${k}.maxKg`].value = REF_KG[k]; refreshEx(); toast(t('admin.simple.applied')); });
   body.addEventListener('click', (e) => {
     const add = e.target.closest('[data-add]'), del = e.target.closest('[data-del]');
     if (add) { const tb = $(`table[data-kv=${add.dataset.add}]`, body); $('tbody', tb).insertAdjacentHTML('beforeend', kvRow('', {}, tb.dataset.seats === '1').s); }
@@ -741,7 +769,7 @@ function settings(body) {
       try {
         const n = (k) => Number(f.elements[k].value);
         const r = await api('admin/settings/save', {
-          perKm: n('perKm'), minPrice: n('minPrice'), commissionPct: n('commissionPct'), roadFactor: n('roadFactor'), geofenceMeters: n('geofenceMeters'),
+          perKm: n('perKm'), minPrice: n('minPrice'), commissionPct: n('commissionPct'), roadFactor: n('roadFactor'), ordersListLimit: n('ordersListLimit'), geofenceMeters: n('geofenceMeters'),
           maxCancellations: n('maxCancellations'), latePointsLimit: n('latePointsLimit'), minWithdraw: n('minWithdraw'), autoApproveCustomers: f.elements.autoApproveCustomers.checked, testPayments: f.elements.testPayments.checked,
           deliveryCode: f.elements.deliveryCode.checked, valueGuardOn: f.elements.valueGuardOn.checked, valueGuardFrom: n('valueGuardFrom'), autoReleaseHours: n('autoReleaseHours'),
           startCode: f.elements.startCode.checked, mismatchCompensation: n('mismatchCompensation'), mismatchMaxPer30d: n('mismatchMaxPer30d'), maxActiveJobs: n('maxActiveJobs'),

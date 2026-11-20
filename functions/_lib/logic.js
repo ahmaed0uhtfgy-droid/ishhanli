@@ -14,6 +14,7 @@ export const DEFAULTS = {
   minPrice: 150,           // حد أدنى للسعر
   commissionPct: 12,       // عمولة الموقع %
   roadFactor: 1.3,         // معامل تقريب المسافة لو خدمة الطرق مش متاحة
+  ordersListLimit: 100,    // أقصى عدد طلبات في قايمة «طلباتي» للعميل والسواق (كل طلب = قراءة Firestore)
   geofenceMeters: 300,     // أقصى بُعد للسواق عن نقطة الاستلام/التسليم عند تغيير الحالة (0 = تعطيل)
   maxCancellations: 5,     // تجميد الحساب تلقائياً بعد الوصول للعدد ده
   valueGuardOn: false,     // حراسة القيمة (مقفولة افتراضياً): الشحنة اللي قيمتها المعلنة >= valueGuardFrom بتبقى «عالية»: كود تسليم إجباري + مفيش تحرير تلقائي (مفيش قيد على السواقين)
@@ -140,7 +141,7 @@ export async function loadSettings(env) {
   const D = DEFAULTS;
   return {
     perKm: num(d.perKm, D.perKm), minPrice: num(d.minPrice, D.minPrice),
-    commissionPct: num(d.commissionPct, D.commissionPct, 0, 100), roadFactor: num(d.roadFactor, D.roadFactor, 1, 3),
+    commissionPct: num(d.commissionPct, D.commissionPct, 0, 100), roadFactor: num(d.roadFactor, D.roadFactor, 1, 3), ordersListLimit: Math.floor(num(d.ordersListLimit, D.ordersListLimit, 20, 300)),
     geofenceMeters: num(d.geofenceMeters, D.geofenceMeters, 0, 100000),
     maxCancellations: num(d.maxCancellations, D.maxCancellations, 1, 1000),
     latePointsLimit: Math.floor(num(d.latePointsLimit, D.latePointsLimit, 0, 1000)),
@@ -271,7 +272,7 @@ export function sanitizeSettings(b) {
     return out;
   };
   return {
-    perKm: n(b.perKm, 0, 10000), minPrice: n(b.minPrice, 0, 1e6), commissionPct: n(b.commissionPct, 0, 100), roadFactor: n(b.roadFactor, 1, 3),
+    perKm: n(b.perKm, 0, 10000), minPrice: n(b.minPrice, 0, 1e6), commissionPct: n(b.commissionPct, 0, 100), roadFactor: n(b.roadFactor, 1, 3), ordersListLimit: Math.floor(n(b.ordersListLimit, 20, 300)),
     geofenceMeters: n(b.geofenceMeters, 0, 100000), maxCancellations: Math.floor(n(b.maxCancellations, 1, 1000)), latePointsLimit: Math.floor(n(b.latePointsLimit ?? 5, 0, 1000)), valueGuardOn: b.valueGuardOn === true, valueGuardFrom: Math.floor(n(b.valueGuardFrom ?? 20000, 1, 1e9)), minWithdraw: Math.floor(n(b.minWithdraw, 1, 1e7)),
     testPayments: b.testPayments === true,
     autoApproveCustomers: b.autoApproveCustomers === true,

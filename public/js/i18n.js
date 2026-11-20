@@ -88,6 +88,7 @@ const ROWS = [
   ['err.test_payments_off', 'وضع الدفع التجريبي مقفول.', 'Test payment mode is off.'],
 
   ['auth.roleCompany', 'شركة شحن', 'Shipping company'],
+  ['auth.roleCompanyHint', 'عندي شركة وأسطول عربيات', 'I run a company with a fleet'],
   ['auth.asCompany', 'أسجّل كشركة شحن', 'Register as a shipping company'],
   ['auth.companyName', 'اسم الشركة', 'Company name'],
   ['auth.commercialReg', 'صورة السجل التجاري', 'Commercial register photo'],
@@ -132,6 +133,7 @@ const ROWS = [
   ['welcome.s2.t', 'شوف السعر قبل ما تأكد', 'See the price before you confirm'], ['welcome.s2.d', 'السعر بيظهر قدامك قبل ما تبعت الطلب.', 'The price shows up before you send the request.'],
   ['welcome.s3.t', 'أقرب سائق أو شركة يقبل وتتابعه', 'The nearest driver or company accepts, and you follow it'], ['welcome.s3.d', 'الطلب بيوصل لأقرب سائق أو شركة متاحة، ولما حد يقبل تتابع شحنتك.', 'Your request goes to the nearest available driver or company, and once one accepts you can follow your shipment.'],
   ['welcome.cta', 'اطلب نقل', 'Request a shipment'],
+  ['howto.summary', 'إزاي بيشتغل الطلب وقواعد الموقع', 'How ordering works & site rules'],
   ['welcome.t1.t', 'السعر ظاهر قبل التأكيد', 'Price shown before confirming'], ['welcome.t1.d', 'بتشوف التقدير قبل ما تبعت الطلب.', 'You see the estimate before sending the request.'],
   ['welcome.t2.t', 'تتبّع الشحنة', 'Shipment tracking'], ['welcome.t2.d', 'بتتابع حالة الطلب، وتقدر تبعت رابط متابعة للمستلم.', 'Follow the order status, and send a tracking link to the receiver.'],
   ['new.sent', 'تم إرسال طلبك لأقرب سائق أو شركة متاحة، وهنبلّغك أول ما حد يقبله.', 'Your request was sent to the nearest available driver or company. We\'ll notify you as soon as one accepts.'],
@@ -143,7 +145,7 @@ const ROWS = [
   ['new.addr', 'العنوان بالتفصيل (اختياري)', 'Detailed address (optional)'], ['new.notesHint', 'دور، أسانسير، تفاصيل تفيد السواق…', 'Floor, elevator, anything that helps the driver…'],
   ['new.photos', 'صور الحمولة', 'Cargo photos'], ['new.photosHint', 'صورة واحدة على الأقل، حتى 5 صور.', 'At least one photo, up to 5.'],
   ['new.needPoints', 'حدد نقطة الاستلام والتسليم على الخريطة لتظهر لك التكلفة.', 'Set pickup and drop-off on the map to see the price.'],
-  ['new.estPrice', 'السعر', 'Price'], ['new.priceNote', 'السعر محسوب تلقائياً. الإدارة ممكن تعدّله قبل قبول السواق لو الحمولة استثنائية.', 'Calculated automatically. Support may adjust it before a driver accepts if the cargo is unusual.'],
+  ['new.estPrice', 'السعر التقديري (بالمتوسط)', 'Estimated price (average)'], ['new.priceNote', 'ده سعر تقديري بمتوسط أسعار النقل في مصر، والسعر النهائي ممكن تتفاوض عليه مع السواق. الإدارة ممكن تعدّله قبل قبول السواق لو الحمولة استثنائية.', 'This is an estimate based on average freight prices in Egypt. The final price can be negotiated with the driver. Admin may adjust it before a driver accepts if the load is unusual.'],
   ['new.approxDist', 'المسافة تقريبية.', 'Distance is approximate.'],
   ['coupon.label', 'كود الخصم (اختياري)', 'Discount code (optional)'], ['coupon.placeholder', 'مثال: SAVE10', 'e.g. SAVE10'],
   ['coupon.applied', 'خصم', 'Discount'], ['coupon.due', 'المبلغ المطلوب', 'Amount due'], ['coupon.discount', 'الخصم', 'Discount'],
@@ -699,7 +701,7 @@ const ROWS = [
 
   ['est.title', 'احسب سعر شحنتك قبل ما تسجّل', 'Estimate your price before signing up'],
   ['est.sub', 'اختار المدينتين ونوع الحمولة ونوع العربية وشوف السعر التقريبي فوراً.', 'Pick the two cities, cargo type and vehicle type to see an approximate price instantly.'],
-  ['est.note', 'تقدير تقريبي بالمسافة المستقيمة بين المدن. السعر النهائي بيتحسب من المسافة الفعلية على الخريطة قبل ما تأكد الطلب.', 'An approximate estimate using straight-line distance between cities. The final price is calculated from the real route on the map before you confirm.'],
+  ['est.note', 'تقدير تقريبي بالمسافة المستقيمة بين المدن وبمتوسط أسعار النقل. السعر النهائي بيتحسب من المسافة الفعلية على الخريطة، وممكن تتفاوض عليه مع السواق.', 'An approximate estimate using straight-line city distance and average freight prices. The final price is calculated from the real route on the map and can be negotiated with the driver.'],
   ['est.about', 'حوالي', 'About'],
   ['est.pick', 'اختار مدينتين مختلفتين', 'Pick two different cities'],
   ['ui.theme', 'الوضع الليلي', 'Dark mode'],

@@ -1,6 +1,6 @@
 import { vehicleSelect, wireVehicleSelect } from '../vpicker.js';
 import { attachDocCheck } from '../docCheck.js';
-import { auth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, deleteUser, RecaptchaVerifier, linkWithPhoneNumber, GoogleAuthProvider, signInWithPopup, signInWithRedirect } from '../firebase.js';
+import { auth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, deleteUser, RecaptchaVerifier, linkWithPhoneNumber, GoogleAuthProvider, signInWithPopup, signInWithRedirect, popupResolver, markRedirect } from '../firebase.js';
 import { api, poll } from '../api.js';
 import { gpoll } from '../sync.js';
 import { APP } from '../config.js';
@@ -16,10 +16,10 @@ async function googleSignIn(btn, errEl) {
   await busy(btn, async () => {
     const provider = new GoogleAuthProvider(); provider.setCustomParameters({ prompt: 'select_account' });
     try {
-      await signInWithPopup(auth, provider);
+      await signInWithPopup(auth, provider, popupResolver);
       api('me').then((r) => r.profile && api('auth/login')).catch(() => {}); // حساب جوجل الجديد ملوش ملف لسه: مفيش تسجيل دخول
     } catch (er) {
-      if (er?.code === 'auth/popup-blocked') { await signInWithRedirect(auth, provider); return; }
+      if (er?.code === 'auth/popup-blocked') { markRedirect(); await signInWithRedirect(auth, provider, popupResolver); return; }
       if (er?.code === 'auth/popup-closed-by-user' || er?.code === 'auth/cancelled-popup-request') return; // المستخدم قفل النافذة: مش خطأ
       console.error('google sign-in failed', er?.code, er?.message);
       errEl.textContent = errMsg(er) + ' (' + String(er?.code || er?.message || 'unknown').slice(0, 60) + ')';
@@ -77,7 +77,7 @@ async function verifyPhone(phone) {
 }
 
 export function renderRegister(el, query) {
-  let role = query.get('role') === 'driver' ? 'driver' : 'customer';
+  let role = ['driver', 'company'].includes(query.get('role')) ? 'driver' : 'customer';
   const needsAccount = !auth.currentUser;
   const refPre = (query.get('ref') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12); // كود إحالة من رابط المشاركة
   const file = (name, key, req = true) => html`<label class="f">${t(key)}<input type="file" name="${name}" accept="image/*" ${req ? 'required' : ''}></label>`;
@@ -87,6 +87,7 @@ export function renderRegister(el, query) {
     <div class="role-pick" role="group" aria-label="${t('auth.iAm')}">
       <button type="button" data-role="customer"><b>${t('auth.roleCustomer')}</b><span class="hint">${t('auth.roleCustomerHint')}</span></button>
       <button type="button" data-role="driver"><b>${t('auth.roleDriver')}</b><span class="hint">${t('auth.roleDriverHint')}</span></button>
+      <button type="button" data-role="company"><b>${t('auth.roleCompany')}</b><span class="hint">${t('auth.roleCompanyHint')}</span></button>
     </div>
     <form id="f" class="stack" novalidate>
       <label class="f">${t('auth.name')}<input name="name" autocomplete="name" required minlength="2"></label>
@@ -102,7 +103,7 @@ export function renderRegister(el, query) {
       <div id="idBox" hidden>${file('idFile', 'auth.idPhoto', false)}</div>
       <div id="driverOnly" class="stack" hidden>
         ${vehicleSelect('vehicleType', VEHICLES)}
-        <label class="row"><input type="checkbox" name="isCompany"> <span>${t('auth.asCompany')}</span></label>
+        <label class="row" hidden><input type="checkbox" name="isCompany"> <span>${t('auth.asCompany')}</span></label>
         <div id="companyOnly" class="stack" hidden>
           <label class="f">${t('auth.companyName')}<input name="companyName" maxlength="80"></label>
           <label class="f">${t('auth.fleetSize')}<input name="fleetSize" type="number" inputmode="numeric" min="1" max="500" step="1"></label>
@@ -124,10 +125,11 @@ export function renderRegister(el, query) {
   const f = $('#f', el), err = $('#err', el);
   if (needsAccount) $('#gbtn', el).addEventListener('click', () => googleSignIn($('#gbtn', el), err));
   const isCo = () => role === 'driver' && f.isCompany.checked;
-  const paint = () => { el.querySelectorAll('[data-role]').forEach((b) => b.classList.toggle('on', b.dataset.role === role)); $('#driverOnly', el).hidden = role !== 'driver'; $('#nidBox', el).hidden = role !== 'driver'; $('#idBox', el).hidden = role !== 'driver'; $('#companyOnly', el).hidden = !isCo(); };
+  const paint = () => { el.querySelectorAll('[data-role]').forEach((b) => b.classList.toggle('on', b.dataset.role === 'company' ? isCo() : b.dataset.role === role && !isCo())); $('#driverOnly', el).hidden = role !== 'driver'; $('#nidBox', el).hidden = role !== 'driver'; $('#idBox', el).hidden = role !== 'driver'; $('#companyOnly', el).hidden = !isCo(); };
   f.isCompany.addEventListener('change', paint);
   attachDocCheck(f, { idFile: 'id', licenseFile: 'license', vehicleRegFile: 'vehicle', commercialRegFile: 'company' }); // السيلفي مش بيتفحص (فحص المستندات بيرفض صور الوش)
-  el.addEventListener('click', (e) => { const b = e.target.closest('[data-role]'); if (b) { role = b.dataset.role; paint(); } });
+  el.addEventListener('click', (e) => { const b = e.target.closest('[data-role]'); if (b) { const co = b.dataset.role === 'company'; role = co ? 'driver' : b.dataset.role; f.isCompany.checked = co; paint(); } });
+  if (query.get('role') === 'company') f.isCompany.checked = true; // رابط «سجّل كشركة شحن» من صفحة الشركات
   paint();
 
   wireVehicleSelect(f);

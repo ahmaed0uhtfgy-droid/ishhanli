@@ -16,8 +16,8 @@ import { initErrorReporting } from './report.js';
 // الصفحات التقيلة (الأدمن، السواق، الطلب...) بتتحمّل عند أول دخول عليها بس: الزائر والصفحة الرئيسية ما بيحمّلوهاش. بتفضل ترجّع دالة تنضيف زي ما كانت.
 let leafletP = null; // Leaflet (الخرائط) بيتحمّل بس لما صفحة محتاجاه، مش على الصفحة الرئيسية
 const loadLeaflet = () => window.L?.map ? Promise.resolve() : // window.L?.map مش window.L بس: lenis.min.js بيسرّب متغيّر عالمي اسمه L (function) فكان بيتفسّر غلط إن Leaflet اتحمّل
-   (leafletP ||= new Promise((ok, no) => { if (!document.querySelector('link[data-leaflet]')) { const lk = document.createElement('link'); lk.rel = 'stylesheet'; lk.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css'; lk.dataset.leaflet = '1'; document.head.appendChild(lk); }
-  const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js'; sc.onload = ok; sc.onerror = () => { leafletP = null; no(new Error('leaflet')); }; document.head.appendChild(sc); }));
+   (leafletP ||= new Promise((ok, no) => { if (!document.querySelector('link[data-leaflet]')) { const lk = document.createElement('link'); lk.rel = 'stylesheet'; lk.href = '/vendor/leaflet-1.9.4/leaflet.css'; lk.dataset.leaflet = '1'; document.head.appendChild(lk); }
+  const sc = document.createElement('script'); sc.src = '/vendor/leaflet-1.9.4/leaflet.js'; sc.onload = ok; sc.onerror = () => { leafletP = null; no(new Error('leaflet')); }; document.head.appendChild(sc); }));
 const lazy = (load, name, map = false) => (...args) => {
   let inner = null, dead = false;
   if (args[0] instanceof Element) render(args[0], spinner());
@@ -27,7 +27,7 @@ const lazy = (load, name, map = false) => (...args) => {
   });
   return () => { dead = true; if (typeof inner === 'function') inner(); };
 };
-const renderCustomerHome = lazy(() => import('./pages/customer.js'), 'renderCustomerHome', true);
+const renderCustomerHome = lazy(() => import('./pages/customer.js'), 'renderCustomerHome'); // «طلباتي» قايمة بس: مفيش خريطة، فمبنستناش Leaflet (≈150KB) قبل الرسم
 const renderNewOrder = lazy(() => import('./pages/customer.js'), 'renderNewOrder', true);
 const renderOrder = lazy(() => import('./pages/order.js'), 'renderOrder', true);
 const renderReceipt = lazy(() => import('./pages/receipt.js'), 'renderReceipt');
@@ -144,12 +144,12 @@ function renderTopbar() {
       <button class="menu-item danger" role="menuitem" data-logout type="button">${raw(ICON.logout)}<span>${t('nav.logout')}</span></button>
     </div>`;
   render(topbar, html`<div class="wrap">
-    <a class="brand" href="#/">${raw(LOGO)}<span>${t('brand')}</span></a>
+    <a class="brand" href="#/home">${raw(LOGO)}<span>${t('brand')}</span></a>
     <nav class="nav" aria-label="main">${links.map(([href, k]) => html`<a href="#${href}" class="${here === '#' + href || (href === '/admin' && here.startsWith('#/admin')) ? 'on' : ''}${href === '/admin' ? ' nav-admin' : ''}${href === '/customer/new' ? ' nav-cta' : ''}">${t(k)}</a>`)}</nav>
     <div class="tb-tools">
       ${p ? html`<div class="tb-act"><button class="icon-btn" id="inboxBtn" type="button" aria-haspopup="dialog" aria-expanded="${inbox.open}" aria-label="${t('notif.title')}">${raw(ICON.bell)}${inbox.unread ? html`<b class="badge">${inbox.unread > 9 ? '9+' : inbox.unread}</b>` : ''}</button>${bellPanel}</div>` : ''}
       ${p ? '' : html`<button class="icon-btn" id="theme" type="button" aria-label="${t('ui.theme')}" aria-pressed="${theme === 'dark'}" title="${t('ui.theme')}">${raw(ICON.moon)}</button>
-      <button class="icon-btn lang-btn" id="lang" type="button" aria-label="${getLang() === 'ar' ? 'English' : 'العربية'}"><span aria-hidden="true">${getLang() === 'ar' ? 'EN' : 'ع'}</span></button>`}
+      <button class="icon-btn lang-btn" id="lang" type="button" aria-label="${getLang() === 'ar' ? 'EN English' : 'ع العربية'}"><span aria-hidden="true">${getLang() === 'ar' ? 'EN' : 'ع'}</span></button>`}
       ${p ? html`<div class="tb-user"><button class="avatar-btn" id="userBtn" type="button" aria-haspopup="menu" aria-expanded="${inbox.menu}" aria-label="${p.name}"><span class="avatar">${initial(p.name)}</span><span class="who">${p.name}</span><span class="chev">${raw(ICON.chev)}</span></button>${userMenu}</div>${inbox.menu ? html`<div class="scrim" aria-hidden="true"></div>` : ''}<button class="icon-btn tb-out" data-logout type="button" title="${t('nav.logout')}" aria-label="${t('nav.logout')}">${raw(ICON.logout)}<span class="tb-out-t">${t('nav.logout')}</span></button>`
         : state.user ? html`<button class="btn ghost sm" data-logout type="button">${t('nav.logout')}</button>` : html`<a class="btn primary sm" href="#/login">${t('nav.login')}</a>`}
     </div>
@@ -214,9 +214,24 @@ async function fillCompany() {
 
 // الملف الشخصي من السيرفر (Polling). بيتحدّث عند الدخول وبعد التسجيل وعند تغيّر حالة الحساب.
 async function loadProfile() {
-  try { state.profile = (await api('me')).profile; state.profileError = false; }
+  try {
+    // أداء: me والإعدادات بالتوازي (كانوا ورا بعض: me ← route ← settings ← تحميل الصفحة). فشل الإعدادات هنا بيتجاهل؛ route() بيحمّلها بالمسار القديم ويعرض الخطأ.
+    const [me, st] = await Promise.all([api('me'), state.settings ? null : api('settings').catch(() => null)]);
+    state.profile = me.profile; state.profileError = false; if (st?.settings && !state.settings) state.settings = st.settings;
+  }
   catch (e) { console.error(e); state.profile = null; state.profileError = true; }
-  state.ready = true; route(); startInbox();
+  state.ready = true; route(); startInbox(); prefetchPages();
+}
+// أداء: بعد ما الصفحة الأولى تترسم، نحمّل في وقت الفراغ وحدات الصفحات التانية بتاعة الدور ده (وLeaflet للعميل والسواق) عشان أول ضغطة تفتح بسرعة.
+function prefetchPages() {
+  const p = state.profile; if (!p || state.prefetched === p.role) return; state.prefetched = p.role;
+  const idle = window.requestIdleCallback || ((f) => setTimeout(f, 1500));
+  idle(() => {
+    const go2 = (...fs) => fs.forEach((f) => f().catch(() => {}));
+    if (p.role === 'customer') { go2(() => import('./pages/customer.js'), () => import('./pages/order.js')); loadLeaflet().catch(() => {}); }
+    else if (p.role === 'driver') { go2(() => import('./pages/driver.js'), () => import('./pages/order.js'), () => import('./pages/driver-dash.js')); loadLeaflet().catch(() => {}); }
+    else if (p.role === 'admin') go2(() => import('./pages/admin.js'));
+  });
 }
 window.addEventListener('app:profile-stale', loadProfile);
 
@@ -229,7 +244,7 @@ function route() {
   const show = () => { const v = document.createElement('main'); v.id = 'view'; v.className = 'wrap'; view.replaceWith(v); view = v; landing.hidden = true; hideLanding(); window.scrollTo(0, 0); };
   const showLand = () => { landing.hidden = false; view.hidden = true; showLanding({ user: state.user, home: HOME[state.profile?.role] || '/' }); initEstimate($('#estimate'), lpPublicPricing()); };
 
-  if (a === 'about' || (a && LP_IDS.has(a) && !b)) { showLand(); fillCompany(); requestAnimationFrame(() => document.getElementById(a === 'about' ? 'contact' : a)?.scrollIntoView()); return; } // صفحة تعريفية لكل الناس (زائر أو مسجّل)
+  if (a === 'home' || a === 'about' || (a && LP_IDS.has(a) && !b)) { showLand(); fillCompany(); requestAnimationFrame(() => { if (a === 'home') window.scrollTo(0, 0); else document.getElementById(a === 'about' ? 'contact' : a)?.scrollIntoView(); }); return; } // صفحة تعريفية لكل الناس (زائر أو مسجّل)
   if (!state.user) { // زائر
     if (!a) { showLand(); fillCompany(); return; }
     show();

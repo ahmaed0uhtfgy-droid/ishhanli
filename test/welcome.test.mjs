@@ -31,9 +31,11 @@ ok('الكارت بالإنجليزي', () => {
 });
 ok('العميل الجديد بيشوف الكارت، واللي عنده طلبات بيشوف القايمة بس', () => {
   const src = read('public/js/pages/customer.js');
-  assert.match(src, /orders\.length \? html`\$\{orders\.map\(\(o\) => waybill\(o\)\)\}` : welcomeCard\(\)/);
+  // v0.4: صفحة طلباتي بقت للطلبات بس (رسالة فاضية + زرار)، وكارت الترحيب/القواعد انتقل لصفحة «طلب جديد» جوه <details>
+  assert.match(src, /orders\.length \? html`\$\{orders\.map\(\(o\) => waybill\(o\)\)\}` : html`<div class="empty">/);
   assert.ok(src.includes("import { welcomeCard } from './welcome.js'"));
-  assert.ok(!src.includes('class="empty"><p>${t(\'customer.empty\')}'), 'الرسالة الفاضية القديمة اتشالت');
+  assert.ok(src.includes('welcomeCard({ cta: false })'), 'الكارت موجود في صفحة الطلب الجديد');
+  assert.ok(!/: welcomeCard\(\)\);/.test(src), 'مش بيظهر في صفحة طلباتي');
 });
 ok('CSS: القاعدة القديمة لسه موجودة + إخفاء زرار الرأس مع الكارت + موبايل + أقواس متوازنة', () => {
   const css = read('public/css/app.css');

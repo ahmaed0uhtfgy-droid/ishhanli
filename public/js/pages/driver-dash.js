@@ -79,7 +79,7 @@ export function renderDriverDash(view) {
         ${lt.items.length ? html`<ul class="plain">${lt.items.map((i) => html`<li class="row"><a class="grow" href="#/order/${i.orderId}"><b>${i.no}</b> · ${t('late.' + i.kind)}</a><span class="muted small">${fmtDate(i.dueAt)} (+${fmtNum(i.graceMin, 0)} ${t('late.min')})</span></li>`)}</ul>` : ''}</section>` : ''}
 
       <section class="card stack"><h3>${t('dash.levelTitle')}</h3>
-        <div class="row"><b>${t('trust.commission')}: <bdi>${tr.commissionPct}%</bdi></b><span class="muted small">${t('trust.perks')}</span></div>
+        <p class="muted small">${t('trust.perks')}</p>
         ${n ? html`<p class="hint">${t('trust.next')}: <b>${t('trust.level.' + n.level)}</b></p>
           ${[[t('trust.req.ratings'), S.ratingCount, n.ratings, t('trust.of', { cur: fmtNum(S.ratingCount, 0), target: fmtNum(n.ratings, 0) })]].map(([name, cur, target, txt]) => html`<div class="qbar"><span>${name}</span>${bar(Math.min(100, (cur / target) * 100), cur >= target ? 'ok' : '')}<b><bdi>${txt}</bdi></b></div>`)}
           <div class="qbar"><span>${t('trust.req.avg')}</span>${bar(S.ratingCount ? Math.min(100, (S.ratingAvg / n.avg) * 100) : 0, S.ratingCount && S.ratingAvg >= n.avg ? 'ok' : '')}<b><bdi>${S.ratingCount ? t('trust.avgNeed', { cur: S.ratingAvg, target: n.avg }) : t('trust.noRatingNeed', { target: n.avg })}</bdi></b></div>` : html`<p>${t('trust.top')}</p>`}</section>
