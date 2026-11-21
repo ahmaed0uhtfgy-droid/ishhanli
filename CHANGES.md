@@ -40,6 +40,5 @@
 | `test/welcome.test.mjs` | استبدال | `// كارت ترحيب العميل الجديد: نصوص عربي/إنجليزي، من غير أرقام أو ادعاءات، وبيظهر للي معندوش` |
 
 ## يدوي (مش في الـzip)
-- ارفع `functions/_lib/routes.js` و`functions/_lib/secHeaders.js` من `missing-files.zip` لو لسه ناقصين في GitHub.
+- ارفع `functions/_lib/routes.js` و`functions/_lib/secHeaders.js` من `missing-files.zip` لو لسه ناقصين.
 - احذف `public/llms.txt` من المستودع.
-- Secret: `GEMINI_API_KEY` في Cloudflare Pages ثم Redeploy.

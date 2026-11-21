@@ -124,14 +124,35 @@ export const aiProvider = (env) => {
   return env.GEMINI_API_KEY ? 'gemini' : env.ANTHROPIC_API_KEY ? 'anthropic' : null;
 };
 const aiErr = (status, code, detail) => { const e = new HttpError(status, code); e.detail = String(detail || '').replace(/key=[^&\s"']+/gi, 'key=***').slice(0, 300); return e; }; // التفاصيل بتوصل للأدمن بس (مسارات admin/)
-let geminiPick = null; // موديل لقيناه من ListModels لو الاسم الافتراضي مش متاح
-async function pickGeminiModel(env, signal) {
+let geminiPick = null; // آخر موديل اشتغل (أو اتلقى من ListModels)
+export const resetAiCache = () => { geminiPick = null; }; // للاختبارات
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** كل موديلات gemini-X-flash المتاحة (من غير lite/preview/…)، الأحدث أولاً */
+async function listFlash(env, signal) {
   const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { signal, headers: { 'x-goog-api-key': env.GEMINI_API_KEY } });
-  if (!r.ok) return null;
-  const list = ((await r.json()).models || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
+  if (!r.ok) return [];
+  return ((await r.json()).models || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
     .map((m) => String(m.name || '').replace(/^models\//, '')).filter((n) => /^gemini-[\d.]+-flash$/.test(n))
     .sort((a, b) => parseFloat(b.match(/[\d.]+/)[0]) - parseFloat(a.match(/[\d.]+/)[0]));
-  return list[0] || null;
+}
+/** استدعاء Gemini: لو الموديل مش موجود (404) أو عليه ضغط (429/5xx) نعيد المحاولة مرة (AI_RETRY_MS) وبعدين نجرّب موديل flash تاني متاح (حتى 4 موديلات). GEMINI_MODEL لو متحدد بيتستخدم هو بس. */
+async function geminiCall(env, signal, reqBody) {
+  const fixed = env.GEMINI_MODEL, wait = Number(env.AI_RETRY_MS ?? 2500);
+  const call = (m) => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`, { method: 'POST', signal, headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY }, body: reqBody });
+  const queue = [fixed || geminiPick || 'gemini-2.5-flash'], tried = new Set(); let listed = false, last = { status: 0, model: '', msg: '' };
+  while (queue.length && tried.size < 4) {
+    const model = queue.shift(); if (tried.has(model)) continue; tried.add(model);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await call(model);
+      if (res.ok) { if (!fixed) geminiPick = model; return res; }
+      let msg = ''; try { msg = (await res.json())?.error?.message || ''; } catch { /* ignore */ }
+      last = { status: res.status, model, msg };
+      if ((res.status === 429 || res.status >= 500) && attempt === 0) { await sleep(wait); continue; }
+      break;
+    }
+    if (!fixed && !listed && (last.status === 404 || last.status === 429 || last.status >= 500)) { listed = true; queue.push(...(await listFlash(env, signal)).filter((n) => !tried.has(n))); }
+  }
+  throw aiErr(502, 'ai_failed', `gemini ${last.status} (${last.model}): ${last.msg}`);
 }
 async function callAI(env, system, prompt) {
   const prov = aiProvider(env); if (!prov) throw new HttpError(503, 'ai_not_configured');
@@ -139,15 +160,7 @@ async function callAI(env, system, prompt) {
   try {
     let res, text;
     if (prov === 'gemini') {
-      let model = env.GEMINI_MODEL || geminiPick || 'gemini-2.5-flash';
-      const reqBody = JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0.95, maxOutputTokens: 8192, responseMimeType: 'application/json' } });
-      const call = (m) => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`, { method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY }, body: reqBody });
-      res = await call(model);
-      if (res.status === 404 && !env.GEMINI_MODEL) { // الموديل الافتراضي مش متاح على الحساب: نلاقي أحدث flash متاح ونعيد المحاولة مرة
-        const alt = await pickGeminiModel(env, ctl.signal);
-        if (alt && alt !== model) { geminiPick = alt; model = alt; res = await call(model); }
-      }
-      if (!res.ok) { let msg = ''; try { msg = (await res.json())?.error?.message || ''; } catch { /* ignore */ } throw aiErr(502, 'ai_failed', `gemini ${res.status} (${model}): ${msg}`); }
+      res = await geminiCall(env, ctl.signal, JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0.95, maxOutputTokens: 8192, responseMimeType: 'application/json' } }));
       const j = await res.json(); text = (j.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
     } else {
       res = await fetch('https://api.anthropic.com/v1/messages', {

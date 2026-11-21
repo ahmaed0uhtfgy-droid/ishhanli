@@ -7,6 +7,7 @@ import { onRequest as blogPage } from '../../functions/blog/[slug].js';
 import { onRequest as blogImg } from '../../functions/blog/img/[id].js';
 import { onRequest as sitemap } from '../../functions/sitemap.xml.js';
 import * as Blog from '../../functions/_lib/blog.js';
+import { resetAiCache } from '../../functions/_lib/blog.js';
 
 describe('دوال نقية', () => {
   it('slugify: عربي بدون تشكيل ولا رموز', () => { expect(slugify('نقلُ أثاثٍ من القاهرة إلى الإسكندرية!')).toBe('نقل-أثاث-من-القاهرة-إلى-الإسكندرية'); expect(slugify('  ')).toBe(''); expect(slugify('A/B c')).toBe('a-b-c'); });
@@ -32,7 +33,7 @@ describe('تكامل', () => {
   let h, origFetch, aiCalls = 0, aiBody;
   const good = () => ({ title: 'نقل أثاث من المنصورة للقاهرة: دليلك الكامل', slugWords: 'نقل اثاث المنصورة القاهرة', description: 'وصف '.repeat(30), excerpt: 'ملخص جذاب.', body: '## البداية\n' + 'فقرة مفيدة عن النقل. '.repeat(60) + '\n\n[[img:1]]\n\n## خطوات\n- جهّز\n- غلّف', faq: [['سؤال؟', 'إجابة.']], keywords: ['نقل أثاث', 'شحن'], imageIdeas: ['صورة تحميل'] });
   beforeAll(async () => {
-    h = await boot({ GEMINI_API_KEY: 'test-key' });
+    h = await boot({ GEMINI_API_KEY: 'test-key', AI_RETRY_MS: '0' });
     h.user('adm1', { role: 'admin', name: 'Adm', phone: '01000000001' }); h.user('cus1', { role: 'customer', name: 'Cus', phone: '01000000002' });
     origFetch = globalThis.fetch;
     globalThis.fetch = async (u, i) => { if (String(u).includes('generativelanguage.googleapis.com')) { aiCalls++; aiBody = JSON.parse(i.body); return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(good()) }] } }] }), { status: 200 }); } return origFetch(u, i); };
@@ -80,7 +81,7 @@ describe('تكامل', () => {
     expect((await h.call('adm1', 'admin/blog/generate', { title: 'قصير' })).status).toBe(400);
   });
   it('فشل Gemini: الأدمن يشوف السبب (من غير المفتاح)، والـ404 بيلاقي موديل flash شغّال لوحده', async () => {
-    const calls = []; const prev = globalThis.fetch;
+    resetAiCache(); const calls = []; const prev = globalThis.fetch;
     globalThis.fetch = async (u, i) => { const url = String(u); if (url.includes('generativelanguage.googleapis.com')) { calls.push(url); if (url.includes('/models?pageSize')) return new Response(JSON.stringify({ models: [{ name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] }, { name: 'models/gemini-3-flash', supportedGenerationMethods: ['generateContent'] }, { name: 'models/gemini-3-flash-lite', supportedGenerationMethods: ['generateContent'] }, { name: 'models/gemini-3-pro', supportedGenerationMethods: ['generateContent'] }] }), { status: 200 }); if (url.includes('gemini-2.5-flash:')) return new Response(JSON.stringify({ error: { message: 'models/gemini-2.5-flash is not found' } }), { status: 404 }); aiCalls++; return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(good()) }] } }] }), { status: 200 }); } return prev(u, i); };
     const r = await h.call('adm1', 'admin/blog/generate', { title: 'عنوان بعد اكتشاف الموديل', index: 0 }); expect(r.status).toBe(200);
     expect(calls.some((u) => u.includes('gemini-3-flash:generateContent'))).toBe(true); expect(calls.some((u) => u.includes('flash-lite:'))).toBe(false);
@@ -88,6 +89,16 @@ describe('تكامل', () => {
     h.env.GEMINI_MODEL = 'custom-model';
     const bad = await h.call('adm1', 'admin/blog/generate', { title: 'عنوان بمفتاح غلط', index: 0 }); expect(bad.status).toBe(502); expect(bad.error).toBe('ai_failed'); expect(bad.detail).toContain('gemini 400 (custom-model)'); expect(bad.detail).not.toContain('test-key');
     delete h.env.GEMINI_MODEL; globalThis.fetch = prev;
+  });
+  it('Gemini عليه ضغط (503): إعادة محاولة ثم موديل تاني، وبيفشل برسالة واضحة لو الكل مشغول', async () => {
+    resetAiCache(); const prev = globalThis.fetch, seen = [];
+    const list = new Response(JSON.stringify({ models: [{ name: 'models/gemini-3.8-flash', supportedGenerationMethods: ['generateContent'] }, { name: 'models/gemini-3.5-flash', supportedGenerationMethods: ['generateContent'] }, { name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] }] }), { status: 200 });
+    globalThis.fetch = async (u, i) => { const url = String(u); if (!url.includes('generativelanguage')) return prev(u, i); if (url.includes('/models?pageSize')) return list.clone(); const m = url.match(/models\/([^:]+):/)[1]; seen.push(m); if (m === 'gemini-2.5-flash' || m === 'gemini-3.8-flash') return new Response(JSON.stringify({ error: { message: 'high demand' } }), { status: 503 }); return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(good()) }] } }] }), { status: 200 }); };
+    const ok = await h.call('adm1', 'admin/blog/generate', { title: 'عنوان تحت ضغط الموديل', index: 0 }); expect(ok.status).toBe(200);
+    expect(seen).toEqual(['gemini-2.5-flash', 'gemini-2.5-flash', 'gemini-3.8-flash', 'gemini-3.8-flash', 'gemini-3.5-flash']); // محاولتين لكل موديل مشغول ثم الناجح
+    seen.length = 0; globalThis.fetch = async (u, i) => (String(u).includes('generativelanguage') ? (String(u).includes('/models?pageSize') ? list.clone() : (seen.push(1), new Response(JSON.stringify({ error: { message: 'high demand' } }), { status: 503 }))) : prev(u, i));
+    const bad = await h.call('adm1', 'admin/blog/generate', { title: 'عنوان والكل مشغول', index: 0 }); expect(bad.status).toBe(502); expect(bad.detail).toContain('503'); expect(bad.detail).toContain('high demand'); expect(seen.length).toBeLessThanOrEqual(8);
+    globalThis.fetch = prev;
   });
   it('مفيش مفتاح AI: خطأ واضح مش 500', async () => {
     const saved = h.env.GEMINI_API_KEY; delete h.env.GEMINI_API_KEY;
