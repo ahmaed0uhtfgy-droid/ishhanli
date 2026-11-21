@@ -123,29 +123,42 @@ export const aiProvider = (env) => {
   if (p === 'gemini' && env.GEMINI_API_KEY) return 'gemini';
   return env.GEMINI_API_KEY ? 'gemini' : env.ANTHROPIC_API_KEY ? 'anthropic' : null;
 };
+const aiErr = (status, code, detail) => { const e = new HttpError(status, code); e.detail = String(detail || '').replace(/key=[^&\s"']+/gi, 'key=***').slice(0, 300); return e; }; // التفاصيل بتوصل للأدمن بس (مسارات admin/)
+let geminiPick = null; // موديل لقيناه من ListModels لو الاسم الافتراضي مش متاح
+async function pickGeminiModel(env, signal) {
+  const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { signal, headers: { 'x-goog-api-key': env.GEMINI_API_KEY } });
+  if (!r.ok) return null;
+  const list = ((await r.json()).models || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
+    .map((m) => String(m.name || '').replace(/^models\//, '')).filter((n) => /^gemini-[\d.]+-flash$/.test(n))
+    .sort((a, b) => parseFloat(b.match(/[\d.]+/)[0]) - parseFloat(a.match(/[\d.]+/)[0]));
+  return list[0] || null;
+}
 async function callAI(env, system, prompt) {
   const prov = aiProvider(env); if (!prov) throw new HttpError(503, 'ai_not_configured');
   const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 100000);
   try {
     let res, text;
     if (prov === 'gemini') {
-      const model = env.GEMINI_MODEL || 'gemini-2.5-flash';
-      res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-        method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-        body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0.95, maxOutputTokens: 8192, responseMimeType: 'application/json' } }),
-      });
-      if (!res.ok) throw new HttpError(502, 'ai_failed', `gemini ${res.status}`);
+      let model = env.GEMINI_MODEL || geminiPick || 'gemini-2.5-flash';
+      const reqBody = JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0.95, maxOutputTokens: 8192, responseMimeType: 'application/json' } });
+      const call = (m) => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`, { method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY }, body: reqBody });
+      res = await call(model);
+      if (res.status === 404 && !env.GEMINI_MODEL) { // الموديل الافتراضي مش متاح على الحساب: نلاقي أحدث flash متاح ونعيد المحاولة مرة
+        const alt = await pickGeminiModel(env, ctl.signal);
+        if (alt && alt !== model) { geminiPick = alt; model = alt; res = await call(model); }
+      }
+      if (!res.ok) { let msg = ''; try { msg = (await res.json())?.error?.message || ''; } catch { /* ignore */ } throw aiErr(502, 'ai_failed', `gemini ${res.status} (${model}): ${msg}`); }
       const j = await res.json(); text = (j.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
     } else {
       res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
         body: JSON.stringify({ model: env.ANTHROPIC_MODEL || 'claude-sonnet-5-5', max_tokens: 8000, temperature: 1, system, messages: [{ role: 'user', content: prompt }] }),
       });
-      if (!res.ok) throw new HttpError(502, 'ai_failed', `anthropic ${res.status}`);
+      if (!res.ok) { let msg = ''; try { msg = (await res.json())?.error?.message || ''; } catch { /* ignore */ } throw aiErr(502, 'ai_failed', `anthropic ${res.status}: ${msg}`); }
       const j = await res.json(); text = (j.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
     }
     return text;
-  } catch (e) { if (e instanceof HttpError) throw e; throw new HttpError(502, 'ai_failed', String(e?.message || e).slice(0, 120)); } finally { clearTimeout(timer); }
+  } catch (e) { if (e instanceof HttpError) throw e; throw aiErr(502, 'ai_failed', String(e?.message || e)); } finally { clearTimeout(timer); }
 }
 /** JSON من رد النموذج (بيشيل سياج ``` ويقتطع من أول { لآخر }) */
 export function parseAiJson(text) {

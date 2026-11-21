@@ -566,3 +566,9 @@ a.kpi:hover { border-color: var(--line); transform: translateY(-2px); transition
 @media (max-width: 760px) { .welcome-steps, .welcome-trust { grid-template-columns: 1fr; } .welcome-cta { width: 100%; } }
 .nextsteps .welcome-steps { grid-template-columns: 1fr; }
 .nextsteps-push { display: flex; gap: .7rem; align-items: center; flex-wrap: wrap; border-inline-start: 4px solid var(--line); padding: .3rem .8rem; }
+
+/* ---------- تثبيت كتطبيق ---------- */
+.linklike { font: inherit; color: inherit; background: none; border: 0; padding: 0; text-decoration: underline; cursor: pointer; }
+.install-bar { position: fixed; inset-inline: .75rem; bottom: .75rem; z-index: 1500; display: flex; align-items: center; gap: .75rem; background: var(--asphalt); color: var(--paper); border-radius: 14px; padding: .7rem .9rem; box-shadow: 0 8px 28px rgba(0,0,0,.28); }
+.install-x { background: none; border: 0; color: inherit; font-size: 1.5rem; line-height: 1; cursor: pointer; padding: 0 .25rem; }
+.install-steps { padding-inline-start: 1.3rem; display: grid; gap: .6rem; line-height: 1.8; }

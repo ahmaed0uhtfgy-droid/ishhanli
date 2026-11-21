@@ -19,7 +19,7 @@ export async function api(route, body = {}) {
   } catch { const e = new Error('network'); e.code = 'network'; throw e; }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
-    const e = new Error(j.error || 'server_error'); e.code = j.error || 'server_error'; e.status = r.status;
+    const e = new Error(j.error || 'server_error'); e.code = j.error || 'server_error'; e.status = r.status; if (j.detail) e.detail = String(j.detail).slice(0, 400); // تفاصيل للأدمن بس (السيرفر بيبعتها لمسارات admin/)
     if (e.code === 'account_not_active') window.dispatchEvent(new Event('app:profile-stale')); // حالة الحساب اتغيّرت (تجميد/حظر)
     if (e.code === 'totp_required') { twofa.clear(); window.dispatchEvent(new Event('app:2fa-required')); } // جلسة التحقق بخطوتين خلصت
     throw e;

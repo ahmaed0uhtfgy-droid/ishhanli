@@ -10,6 +10,11 @@ import { renderLogin, renderRegister, renderForgot, renderStatus } from './pages
 import { initEstimate } from './pages/estimate-widget.js';
 import { showLanding, hideLanding, lpPublicPricing } from './landing.js';
 import { initErrorReporting } from './report.js';
+
+// تثبيت كتطبيق: لازم نلقط beforeinstallprompt بدري (بيجي مرة واحدة)، والواجهة نفسها في install.js بتتحمّل وقت الخمول
+window.__bip = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); window.__bip = e; });
+(window.requestIdleCallback || ((f) => setTimeout(f, 3000)))(() => import('./install.js').then((m) => m.initInstall()).catch(() => {}));
 // app.css بيتحمّل غير حاجب على الصفحة الرئيسية (الـHTML فيه CSS الحرج)؛ نفعّله أول ما التطبيق يشتغل.
 { const ac = document.getElementById('appcss'); if (ac) ac.media = 'all'; }
 

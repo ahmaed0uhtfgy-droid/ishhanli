@@ -79,6 +79,16 @@ describe('تكامل', () => {
     expect(aiBody.contents[0].parts[0].text).toContain(ANGLES[1][1]);
     expect((await h.call('adm1', 'admin/blog/generate', { title: 'قصير' })).status).toBe(400);
   });
+  it('فشل Gemini: الأدمن يشوف السبب (من غير المفتاح)، والـ404 بيلاقي موديل flash شغّال لوحده', async () => {
+    const calls = []; const prev = globalThis.fetch;
+    globalThis.fetch = async (u, i) => { const url = String(u); if (url.includes('generativelanguage.googleapis.com')) { calls.push(url); if (url.includes('/models?pageSize')) return new Response(JSON.stringify({ models: [{ name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] }, { name: 'models/gemini-3-flash', supportedGenerationMethods: ['generateContent'] }, { name: 'models/gemini-3-flash-lite', supportedGenerationMethods: ['generateContent'] }, { name: 'models/gemini-3-pro', supportedGenerationMethods: ['generateContent'] }] }), { status: 200 }); if (url.includes('gemini-2.5-flash:')) return new Response(JSON.stringify({ error: { message: 'models/gemini-2.5-flash is not found' } }), { status: 404 }); aiCalls++; return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(good()) }] } }] }), { status: 200 }); } return prev(u, i); };
+    const r = await h.call('adm1', 'admin/blog/generate', { title: 'عنوان بعد اكتشاف الموديل', index: 0 }); expect(r.status).toBe(200);
+    expect(calls.some((u) => u.includes('gemini-3-flash:generateContent'))).toBe(true); expect(calls.some((u) => u.includes('flash-lite:'))).toBe(false);
+    globalThis.fetch = async (u, i) => (String(u).includes('generativelanguage') ? new Response(JSON.stringify({ error: { message: 'API key not valid. Please pass a valid API key. key=test-key' } }), { status: 400 }) : prev(u, i));
+    h.env.GEMINI_MODEL = 'custom-model';
+    const bad = await h.call('adm1', 'admin/blog/generate', { title: 'عنوان بمفتاح غلط', index: 0 }); expect(bad.status).toBe(502); expect(bad.error).toBe('ai_failed'); expect(bad.detail).toContain('gemini 400 (custom-model)'); expect(bad.detail).not.toContain('test-key');
+    delete h.env.GEMINI_MODEL; globalThis.fetch = prev;
+  });
   it('مفيش مفتاح AI: خطأ واضح مش 500', async () => {
     const saved = h.env.GEMINI_API_KEY; delete h.env.GEMINI_API_KEY;
     const r = await h.call('adm1', 'admin/blog/generate', { title: 'عنوان بدون مفتاح' }); expect(r.status).toBe(503); expect(r.error).toBe('ai_not_configured');

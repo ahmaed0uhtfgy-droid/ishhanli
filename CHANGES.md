@@ -1,4 +1,4 @@
-# الملفات المتغيّرة (33) — كل ملف كامل بمساره
+# الملفات المتغيّرة (36) — كل ملف كامل بمساره
 
 | الملف | الإجراء | أول سطر (للتحقق من اللصق) |
 |---|---|---|
@@ -18,10 +18,12 @@
 | `public/css/app.css` | استبدال | `/* اشحنلي — نظام تصميم: أسفلت + أصفر خط الطريق + بوليصة شحن */` |
 | `public/css/landing.css` | استبدال | `/* الصفحة الرئيسية — التصميمان (a: فاتح أصلاً، b: ليلي أصلاً) وكل واحد له وضع نهاري وليلي.` |
 | `public/index.html` | استبدال | `<!doctype html>` |
+| `public/js/api.js` | استبدال | `import { auth } from './firebase.js';` |
 | `public/js/app.js` | استبدال | `import { auth, onAuthStateChanged, signOut } from './firebase.js';` |
 | `public/js/firebase.js` | استبدال | `// Firebase هنا للدخول (Auth) فقط. كل البيانات على Cloudflare D1 عبر /api/*` |
 | `public/js/i18n-admin.js` | استبدال | `// نصوص لوحة الأدمن` |
 | `public/js/i18n.js` | استبدال | `import { APP } from './config.js';` |
+| `public/js/install.js` | ملف جديد | `// تثبيت الموقع كتطبيق على الموبايل (PWA): زرار «ثبّت التطبيق» في الفوتر + شريط على الموبا` |
 | `public/js/pages/admin-blog.js` | ملف جديد | `// لوحة الأدمن: المقالات (SEO). توليد بالذكاء الاصطناعي كمسودات، جدولة تلقائية، تعديل/إضاف` |
 | `public/js/pages/admin.js` | استبدال | `import { api, poll } from '../api.js';` |
 | `public/js/pages/auth.js` | استبدال | `import { vehicleSelect, wireVehicleSelect } from '../vpicker.js';` |
@@ -31,11 +33,13 @@
 | `test/e2e/changes.spec.mjs` | ملف جديد | `// اختبارات المتصفح لتعديلات v0.4: اللوجو ← الرئيسية، التسجيل كشركة شحن، «طلباتي» والترحيب` |
 | `test/e2e/fake-firebase/firebase-auth.js` | استبدال | `// بديل اختباري لـ firebase-auth: الحسابات والتوكنات بيتولّدوا من سيرفر الاختبار (test/e2e` |
 | `test/unit/blog.spec.mjs` | ملف جديد | `// اختبار نظام المقالات: دوال نقية (سلاج/Markdown آمن/يوتيوب/JSON) + تكامل حقيقي فوق API و` |
+| `test/unit/install.spec.mjs` | ملف جديد | `// اختيار طريقة تثبيت التطبيق حسب الجهاز/المتصفح` |
 | `test/unit/orders-limit.spec.mjs` | ملف جديد | `// حد قايمة «طلباتي» بيتظبط من الأدمن (الإعدادات) ومحصور بين 20 و300` |
 | `test/unit/seo-checklist.spec.mjs` | ملف جديد | `// قايمة الـ20 نقطة SEO: كل نقطة بتتفحص بكود على الصفحات الفعلية (رئيسية + محتوى + طرق + م` |
 | `test/unit/seo.spec.mjs` | استبدال | `// اختبار SEO شامل: بيستدعي كل function صفحة فعلياً (من غير شبكة) ويتأكد من العناصر اللي م` |
 | `test/welcome.test.mjs` | استبدال | `// كارت ترحيب العميل الجديد: نصوص عربي/إنجليزي، من غير أرقام أو ادعاءات، وبيظهر للي معندوش` |
 
 ## يدوي (مش في الـzip)
-- احذف `public/llms.txt` من المستودع (قديم؛ الـfunction هي اللي بتخدم).
-- ضيف Secret: `GEMINI_API_KEY` (أو `ANTHROPIC_API_KEY`) في Cloudflare Pages ثم Redeploy.
+- ارفع `functions/_lib/routes.js` و`functions/_lib/secHeaders.js` من `missing-files.zip` لو لسه ناقصين في GitHub.
+- احذف `public/llms.txt` من المستودع.
+- Secret: `GEMINI_API_KEY` في Cloudflare Pages ثم Redeploy.

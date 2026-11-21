@@ -173,3 +173,5 @@ html:not([data-theme=dark]) .lp-stats strong{color:#876829}
 .blog-list{list-style:none;padding:0;display:grid;gap:14px}.blog-card{display:grid;gap:6px;padding:18px 20px;border:1px solid var(--ln);border-radius:14px;color:inherit;text-decoration:none}.blog-card b{font-size:1.15rem}.blog-card span{color:var(--mu)}.blog-card small{color:var(--mu)}
 .blog-rel{padding-inline-start:1.2rem}
 
+
+.lp-foot button[data-install]{font:inherit;color:inherit;background:none;border:0;text-decoration:underline;cursor:pointer;padding:0}

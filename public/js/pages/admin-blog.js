@@ -63,7 +63,7 @@ registerRows([
   ['blog.err.ai_bad_output', 'الرد مش مفهوم، جرّب تاني', 'AI output was unusable, try again'],
 ]);
 
-const errText = (e) => { const k = 'blog.err.' + (e?.code || ''); const s = t(k); return s && s !== k ? s : errMsg(e); };
+const errText = (e) => { const k = 'blog.err.' + (e?.code || ''); const s = t(k); return (s && s !== k ? s : errMsg(e)) + (e?.detail ? ` — ${e.detail}` : ''); };
 const faqToText = (faq) => (faq || []).map(([q, a]) => `${q} | ${a}`).join('\n');
 const textToFaq = (s) => String(s || '').split('\n').map((l) => l.split('|').map((x) => x.trim())).filter((p) => p[0] && p[1]).map((p) => [p[0], p.slice(1).join(' | ')]);
 

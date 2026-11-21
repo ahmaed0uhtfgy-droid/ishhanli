@@ -77,3 +77,27 @@ test('الأدمن: تبويب المقالات ← مقال يدوي ← نشر
   expect(await (await request.get('/sitemap.xml')).text()).toContain(encodeURIComponent(slug));
   await page.goto('/blog/' + encodeURIComponent(slug)); await expect(page.locator('h1')).toHaveText(title); await expect(page.locator('footer a[href="/blog"]')).toBeVisible();
 });
+
+test.describe('تثبيت كتطبيق على الموبايل', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 800 }, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' });
+  test('آيفون: زرار الفوتر بيفتح شرح خطوات Safari، والشريط بيظهر ويتقفل ويفتكر القفل', async ({ page }) => {
+    await page.goto('/#/rules'); const btn = page.locator('footer.site [data-install]'); await expect(btn).toBeVisible({ timeout: 10000 });
+    await btn.click(); const m = page.locator('.modal'); await expect(m).toContainText('إضافة إلى الشاشة الرئيسية'); await expect(m.locator('li')).toHaveCount(4);
+    await m.locator('[data-close]').click(); await expect(m).toHaveCount(0);
+    const bar = page.locator('.install-bar'); await expect(bar).toBeVisible({ timeout: 15000 });
+    await bar.locator('.install-x').click(); await expect(bar).toHaveCount(0);
+    await page.reload(); await page.waitForTimeout(8000); await expect(page.locator('.install-bar')).toHaveCount(0); // اتقفل ← مبيرجعش قبل 14 يوم
+  });
+  test('أندرويد/كروم: beforeinstallprompt بيتلقط وزرار «ثبّت» بيفتح النافذة الأصلية', async ({ page }) => {
+    await page.addInitScript(() => { Object.defineProperty(navigator, 'userAgent', { get: () => 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36' }); });
+    await page.goto('/#/rules');
+    await page.evaluate(() => { const e = new Event('beforeinstallprompt', { cancelable: true }); e.prompt = async () => { window.__prompted = true; }; e.userChoice = Promise.resolve({ outcome: 'accepted' }); window.dispatchEvent(e); });
+    const bar = page.locator('.install-bar'); await expect(bar).toBeVisible({ timeout: 15000 }); await bar.locator('button.btn').click();
+    await expect.poll(() => page.evaluate(() => window.__prompted === true)).toBe(true);
+    await expect(page.locator('.modal')).toHaveCount(0); // نافذة المتصفح الأصلية بدل الشرح
+  });
+  test('متثبّت بالفعل (standalone): مفيش زرار ولا شريط', async ({ page }) => {
+    await page.addInitScript(() => { const mm = window.matchMedia.bind(window); window.matchMedia = (q) => (/display-mode:\s*standalone/.test(q) ? { matches: true, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} } : mm(q)); });
+    await page.goto('/#/rules'); await page.waitForTimeout(8000); await expect(page.locator('[data-install]')).toHaveCount(0); await expect(page.locator('.install-bar')).toHaveCount(0);
+  });
+});
