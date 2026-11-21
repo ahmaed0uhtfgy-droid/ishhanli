@@ -1,4 +1,4 @@
-# الملفات المتغيّرة (36) — كل ملف كامل بمساره
+# الملفات المتغيّرة (38) — كل ملف كامل بمساره
 
 | الملف | الإجراء | أول سطر (للتحقق من اللصق) |
 |---|---|---|
@@ -8,6 +8,7 @@
 | `functions/_lib/landing.js` | استبدال | `// الصفحة الرئيسية من السيرفر: HTML كامل للتصميمين (SEO + محركات الذكاء الاصطناعي بتقرا من` |
 | `functions/_lib/logic.js` | استبدال | `import { HttpError } from './core.js';` |
 | `functions/_lib/pages.js` | استبدال | `// صفحات المحتوى الثابتة للسيو (كل صفحة بنية بحث مستقلة): /how-it-works و /for-drivers و /` |
+| `functions/_lib/secHeaders.js` | استبدال | `// رؤوس الأمان العامة لردود الـFunctions. السبب: ملف public/_headers بيتطبّق على الملفات ا` |
 | `functions/api/[[route]].js` | استبدال | `// كل المنطق الحساس (الصلاحيات، السعر، Escrow، العمولة، المحفظة، النزاعات) بيتنفذ هنا على ` |
 | `functions/blog/[slug].js` | ملف جديد | `// صفحة مقال: GET /blog/<slug> — HTML كامل من السيرفر (Article JSON-LD + FAQPage + breadcr` |
 | `functions/blog/img/[id].js` | ملف جديد | `// صورة مقال عامة: GET /blog/img/<id> — ملفات نوع blog فقط (اللي الأدمن رفعها)` |
@@ -15,6 +16,7 @@
 | `functions/index.js` | استبدال | `// الصفحة الرئيسية "/" من السيرفر: HTML كامل للتصميم الفعّال (بإعدادات الأدمن) عشان جوجل و` |
 | `functions/sitemap.xml.js` | استبدال | `// خريطة الموقع الديناميكية: GET /sitemap.xml — الصفحات الأساسية + كل طرق النقل + (لو الصف` |
 | `playwright.config.mjs` | استبدال | `import { defineConfig, devices } from '@playwright/test';` |
+| `public/_headers` | استبدال | `/*` |
 | `public/css/app.css` | استبدال | `/* اشحنلي — نظام تصميم: أسفلت + أصفر خط الطريق + بوليصة شحن */` |
 | `public/css/landing.css` | استبدال | `/* الصفحة الرئيسية — التصميمان (a: فاتح أصلاً، b: ليلي أصلاً) وكل واحد له وضع نهاري وليلي.` |
 | `public/index.html` | استبدال | `<!doctype html>` |
@@ -40,5 +42,5 @@
 | `test/welcome.test.mjs` | استبدال | `// كارت ترحيب العميل الجديد: نصوص عربي/إنجليزي، من غير أرقام أو ادعاءات، وبيظهر للي معندوش` |
 
 ## يدوي (مش في الـzip)
-- ارفع `functions/_lib/routes.js` و`functions/_lib/secHeaders.js` من `missing-files.zip` لو لسه ناقصين.
+- ارفع `functions/_lib/routes.js` و`functions/_lib/secHeaders.js` من `missing-files.zip` لو لسه ناقصين. (secHeaders.js اتعدّل: استخدم النسخة اللي في الـzip الرئيسي.)
 - احذف `public/llms.txt` من المستودع.

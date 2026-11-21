@@ -100,6 +100,17 @@ describe('تكامل', () => {
     const bad = await h.call('adm1', 'admin/blog/generate', { title: 'عنوان والكل مشغول', index: 0 }); expect(bad.status).toBe(502); expect(bad.detail).toContain('503'); expect(bad.detail).toContain('high demand'); expect(seen.length).toBeLessThanOrEqual(8);
     globalThis.fetch = prev;
   });
+  it('الموديل رفض حقل thinking (400): بيعيد من غيره على نفس الموديل', async () => {
+    resetAiCache(); const prev = globalThis.fetch, bodies = []; h.env.GEMINI_MODEL = 'gemini-x-flash';
+    globalThis.fetch = async (u, i) => { if (!String(u).includes('generativelanguage')) return prev(u, i); const b = JSON.parse(i.body); bodies.push(!!b.generationConfig.thinkingConfig); if (b.generationConfig.thinkingConfig) return new Response(JSON.stringify({ error: { message: 'Invalid JSON payload: Unknown name "thinkingConfig"' } }), { status: 400 }); return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(good()) }] } }] }), { status: 200 }); };
+    try { const r = await h.call('adm1', 'admin/blog/generate', { title: 'عنوان موديل بدون تفكير', index: 0 }); expect(r.status).toBe(200); expect(bodies).toEqual([true, false]); } finally { delete h.env.GEMINI_MODEL; globalThis.fetch = prev; }
+  });
+  it('موديل بطيء (timeout لكل محاولة): بيقطع ويجرّب موديل تاني بدل ما يستنى للأبد', async () => {
+    resetAiCache(); const prev = globalThis.fetch, seen = []; h.env.AI_ATTEMPT_MS = '30';
+    const list = JSON.stringify({ models: [{ name: 'models/gemini-9-flash', supportedGenerationMethods: ['generateContent'] }, { name: 'models/gemini-8-flash', supportedGenerationMethods: ['generateContent'] }] });
+    globalThis.fetch = async (u, i) => { const url = String(u); if (!url.includes('generativelanguage')) return prev(u, i); if (url.includes('/models?pageSize')) return new Response(list, { status: 200 }); const m = url.match(/models\/([^:]+):/)[1]; seen.push(m); if (m !== 'gemini-8-flash') return new Promise((_, rej) => i.signal.addEventListener('abort', () => rej(new Error('aborted')))); return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(good()) }] } }] }), { status: 200 }); };
+    try { const r = await h.call('adm1', 'admin/blog/generate', { title: 'عنوان موديل بطيء جدا', index: 0 }); expect(r.status).toBe(200); expect(seen[seen.length - 1]).toBe('gemini-8-flash'); expect(seen.filter((m) => m === 'gemini-2.5-flash').length).toBe(2); } finally { delete h.env.AI_ATTEMPT_MS; globalThis.fetch = prev; }
+  });
   it('مفيش مفتاح AI: خطأ واضح مش 500', async () => {
     const saved = h.env.GEMINI_API_KEY; delete h.env.GEMINI_API_KEY;
     const r = await h.call('adm1', 'admin/blog/generate', { title: 'عنوان بدون مفتاح' }); expect(r.status).toBe(503); expect(r.error).toBe('ai_not_configured');

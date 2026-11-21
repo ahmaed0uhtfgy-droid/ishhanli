@@ -271,6 +271,7 @@ async function expireOrder(env, o) {
   return true;
 }
 let lastSweep = 0;
+let lastStamp = null; // آخر عدّادات اتقرت بنجاح (للـsync لو القراءة فشلت)
 async function sweepExpired(env) {
   if (Date.now() - lastSweep < Number(env.SWEEP_MIN_INTERVAL_MS ?? 120000)) return; // نفحص كل دقيقتين كحد أقصى (كل مرة بتتحاسب ≈ مستند لكل طلب شغّال؛ القياس: 121 قراءة لـ160 طلب) — التأخير مش محسوس لأن المهام بالدقايق/الساعات
   lastSweep = Date.now();
@@ -406,7 +407,11 @@ const ROUTES = {
   // أرخص طلب ممكن (قراءة واحدة، من غير فحص المستخدم): عدّادات "إيه اللي اتغيّر" — الواجهة بتجيب القوائم الكبيرة بس لما عدّاد يتغيّر.
   async sync({ env, waitUntil }) {
     bg({ waitUntil }, sweepExpired(env)); // إنهاء الطلبات المدفوعة مقدماً اللي ماحدش قبلها بيحصل مع التحديث
-    const r = await F.stampGet(env);
+    let r;
+    try { r = await F.stampGet(env); lastStamp = r; }
+    catch (e) { // استطلاع متكرر: لو قراءة Firestore فشلت لحظياً نرجّع آخر عدّادات معروفة بدل 500 (الواجهة بتحاول تاني لوحدها) ونسجّل السبب في اللوج
+      console.error('sync_stamp_failed', e?.message || e); r = lastStamp;
+    }
     return { stamp: Object.fromEntries(STAMP_KINDS.map((k) => [k, r?.[k] || 0])) };
   },
   async settings({ env }) { return { settings: { ...(await loadSettings(env)), testPaymentsAllowed: env.ALLOW_TEST_PAYMENTS === '1', deliveryCodeAvailable: !!env.DELIVERY_CODE_SECRET } }; }, // الدفع التجريبي لازم يتفعّل كمان من متغيّر Cloudflare (fail-closed)

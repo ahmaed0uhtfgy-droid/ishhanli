@@ -135,22 +135,34 @@ async function listFlash(env, signal) {
     .map((m) => String(m.name || '').replace(/^models\//, '')).filter((n) => /^gemini-[\d.]+-flash$/.test(n))
     .sort((a, b) => parseFloat(b.match(/[\d.]+/)[0]) - parseFloat(a.match(/[\d.]+/)[0]));
 }
-/** استدعاء Gemini: لو الموديل مش موجود (404) أو عليه ضغط (429/5xx) نعيد المحاولة مرة (AI_RETRY_MS) وبعدين نجرّب موديل flash تاني متاح (حتى 4 موديلات). GEMINI_MODEL لو متحدد بيتستخدم هو بس. */
-async function geminiCall(env, signal, reqBody) {
-  const fixed = env.GEMINI_MODEL, wait = Number(env.AI_RETRY_MS ?? 2500);
-  const call = (m) => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`, { method: 'POST', signal, headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY }, body: reqBody });
+/** استدعاء Gemini. كل محاولة ليها مهلة (AI_ATTEMPT_MS، الافتراضي 45 ث)؛ لو الموديل مش موجود (404) أو عليه ضغط (429/5xx) أو اتأخر نعيد المحاولة مرة (AI_RETRY_MS) وبعدين نجرّب موديل flash تاني متاح (حتى 4 موديلات) في حدود ~90 ث إجمالاً (قبل مهلة الـproxy). GEMINI_MODEL لو متحدد بيتستخدم هو بس.
+ *  بنطلب أقل «تفكير» ممكن (موديلات 2.5: thinkingBudget=0، الأحدث: thinkingLevel=low) لأن التفكير بيطوّل الرد جداً؛ ولو الموديل رفض الحقل (400 بيذكر thinking) بنعيد من غير. */
+async function geminiCall(env, system, prompt) {
+  const fixed = env.GEMINI_MODEL, wait = Number(env.AI_RETRY_MS ?? 2500), per = Number(env.AI_ATTEMPT_MS ?? 45000), t0 = Date.now(), budget = Number(env.AI_BUDGET_MS ?? 90000);
+  const body = (m, think) => JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0.95, maxOutputTokens: 12000, responseMimeType: 'application/json', ...(think ? { thinkingConfig: /2\.5/.test(m) ? { thinkingBudget: 0 } : { thinkingLevel: 'low' } } : {}) } });
+  const call = async (m, think) => {
+    const c = new AbortController(), tm = setTimeout(() => c.abort(), per);
+    try { return await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`, { method: 'POST', signal: c.signal, headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY }, body: body(m, think) }); }
+    catch (e) { return new Response(JSON.stringify({ error: { message: c.signal.aborted ? `timeout ${Math.round(per / 1000)}s` : String(e?.message || e) } }), { status: 504 }); }
+    finally { clearTimeout(tm); }
+  };
+  const msgOf = async (res) => { try { return (await res.clone().json())?.error?.message || ''; } catch { return ''; } };
   const queue = [fixed || geminiPick || 'gemini-2.5-flash'], tried = new Set(); let listed = false, last = { status: 0, model: '', msg: '' };
-  while (queue.length && tried.size < 4) {
+  while (queue.length && tried.size < 4 && Date.now() - t0 < budget) {
     const model = queue.shift(); if (tried.has(model)) continue; tried.add(model);
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const res = await call(model);
+    let think = true;
+    for (let attempt = 0; attempt < 2 && Date.now() - t0 < budget; attempt++) {
+      let res = await call(model, think), msg = res.ok ? '' : await msgOf(res);
+      if (!res.ok && res.status === 400 && think && /thinking/i.test(msg)) { think = false; res = await call(model, false); msg = res.ok ? '' : await msgOf(res); }
       if (res.ok) { if (!fixed) geminiPick = model; return res; }
-      let msg = ''; try { msg = (await res.json())?.error?.message || ''; } catch { /* ignore */ }
       last = { status: res.status, model, msg };
       if ((res.status === 429 || res.status >= 500) && attempt === 0) { await sleep(wait); continue; }
       break;
     }
-    if (!fixed && !listed && (last.status === 404 || last.status === 429 || last.status >= 500)) { listed = true; queue.push(...(await listFlash(env, signal)).filter((n) => !tried.has(n))); }
+    if (!fixed && !listed && (last.status === 404 || last.status === 429 || last.status >= 500)) {
+      listed = true; const c = new AbortController(), tm = setTimeout(() => c.abort(), 15000);
+      try { queue.push(...(await listFlash(env, c.signal)).filter((n) => !tried.has(n))); } catch { /* نكمّل بالمتاح */ } finally { clearTimeout(tm); }
+    }
   }
   throw aiErr(502, 'ai_failed', `gemini ${last.status} (${last.model}): ${last.msg}`);
 }
@@ -160,7 +172,7 @@ async function callAI(env, system, prompt) {
   try {
     let res, text;
     if (prov === 'gemini') {
-      res = await geminiCall(env, ctl.signal, JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0.95, maxOutputTokens: 8192, responseMimeType: 'application/json' } }));
+      res = await geminiCall(env, system, prompt);
       const j = await res.json(); text = (j.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
     } else {
       res = await fetch('https://api.anthropic.com/v1/messages', {
