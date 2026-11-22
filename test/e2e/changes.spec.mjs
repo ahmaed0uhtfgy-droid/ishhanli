@@ -101,3 +101,14 @@ test.describe('تثبيت كتطبيق على الموبايل', () => {
     await page.goto('/#/rules'); await page.waitForTimeout(8000); await expect(page.locator('[data-install]')).toHaveCount(0); await expect(page.locator('.install-bar')).toHaveCount(0);
   });
 });
+
+test('فشل التوليد: السبب يفضل ظاهر في الصفحة (مش تنبيه بيختفي)', async ({ page }) => {
+  await login(page, 'admin@e2e.test', 'Admin#12345');
+  await page.route('**/api/admin/blog/list', async (r) => { const res = await r.fetch(); const j = await res.json(); r.fulfill({ response: res, json: { ...j, ai: 'gemini' } }); }); // بيئة الاختبار من غير مفتاح AI: نحاكي إنه موجود عشان الزرار يتفعّل
+  await page.route('**/api/admin/blog/generate', (r) => r.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ error: 'ai_failed', detail: 'gemini 503 (gemini-x-flash): high demand' }) }));
+  await page.goto('/#/admin/blog'); await expect(page.locator('#gen')).toBeVisible({ timeout: 15000 });
+  await page.fill('#gen input[name=title]', 'عنوان اختبار فشل التوليد'); await page.click('#gen button[type=submit]');
+  const msg = page.locator('#genMsg'); await expect(msg).toContainText('high demand', { timeout: 10000 }); await expect(msg).toContainText('HTTP 502'); await expect(msg).toHaveClass(/err/);
+  await page.waitForTimeout(7000); await expect(msg).toContainText('high demand'); // لسه ظاهر بعد ما التنبيه اختفى
+  await expect(page.locator('#gen button[type=submit]')).toBeEnabled();
+});

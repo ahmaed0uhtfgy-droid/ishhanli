@@ -42,5 +42,5 @@
 | `test/welcome.test.mjs` | استبدال | `// كارت ترحيب العميل الجديد: نصوص عربي/إنجليزي، من غير أرقام أو ادعاءات، وبيظهر للي معندوش` |
 
 ## يدوي (مش في الـzip)
-- ارفع `functions/_lib/routes.js` و`functions/_lib/secHeaders.js` من `missing-files.zip` لو لسه ناقصين. (secHeaders.js اتعدّل: استخدم النسخة اللي في الـzip الرئيسي.)
+- ارفع `functions/_lib/routes.js` من `missing-files.zip` لو لسه ناقص، و`secHeaders.js` من الـzip الرئيسي (معدّل).
 - احذف `public/llms.txt` من المستودع.

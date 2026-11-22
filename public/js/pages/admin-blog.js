@@ -161,8 +161,11 @@ export function renderBlog(body) {
       if (f.id === 'gen') {
         const title = f.title.value.trim(), n = Number(f.n.value) || 1; let done = 0;
         const msg = $('#genMsg', body), btn = $('button[type=submit]', f); btn.disabled = true;
+        msg.classList.remove('err');
         try {
           for (let i = 0; i < n; i++) { msg.textContent = t('blog.generating', { i: i + 1, n }); const r = await api('admin/blog/generate', { title, index: i + items.filter((x) => x.topic === title).length }); done++; if (n === 1) { edit = r.article; edit.videoUrl = ''; ideas = r.article.imageIdeas || []; } }
+        } catch (er) { // السبب يفضل ظاهر في الصفحة (التنبيه بيختفي بعد ثواني) عشان تقدر تقراه وتبعته
+          msg.classList.add('err'); msg.textContent = `${errText(er)}${er?.status ? ` [HTTP ${er.status}]` : ''}`; if (done) toast(t('blog.genDone', { n: done })); if (edit) { paint(); window.scrollTo(0, 0); } else if (done) await load(); return;
         } finally { btn.disabled = false; }
         toast(t('blog.genDone', { n: done }));
         if (edit) { paint(); window.scrollTo(0, 0); } else await load();
