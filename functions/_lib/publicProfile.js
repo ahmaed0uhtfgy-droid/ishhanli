@@ -78,10 +78,15 @@ const html = (body, status = 200, extra = {}) => new Response(body, { status, he
 export const notFound = () => html('<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>غير موجود</title><body style="font-family:system-ui;text-align:center;padding:60px;background:#0f1115;color:#eef1f5"><h1>الصفحة غير متوفرة</h1><p><a href="/" style="color:#16a34a">العودة للرئيسية</a></p></body></html>', 404, { 'Cache-Control': 'no-store' });
 
 /** يجيب مستند السواق العام أو null (لو مش سواق مفعّل). */
+const driverCache = new Map(); // id -> { at, v } — 60 ث (ids عشوائية من بوتات ما تحرقش قراءات Firestore)؛ حد أقصى 500 مدخل
 export async function loadPublicDriver(env, id) {
   if (!/^[A-Za-z0-9_-]{4,64}$/.test(String(id || ''))) return null;
+  const hit = driverCache.get(id), ttl = Number(env.PUBLIC_DRIVER_TTL_MS ?? 60000);
+  if (hit && Date.now() - hit.at < ttl) return hit.v;
   const u = await F.get(env, `users/${id}`);
-  return isPublicDriver(u) ? u : null;
+  const v = isPublicDriver(u) ? u : null;
+  if (driverCache.size >= 500) driverCache.clear();
+  driverCache.set(id, { at: Date.now(), v }); return v;
 }
 
 /** صفحة ملف سواق واحدة. */

@@ -79,7 +79,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 { // onError مرة واحدة لكل كود + false بيوقف
   const errs = []; let n = 0;
   const p = poll(async () => { n++; throw Object.assign(new Error('x'), { code: n < 6 ? 'network' : 'boom' }); }, 10, () => {}, { onError: (e) => { errs.push(e.code); return e.code === 'boom' ? false : undefined; } });
-  await sleep(150); assert.deepEqual(errs, ['network', 'boom'], 'الخطأ المتكرر بيتبلّغ مرة'); const n1 = n; await sleep(50); assert.equal(n, n1, 'return false بيوقف'); p();
+  await sleep(700); /* مع تبطيء الفاصل وقت الفشل (×2…×8) الوصول للخطأ السادس بياخد وقت أطول من قبل */ assert.deepEqual(errs, ['network', 'boom'], 'الخطأ المتكرر بيتبلّغ مرة'); const n1 = n; await sleep(50); assert.equal(n, n1, 'return false بيوقف'); p();
 }
 { // التاب المخفي بيوقف الطلبات ويكمل عند الرجوع
   let n = 0; document.hidden = true;

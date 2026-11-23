@@ -81,7 +81,8 @@ async function uniqueSlug(env, slug, selfId = null) {
 
 // ---------- كاش القراءات العامة (الكوتا) ----------
 let pubCache = { at: 0, v: null };
-export const clearBlogCache = () => { pubCache = { at: 0, v: null }; };
+const slugCache = new Map(); // slug -> { at, v } — مقال منشور 5 دقايق، وغير الموجود/المسودة 60 ث (بوتات بتجرّب روابط عشوائية: ما تحرقش قراءات Firestore)؛ حد أقصى 500 مدخل
+export const clearBlogCache = () => { pubCache = { at: 0, v: null }; slugCache.clear(); };
 export async function publishedList(env) {
   if (pubCache.v && Date.now() - pubCache.at < 300000) return pubCache.v;
   const rows = await F.query(env, 'articles', { eq: { status: 'published' }, limit: 300 });
@@ -89,8 +90,12 @@ export async function publishedList(env) {
   pubCache = { at: Date.now(), v }; return v;
 }
 export async function publishedBySlug(env, slug) {
-  const rows = await F.query(env, 'articles', { eq: { slug: String(slug || '').slice(0, 120) }, limit: 1 });
-  return rows[0] && rows[0].status === 'published' ? rowOut(rows[0], true) : null;
+  const key = String(slug || '').slice(0, 120), hit = slugCache.get(key);
+  if (hit && Date.now() - hit.at < (hit.v ? Number(env.BLOG_TTL_MS ?? 300000) : 60000)) return hit.v;
+  const rows = await F.query(env, 'articles', { eq: { slug: key }, limit: 1 });
+  const v = rows[0] && rows[0].status === 'published' ? rowOut(rows[0], true) : null;
+  if (slugCache.size >= 500) slugCache.clear();
+  slugCache.set(key, { at: Date.now(), v }); return v;
 }
 
 // ---------- حفظ/حذف ----------

@@ -658,6 +658,7 @@ const ROWS = [
   ['err.bad_reason', 'اختار سبب النزاع.', 'Choose a dispute reason.'], ['err.not_found', 'مش موجود.', 'Not found.'], ['err.user_not_found', 'المستخدم غير موجود.', 'User not found.'], ['err.bad_status', 'حالة غير صحيحة.', 'Invalid status.'], ['err.bad_action', 'إجراء غير صحيح.', 'Invalid action.'],
   ['err.bad_decision', 'قرار غير صحيح.', 'Invalid decision.'], ['err.bad_price', 'السعر غير صحيح.', 'Invalid price.'],
   ['err.too_many_open', 'عندك 10 طلبات مفتوحة. كمّل أو ألغِ واحد منهم الأول.', 'You have 10 open orders. Finish or cancel one first.'], ['err.too_many_uploads', 'رفعت صور كتير في وقت قصير. استنى شوية.', 'Too many uploads in a short time. Please wait.'],
+  ['err.quota_exceeded', 'الخدمة عليها ضغط كبير دلوقتي. جرّب بعد دقيقة أو دقيقتين.', 'The service is under heavy load right now. Please try again in a minute or two.'],
   ['err.db_error', 'مشكلة في قاعدة البيانات. جرّب بعد شوية.', 'Database problem. Please try again shortly.'], ['err.missing_db_binding', 'قاعدة البيانات غير مربوطة بالسيرفر (راجع الإعداد).', 'The database is not bound to the server (check setup).'],
   ['err.method_not_allowed', 'طلب غير مسموح.', 'Method not allowed.'],
  ['err.offer_out_of_range', 'سعر العرض خارج المسموح (راجع الحدود).', 'The offer price is outside the allowed range.'], ['err.offers_only', 'العميل اختار عروض الأسعار فقط. اقترح سعرك.', 'The customer chose price offers only. Propose your price.'],

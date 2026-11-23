@@ -47,27 +47,42 @@ async function failure(res, what) {
   const j = await res.json().catch(() => ({}));
   const status = Array.isArray(j) ? j[0]?.error?.status : j?.error?.status;
   if (CONFLICT.has(status)) {
-    const e = new HttpError(409, 'conflict');
+    const e = new HttpError(409, 'conflict'); e.fsStatus = status;
     const msg = String((Array.isArray(j) ? j[0]?.error?.message : j?.error?.message) || '');
     // أخطاء القراءة/التجميع (مش الكتابة): نحتفظ بحالة ونص خطأ Firestore (فيه رابط إنشاء الفهرس لو ناقص) بدل ما يضيع ورا «conflict»
     if (what !== 'commit') { e.detail = `${status} [${what}] ${msg}`.slice(0, 700); console.error('firestore_read_conflict', what, e.detail); }
     return e;
   }
   console.error('firestore_error', what, res.status, status, JSON.stringify(j).slice(0, 300));
-  return new HttpError(500, status === 'RESOURCE_EXHAUSTED' ? 'quota_exceeded' : 'db_error');
+  if (status === 'RESOURCE_EXHAUSTED' || res.status === 429) { const e = new HttpError(503, 'quota_exceeded'); e.retryAfter = 120; return e; } // الحصة/الحدّ خلص: 503 + Retry-After (الواجهة بتهدّي الاستطلاع وتعرض رسالة واضحة)
+  return new HttpError(500, 'db_error');
 }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const jitter = (a, b) => a + Math.floor(Math.random() * (b - a));
+const TRANSIENT = new Set([500, 502, 503, 504]);
 async function call(env, method, url, body, what) {
   const token = await googleToken(env, SCOPE);
-  const res = await fetch(url, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
-  if (!res.ok) throw await failure(res, what);
-  return res.json();
+  // القراءات (idempotent) بتتعاد مرة لو الشبكة وقعت أو Firestore رجّع 5xx عابر. الكتابة (commit) ما بتتعادش هنا: ممكن تكون اتنفّذت.
+  for (let attempt = 0; ; attempt++) {
+    let res;
+    try { res = await fetch(url, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); }
+    catch (e) { if (what !== 'commit' && attempt < 1) { await sleep(jitter(80, 250)); continue; } throw e; }
+    if (!res.ok) { if (what !== 'commit' && attempt < 1 && TRANSIENT.has(res.status)) { await sleep(jitter(80, 250)); continue; } throw await failure(res, what); }
+    return res.json();
+  }
 }
 
 // ---------- قراءة ----------
 /** مستند واحد (مسار مثل users/abc أو orders/ID/messages/ID2). بيرجّع صف أو null. */
 export async function get(env, path) {
   const token = await googleToken(env, SCOPE);
-  const res = await fetch(`${docsUrl(env)}/${urlPath(path)}`, { headers: { Authorization: `Bearer ${token}` } });
+  let res;
+  for (let attempt = 0; ; attempt++) {
+    try { res = await fetch(`${docsUrl(env)}/${urlPath(path)}`, { headers: { Authorization: `Bearer ${token}` } }); }
+    catch (e) { if (attempt < 1) { await sleep(jitter(80, 250)); continue; } throw e; }
+    if (!res.ok && res.status !== 404 && attempt < 1 && TRANSIENT.has(res.status)) { await sleep(jitter(80, 250)); continue; }
+    break;
+  }
   bump('reads');
   if (res.status === 404) return null;
   if (!res.ok) throw await failure(res, 'get');
@@ -171,6 +186,22 @@ const stampsOf = (list) => {
   return kinds;
 };
 
+// كاش قراءة مستند الـstamp داخل الـisolate (افتراضي STAMP_TTL_MS=4000): مئات طلبات `sync` بتتحوّل لقراءة Firestore واحدة كل بضع ثواني.
+// بيتصفّر فوراً لما نفس الـisolate يكتب (run)، فإجراءات المستخدم نفسه ظاهرة في لحظتها؛ وفي باقي الـisolates التأخير ≤ STAMP_TTL_MS (أقل بكتير من فاصل الـpolling).
+const stampMemo = new Map(); // project -> { at, v, p }
+let stampGen = 0;
+export async function stampGet(env) {
+  const ttl = Number(env.STAMP_TTL_MS ?? 4000), key = env.FIREBASE_PROJECT_ID || '';
+  if (!(ttl > 0)) return get(env, STAMP_PATH);
+  const m = stampMemo.get(key);
+  if (m?.p) return m.p; // نفس الطلب شغّال دلوقتي: بنشاركه
+  if (m && Date.now() - m.at < ttl) return m.v;
+  const gen = stampGen;
+  const p = get(env, STAMP_PATH).then((v) => { if (gen === stampGen) stampMemo.set(key, { at: Date.now(), v, p: null }); else stampMemo.delete(key); return v; }, (e) => { stampMemo.delete(key); throw e; });
+  stampMemo.set(key, { at: m?.at || 0, v: m?.v ?? null, p });
+  return p;
+}
+
 /** ينفّذ مجموعة كتابات كمعاملة واحدة. أي شرط فاشل => HttpError(409,'conflict') ومفيش أي حاجة اتكتبت. */
 export async function run(env, writes) {
   const list = writes.flat().filter(Boolean);
@@ -178,6 +209,14 @@ export async function run(env, writes) {
   const kinds = stampsOf(list);
   if (kinds.size) list.push(inc(STAMP_PATH, Object.fromEntries([...kinds].map((k) => [k, 1])), { k: 'stamp', updated_at: Date.now() }));
   if (list.length > 400) throw new HttpError(500, 'too_many_writes');
-  await call(env, 'POST', `${docsUrl(env)}:commit`, { writes: list.map((w) => toWrite(env, w)) }, 'commit');
+  const payload = { writes: list.map((w) => toWrite(env, w)) };
+  for (let attempt = 0; ; attempt++) {
+    try { await call(env, 'POST', `${docsUrl(env)}:commit`, payload, 'commit'); break; }
+    catch (e) { // ABORTED = تزاحم على مستند ساخن (مثلاً عدّاد stamp) والـcommit ما اتنفّذش أبداً، فإعادته آمنة. باقي الأخطاء (precondition/already exists) دلالتها حقيقية فبتطلع للمستدعي.
+      if (e?.fsStatus === 'ABORTED' && attempt < 3) { await sleep(jitter(40 * (attempt + 1), 140 * (attempt + 1))); continue; }
+      throw e;
+    }
+  }
   bump('writes', list.length);
+  if (kinds.size) { stampGen++; stampMemo.clear(); } // الكتابة دي غيّرت الـstamp: الكاش القديم يتشال فوراً
 }

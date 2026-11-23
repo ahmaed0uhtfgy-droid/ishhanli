@@ -1,13 +1,16 @@
-# الملفات المتغيّرة (38) — كل ملف كامل بمساره
+# الملفات المتغيّرة (44) — كل ملف كامل بمساره
 
 | الملف | الإجراء | أول سطر (للتحقق من اللصق) |
 |---|---|---|
+| `QUOTA.md` | استبدال | `# حماية الكوتا (Firestore + Cloudflare)` |
 | `SEO.md` | استبدال | `# SEO — اللي اتعمل واللي عليك` |
 | `functions/_lib/blog.js` | ملف جديد | `// نظام المقالات (SEO): تخزين في Firestore، توليد بالذكاء الاصطناعي (Gemini أو Claude) كمس` |
 | `functions/_lib/files.js` | استبدال | `// تخزين الصور في Firestore (مستند لكل صورة: بيانات الوصول + المحتوى base64). الصور بتتضغط` |
+| `functions/_lib/firestore.js` | استبدال | `// عميل Firestore عبر REST (بدون SDK) يشتغل على Cloudflare Workers. الدخول بحساب خدمة (FIR` |
 | `functions/_lib/landing.js` | استبدال | `// الصفحة الرئيسية من السيرفر: HTML كامل للتصميمين (SEO + محركات الذكاء الاصطناعي بتقرا من` |
 | `functions/_lib/logic.js` | استبدال | `import { HttpError } from './core.js';` |
 | `functions/_lib/pages.js` | استبدال | `// صفحات المحتوى الثابتة للسيو (كل صفحة بنية بحث مستقلة): /how-it-works و /for-drivers و /` |
+| `functions/_lib/publicProfile.js` | استبدال | `// صفحات السواقين العامة (SEO) — HTML من السيرفر للزوار ومحركات البحث.` |
 | `functions/_lib/secHeaders.js` | استبدال | `// رؤوس الأمان العامة لردود الـFunctions. السبب: ملف public/_headers بيتطبّق على الملفات ا` |
 | `functions/api/[[route]].js` | استبدال | `// كل المنطق الحساس (الصلاحيات، السعر، Escrow، العمولة، المحفظة، النزاعات) بيتنفذ هنا على ` |
 | `functions/blog/[slug].js` | ملف جديد | `// صفحة مقال: GET /blog/<slug> — HTML كامل من السيرفر (Article JSON-LD + FAQPage + breadcr` |
@@ -32,15 +35,19 @@
 | `public/js/pages/customer.js` | استبدال | `import { api, poll } from '../api.js';` |
 | `public/js/pages/driver-dash.js` | استبدال | `// لوحة بيانات السواق: كل حاجة تخصه في صفحة واحدة (قراءة فقط) — البيانات كلها من driver/da` |
 | `public/js/pages/welcome.js` | استبدال | `// كارت ترحيب العميل اللي معندوش طلبات: خطوات + نقاط ثقة حقيقية بس (مفيش أرقام ولا تقييمات` |
+| `public/js/poll.js` | استبدال | `// تحديث دوري بدون أي اعتماد خارجي (سهل الاختبار)` |
+| `test/client.test.mjs` | استبدال | `// اختبار الأجزاء النقية من الواجهة (تنسيق، ترجمة، حماية XSS) — من غير متصفح` |
 | `test/e2e/changes.spec.mjs` | ملف جديد | `// اختبارات المتصفح لتعديلات v0.4: اللوجو ← الرئيسية، التسجيل كشركة شحن، «طلباتي» والترحيب` |
 | `test/e2e/fake-firebase/firebase-auth.js` | استبدال | `// بديل اختباري لـ firebase-auth: الحسابات والتوكنات بيتولّدوا من سيرفر الاختبار (test/e2e` |
 | `test/unit/blog.spec.mjs` | ملف جديد | `// اختبار نظام المقالات: دوال نقية (سلاج/Markdown آمن/يوتيوب/JSON) + تكامل حقيقي فوق API و` |
 | `test/unit/install.spec.mjs` | ملف جديد | `// اختيار طريقة تثبيت التطبيق حسب الجهاز/المتصفح` |
 | `test/unit/orders-limit.spec.mjs` | ملف جديد | `// حد قايمة «طلباتي» بيتظبط من الأدمن (الإعدادات) ومحصور بين 20 و300` |
+| `test/unit/resilience.spec.mjs` | ملف جديد | `// الصمود تحت الضغط: ميزانية قراءات Firestore للصفحات العامة (زيارات كتير ≠ قراءات كتير)، ` |
 | `test/unit/seo-checklist.spec.mjs` | ملف جديد | `// قايمة الـ20 نقطة SEO: كل نقطة بتتفحص بكود على الصفحات الفعلية (رئيسية + محتوى + طرق + م` |
 | `test/unit/seo.spec.mjs` | استبدال | `// اختبار SEO شامل: بيستدعي كل function صفحة فعلياً (من غير شبكة) ويتأكد من العناصر اللي م` |
 | `test/welcome.test.mjs` | استبدال | `// كارت ترحيب العميل الجديد: نصوص عربي/إنجليزي، من غير أرقام أو ادعاءات، وبيظهر للي معندوش` |
 
 ## يدوي (مش في الـzip)
-- ارفع `functions/_lib/routes.js` من `missing-files.zip` لو لسه ناقص، و`secHeaders.js` من الـzip الرئيسي (معدّل).
+- ارفع `functions/_lib/routes.js` من `missing-files.zip` لو لسه ناقص (secHeaders.js في الـzip الرئيسي).
 - احذف `public/llms.txt` من المستودع.
+- راجع قسم «اللي لازم تعمله انت» في `QUOTA.md` (Blaze + Workers Paid + Cloudflare Security).

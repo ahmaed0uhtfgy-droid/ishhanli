@@ -2405,7 +2405,7 @@ export async function onRequest({ request, env, params, waitUntil }) {
     bg2(flushMetrics(env));
     return json(out);
   } catch (e) {
-    if (e instanceof HttpError) { bg2(flushMetrics(env)); return json(e.detail && route.startsWith('admin/') ? { error: e.code, detail: e.detail } : { error: e.code }, e.status); } // تفاصيل Firestore (رابط الفهرس) للأدمن بس
+    if (e instanceof HttpError) { bg2(flushMetrics(env)); const out = json(e.detail && route.startsWith('admin/') ? { error: e.code, detail: e.detail } : { error: e.code }, e.status); if (e.retryAfter) out.headers.set('Retry-After', String(e.retryAfter)); return out; } // تفاصيل Firestore (رابط الفهرس) للأدمن بس
     console.error(e);
     bg2(recordError(env, { source: 'server', route, uid, status: 500, message: e?.message || String(e), stack: e?.stack }));
     bg2(sentryCapture(env, e, { route, uid }));
