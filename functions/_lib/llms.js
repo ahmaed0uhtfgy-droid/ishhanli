@@ -25,6 +25,7 @@ export function buildLlms(s, env, full = false) {
   }
   L.push('## الصفحات', `- [الرئيسية](${LP_ORIGIN}/): شرح الخدمة والسعر والأسئلة الشائعة.`, `- [إزاي بتشتغل](${LP_ORIGIN}/how-it-works): خطوات الطلب والدفع والتتبع.`,
     `- [أسعار النقل](${LP_ORIGIN}/pricing): إزاي بيتحسب سعر الشحنة.`, `- [أنواع العربيات](${LP_ORIGIN}/vehicles): العربيات المتاحة وحمولة كل نوع.`,
+    `- [طرق النقل بين المحافظات](${LP_ORIGIN}/routes): المسافة والسعر التقديري لكل طريق (القاهرة والإسكندرية مع باقي المحافظات).`,
     `- [للسواقين](${LP_ORIGIN}/for-drivers): التسجيل والمستندات والعمولة.`, `- [لشركات الشحن](${LP_ORIGIN}/for-companies): تسجيل الشركات.`);
   const contact = [c.phone && `تليفون: ${c.phone}`, c.whatsapp && `واتساب: ${c.whatsapp}`, c.email && `إيميل: ${c.email}`, c.address && `العنوان: ${c.address}`].filter(Boolean);
   if (contact.length) L.push('', '## التواصل', ...contact.map((x) => `- ${x}`));

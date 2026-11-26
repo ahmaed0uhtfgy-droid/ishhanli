@@ -4,6 +4,7 @@
 import { HttpError, newId } from './core.js';
 import { F, now, rateTake } from './db.js';
 import { esc } from './landing.js';
+import { LP_ORIGIN, LP_OLD_ORIGINS } from '../../public/js/landing-content.js';
 
 // ---------- أدوات نصية ----------
 const str = (v, min, max) => { const s = String(v ?? '').replace(/\u0000/g, '').trim(); if (s.length < min) throw new HttpError(400, 'bad_input'); return s.slice(0, max); };
@@ -21,12 +22,26 @@ export function youtubeId(v) {
     return YT.test(id) ? id : ''; } catch { return ''; }
 }
 
-const inline = (t) => esc(t)
-  .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-  .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, txt, url) => { const raw = url.replace(/&amp;/g, '&'); return okUrl(raw) ? `<a href="${esc(raw)}"${raw.startsWith('http') ? ' rel="noopener nofollow" target="_blank"' : ''}>${txt}</a>` : txt; });
+// رابط بيشاور على موقعنا (الدومين الحالي أو قديم) بيتحوّل لمسار داخلي: ما بيبقاش «خارجي/nofollow»، وبيتبع الدومين الحالي لو اتغيّر.
+const ownPath = (raw) => { for (const o of [LP_ORIGIN, ...LP_OLD_ORIGINS]) if (raw === o) return '/'; else for (const sep of ['/', '?', '#']) if (raw.startsWith(o + sep)) return raw.slice(o.length); return null; };
+const bold = (e) => e.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+const anchor = (url, textHtml) => { let raw = url; const own = ownPath(raw); if (own) raw = own; return okUrl(raw) ? `<a href="${esc(raw)}"${raw.startsWith('http') ? ' rel="noopener nofollow" target="_blank"' : ''}>${textHtml}</a>` : textHtml; };
+/** سطر نص: **غامق** + [نص](رابط) + أي رابط https:// مكتوب عادي بيتحوّل لرابط قابل للضغط (علامات الترقيم في آخره بتفضل برّا الرابط) */
+const inline = (t) => {
+  const src = String(t); let out = '', last = 0;
+  for (const m of src.matchAll(/\[([^\]]+)\]\(([^)\s]+)\)|https:\/\/[^\s<>"'()\[\]]+/g)) {
+    out += bold(esc(src.slice(last, m.index))); last = m.index + m[0].length;
+    if (m[1] !== undefined) out += anchor(m[2], bold(esc(m[1])));
+    else { const trail = /[.,;:!?،؛]+$/.exec(m[0])?.[0] || '', u = trail ? m[0].slice(0, -trail.length) : m[0]; out += anchor(u, esc(u)) + esc(trail); }
+  }
+  return out + bold(esc(src.slice(last)));
+};
+/** {{site}} = دومين الموقع الحالي، ودومينات قديمة مكتوبة في النص بتتبدّل بالحالي (المقال مبيتكتبش فيه دومين ثابت) */
+export const resolveSite = (md) => { let s = String(md ?? '').replaceAll('{{site}}', LP_ORIGIN); for (const o of LP_OLD_ORIGINS) s = s.replaceAll(o, LP_ORIGIN); return s; };
 
 /** Markdown مبسّط → HTML آمن. بيدعم: ## عنوان، ### عنوان فرعي، قوائم - و1.، **غامق**، [نص](رابط)، [[img:N]] صورة رقم N، [[video]] */
 export function mdToHtml(md, { images = [], video = '', title = '' } = {}) {
+  md = resolveSite(md);
   const out = []; let list = null;
   const close = () => { if (list) { out.push(`</${list}>`); list = null; } };
   for (const line0 of String(md ?? '').replace(/\r/g, '').split('\n')) {
@@ -45,6 +60,9 @@ export function mdToHtml(md, { images = [], video = '', title = '' } = {}) {
 }
 export const videoHtml = (id, title = '') => YT.test(id) ? `<div class="blog-video"><iframe src="https://www.youtube-nocookie.com/embed/${id}" title="${esc(title || 'فيديو')}" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe></div>` : '';
 
+/** نص عادي من Markdown (للوصف التلقائي): من غير رموز ولا روابط ولا توكنز ولا دومينات */
+export const plainText = (md) => String(md ?? '').replace(/\[\[(?:img:\d+|video)\]\]|\{\{site\}\}/g, ' ').replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/https?:\/\/\S+/g, ' ').replace(/[#*>`_|-]+/g, ' ').replace(/\s+/g, ' ').trim();
+
 // ---------- تنظيف المدخلات ----------
 export function cleanArticle(b, { partial = false } = {}) {
   const title = str(b.title, 5, 140);
@@ -56,7 +74,7 @@ export function cleanArticle(b, { partial = false } = {}) {
   const status = b.status === 'published' ? 'published' : 'draft';
   return {
     title, body, faq, images, keywords, status,
-    description: String(b.description ?? '').trim().slice(0, 170) || body.replace(/[#*\[\]()>-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160),
+    description: String(b.description ?? '').trim().slice(0, 170) || plainText(body).slice(0, 160),
     excerpt: String(b.excerpt ?? '').trim().slice(0, 300),
     video: youtubeId(b.video),
     slug: slugify(b.slug) || slugify(title),
@@ -215,7 +233,7 @@ const SYSTEM = `أنت كاتب محتوى مصري محترف متخصص في �
 - نوّع في الأسلوب وطول الفقرات: افتتاحية جاذبة بموقف أو سؤال، عناوين فرعية متنوعة (مش كلها أسئلة ولا بنفس الصيغة)، قوائم قصيرة لما تفيد، أمثلة من واقع مصر (شقة في المنصورة، محل في العبور، مصنع في العاشر…) من غير أسماء أشخاص حقيقيين.
 - الكلمات المفتاحية وصيغ البحث المختلفة (مرادفات وأسئلة الناس) تظهر طبيعي جوه الجمل. الكلمة الأساسية في العنوان وأول 100 كلمة وعنوان فرعي واحد على الأقل. ممنوع الحشو والتكرار الممل.
 - الطول: من 900 لـ1400 كلمة في body. استخدم صيغة Markdown: ## للعناوين الفرعية، ### للأقل، - للقوائم، **غامق**، وروابط [نص](/مسار) من القائمة المسموحة بس (2 لـ4 روابط داخلية في السياق الطبيعي).
-- مكان الصورة المقترح: اكتب سطر لوحده [[img:1]] أو [[img:2]] في مكانين مناسبين، وفي imageIdeas اكتب وصف مقترح لكل صورة (الأدمن بيرفعها).
+- رابط الموقع نفسه: اكتب {{site}} بالظبط كرابط مرة واحدة على الأقل في سياق طبيعي، مثل [موقع اشحنلي]({{site}}) (مش دومين مكتوب بالحروف: بيتبدّل لوحده لو الدومين اتغيّر). ممنوع تكتب أي دومين تاني.\n- مكان الصورة المقترح: اكتب سطر لوحده [[img:1]] أو [[img:2]] في مكانين مناسبين، وفي imageIdeas اكتب وصف مقترح لكل صورة (الأدمن بيرفعها).
 رجّع JSON فقط من غير أي كلام تاني، بالشكل:
 {"title":"عنوان جذاب فيه الكلمة الأساسية (60-90 حرف)","slugWords":"3-6 كلمات مفتاحية بالعربي للرابط","description":"وصف ميتا 130-160 حرف فيه الكلمة الأساسية ومحفّز للضغط","excerpt":"ملخص جذاب 2-3 جمل","body":"نص المقال Markdown","faq":[["سؤال","إجابة مختصرة دقيقة"],... 4 أسئلة],"keywords":["8-12 عبارة بحث متنوعة"],"imageIdeas":["وصف صورة 1","وصف صورة 2"]}`;
 
@@ -287,7 +305,9 @@ export const admin = {
 const dateAr = (t) => new Date(t || 0).toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Africa/Cairo' });
 export const blogPath = (a) => `/blog/${encodeURIComponent(a.slug)}`;
 
-export function articleContent(a, related = []) {
+export function articleContent(a0, related = []) {
+  // أي دومين قديم أو {{site}} في العنوان/الوصف/الملخص/الأسئلة بيتبدّل بالحالي وقت العرض (المتخزّن مبيتغيّرش)
+  const a = { ...a0, title: resolveSite(a0.title), description: resolveSite(a0.description), excerpt: resolveSite(a0.excerpt), faq: (a0.faq || []).map(([q, x]) => [resolveSite(q), resolveSite(x)]) };
   const path = blogPath(a), hero = (a.images || [])[0];
   const usedImg = /\[\[img:1\]\]/.test(a.body);
   const html = mdToHtml(a.body, { images: a.images || [], video: a.video, title: a.title });
@@ -296,8 +316,9 @@ export function articleContent(a, related = []) {
 ${hero && !usedImg ? `<figure class="blog-fig"><img src="/blog/img/${esc(hero.id)}" alt="${esc(hero.alt || a.title)}" decoding="async"></figure>` : ''}
 ${html}
 ${a.video && !hasVideoToken ? videoHtml(a.video, a.title) : ''}
-${related.length ? `<h2>اقرأ كمان</h2><ul class="blog-rel">${related.map((r) => `<li><a href="${blogPath(r)}">${esc(r.title)}</a></li>`).join('')}</ul>` : ''}</article>`;
-  const ld = { '@context': 'https://schema.org', '@type': 'Article', headline: a.title, description: a.description, inLanguage: 'ar', datePublished: new Date(a.publishedAt || a.createdAt).toISOString(), dateModified: new Date(a.updatedAt || a.publishedAt || a.createdAt).toISOString(), mainEntityOfPage: path, author: { '@type': 'Organization', name: 'اشحنلي' }, publisher: { '@type': 'Organization', name: 'اشحنلي' }, ...(hero ? { image: [`/blog/img/${hero.id}`] } : {}) };
+${related.length ? `<h2>اقرأ كمان</h2><ul class="blog-rel">${related.map((r) => `<li><a href="${blogPath(r)}">${esc(r.title)}</a></li>`).join('')}</ul>` : ''}
+<p class="blog-site">${esc('احسب سعر شحنتك وابدأ طلبك من موقع اشحنلي:')} <a href="${esc(LP_ORIGIN)}/">${esc(LP_ORIGIN)}</a></p></article>`;
+  const ld = { '@context': 'https://schema.org', '@type': 'Article', headline: a.title, description: a.description, inLanguage: 'ar', datePublished: new Date(a.publishedAt || a.createdAt).toISOString(), dateModified: new Date(a.updatedAt || a.publishedAt || a.createdAt).toISOString(), mainEntityOfPage: LP_ORIGIN + path, url: LP_ORIGIN + path, author: { '@type': 'Organization', name: 'اشحنلي' }, publisher: { '@type': 'Organization', name: 'اشحنلي' }, ...(hero ? { image: [`${LP_ORIGIN}/blog/img/${hero.id}`] } : {}) };
   return {
     title: a.title.length > 55 ? a.title : `${a.title} | اشحنلي`, desc: a.description, h1: a.title, lead: a.excerpt || a.description, body,
     faq: a.faq?.length ? a.faq : null, cta: ['احسب سعر شحنتك', '/'], path,
@@ -306,7 +327,7 @@ ${related.length ? `<h2>اقرأ كمان</h2><ul class="blog-rel">${related.map
   };
 }
 export function indexContent(list) {
-  const body = list.length ? `<ul class="blog-list">${list.map((a) => `<li><a class="blog-card" href="${blogPath(a)}"><b>${esc(a.title)}</b><span>${esc(a.excerpt || a.description)}</span><small>${esc(dateAr(a.publishedAt))}</small></a></li>`).join('')}</ul>` : '<p>لسه مفيش مقالات منشورة. تابعنا قريب.</p>';
+  const body = list.length ? `<ul class="blog-list">${list.map((a) => `<li><a class="blog-card" href="${blogPath(a)}"><b>${esc(resolveSite(a.title))}</b><span>${esc(resolveSite(a.excerpt || a.description))}</span><small>${esc(dateAr(a.publishedAt))}</small></a></li>`).join('')}</ul>` : '<p>لسه مفيش مقالات منشورة. تابعنا قريب.</p>';
   return { title: 'مدونة اشحنلي — نصائح نقل الشحن والأثاث في مصر', desc: 'مقالات عملية عن نقل البضائع والأثاث في مصر: التجهيز، اختيار العربية، التوفير، وكل اللي محتاج تعرفه قبل ما تشحن.', h1: 'مدونة اشحنلي', lead: 'نصائح عملية عن النقل والشحن في مصر.', body, faq: null, cta: ['احسب سعر شحنتك', '/'], path: '/blog', crumbs: [['اشحنلي', '/'], ['المدونة', '/blog']], extraLd: '' };
 }
 const b64ToBytes = (b64) => { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; };
