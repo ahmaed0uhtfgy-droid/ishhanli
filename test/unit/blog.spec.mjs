@@ -129,3 +129,18 @@ describe('تكامل', () => {
     const r1 = await h.raw('blog/cron', { body: {} }); expect([401, 403]).toContain(r1.status);
   });
 });
+
+describe('روابط قابلة للضغط في المقال', () => {
+  it('أي https:// مكتوب عادي بيتحوّل لرابط، وعلامات الترقيم في آخره برّا الرابط، والـmarkdown links زي ما هي', () => {
+    const h = mdToHtml('زور https://example.org/a?x=1&y=2. وكمان (https://example.org/b) و[نص **غامق**](https://example.org/c) وhttps://ishhanli.pages.dev/pricing، تمام.');
+    expect(h).toContain('<a href="https://example.org/a?x=1&amp;y=2" rel="noopener nofollow" target="_blank">https://example.org/a?x=1&amp;y=2</a>.');
+    expect(h).toContain('(<a href="https://example.org/b"'); expect(h).toContain('>https://example.org/b</a>)');
+    expect(h).toContain('target="_blank">نص <strong>غامق</strong></a>');
+    expect(h).toContain('<a href="/pricing">https://ishhanli.pages.dev/pricing</a>،'); // دومين الموقع: رابط داخلي بنص كامل
+    expect((h.match(/<a /g) || []).length).toBe(4);
+  });
+  it('بدون استغلال: javascript:/http:/data: ما بيتحوّلوش لروابط، والـHTML بيتهرّب', () => {
+    const h = mdToHtml('javascript:alert(1) و http://evil.com و data:text/html,x و <img src=x onerror=alert(1)> و [x](javascript:alert(1)) و https://a.com/"onmouseover="x');
+    expect(h).not.toMatch(/<a [^>]*(javascript:|http:\/\/evil|data:)/); expect(h).not.toContain('<img'); expect(h).not.toMatch(/<a [^>]*onmouseover/);
+  });
+});
