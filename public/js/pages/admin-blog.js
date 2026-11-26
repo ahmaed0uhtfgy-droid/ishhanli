@@ -43,7 +43,7 @@ registerRows([
   ['blog.f.desc', 'وصف جوجل (حتى 170 حرف)', 'Search description (up to 170 chars)'],
   ['blog.f.excerpt', 'ملخص قصير', 'Short excerpt'],
   ['blog.f.body', 'نص المقال', 'Article body'],
-  ['blog.bodyHelp', 'Markdown: ## عنوان، ### عنوان فرعي، - قائمة، **غامق**، [نص](/pricing). الصور: [[img:1]] في سطر لوحده. الفيديو: [[video]].', 'Markdown: ## heading, ### subheading, - list, **bold**, [text](/pricing). Images: [[img:1]] on its own line. Video: [[video]].'],
+  ['blog.bodyHelp', 'Markdown: ## عنوان، ### عنوان فرعي، - قائمة، **غامق**، [نص](/pricing). الصور: [[img:1]] في سطر لوحده. الفيديو: [[video]]. رابط الموقع: {{site}} (بيتبدّل لوحده لو الدومين اتغيّر).', 'Markdown: ## heading, ### subheading, - list, **bold**, [text](/pricing). Images: [[img:1]] on its own line. Video: [[video]]. Site link: {{site}} (auto-updates if the domain changes).'],
   ['blog.f.keywords', 'عبارات البحث (بينها فاصلة)', 'Search phrases (comma-separated)'],
   ['blog.f.faq', 'أسئلة شائعة (سطر لكل سؤال: السؤال | الإجابة)', 'FAQ (one per line: question | answer)'],
   ['blog.f.video', 'فيديو يوتيوب (اختياري: رابط)', 'YouTube video (optional URL)'],

@@ -1,6 +1,17 @@
 // محتوى الصفحة الرئيسية — وحدة بيانات صرفة (من غير DOM) بيستخدمها السيرفر (الرسم للـSEO) والمتصفح (الترجمة ولوحة الأدمن) والاختبارات.
 // القاعدة: أي جملة فيها حقيقة عن النظام بتتحدد من إعدادات النظام الفعلية (lpFacts) مش مكتوبة ثابتة. لو الميزة مقفولة، الجملة بتختفي أو بتتبدّل.
-export const LP_ORIGIN = 'https://ishhanli.pages.dev';
+// دومين الموقع: مصدر واحد لكل الكانونيكال/الـsitemap/OG/JSON-LD/المدونة. بيتغيّر من متغيّر البيئة SITE_ORIGIN (في Cloudflare) من غير تعديل كود: _middleware.js بيستدعي setSiteOrigin.
+// live binding: كل الوحدات اللي بتستورد LP_ORIGIN بتشوف القيمة الجديدة. OLD_SITE_ORIGINS (مفصولة بفواصل) = دومينات قديمة بيتم تبديلها في نصوص المقالات القديمة وقت العرض.
+export let LP_ORIGIN = 'https://ishhanli.pages.dev';
+const BUILT_IN = LP_ORIGIN; // دومين الكود نفسه: لو SITE_ORIGIN غيّره بنعتبره قديم
+const KNOWN_OLD = []; // دومينات سابقة: scripts/set-domain.mjs بيضيف القديم هنا تلقائياً لما بتبدّل الدومين بالسكربت
+export let LP_OLD_ORIGINS = [...KNOWN_OLD];
+const cleanOrigin = (o) => { const s = String(o ?? '').trim().replace(/\/+$/, ''); return /^https:\/\/[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d{2,5})?$/i.test(s) ? s : ''; };
+export function setSiteOrigin(origin, oldOrigins = '') {
+  const o = cleanOrigin(origin); if (o) LP_ORIGIN = o;
+  const olds = [...KNOWN_OLD, BUILT_IN, ...String(oldOrigins || '').split(',')].map(cleanOrigin).filter(Boolean);
+  LP_OLD_ORIGINS = [...new Set(olds)].filter((x) => x !== LP_ORIGIN);
+}
 export const LP_SECTIONS = ['about', 'estimate', 'services', 'trust', 'join', 'faq', 'contact']; // الأقسام اللي الأدمن يقدر يخفيها
 
 // [المفتاح, عربي, English] — {name} متغيّرات، و*كلمة* = إبراز (em). مفاتيح lp.* بتتسجّل في i18n.js
