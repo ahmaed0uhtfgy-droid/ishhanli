@@ -1,9 +1,9 @@
-# قايمة كل ملفات المشروع (المسار | الحجم بالبايت | أول 12 من SHA-256) — قارنها بالموجود على GitHub
+# قايمة كل ملفات المشروع (المسار | الحجم | أول 12 من SHA-256)
 .github/dependabot.yml | 404 | a85936a21c88
 .github/workflows/ci.yml | 3197 | 50914e0f7060
 .gitignore | 82 | 9e577efe3803
 AGENTS.md | 2875 | c4c117c2e28f
-CHANGES.md | 79083 | f86ded24530b
+CHANGES.md | 82419 | 197ea863c02d
 QUOTA.md | 7390 | 856ecc9999cc
 README.md | 42692 | e141d7f14309
 SECURITY.md | 9256 | ea5142ab357b
@@ -52,6 +52,7 @@ functions/routes/index.js | 1031 | fa71c1b5b610
 functions/sitemap.xml.js | 3256 | 5c40155ef42f
 functions/vehicles.js | 890 | c0a6ebbdd5b9
 opencode.json | 323 | 80d1c0525168
+package-lock.json | 95399 | a0ed70419586
 package.json | 1927 | 1be7aa233863
 playwright.config.mjs | 1536 | f980c145caf6
 public/404.html | 1210 | ba1d761b09d3
@@ -90,10 +91,10 @@ public/js/facts.js | 626 | 48c211e4f536
 public/js/firebase.js | 2307 | 62d71b2c5dbb
 public/js/gate.js | 1647 | 3f33928c5048
 public/js/geo.js | 970 | e14023696557
-public/js/i18n-admin.js | 52995 | 39261e7adc30
+public/js/i18n-admin.js | 53568 | 4be1bfeec1bb
 public/js/i18n-info.js | 46042 | 8bb541bb4329
 public/js/i18n.js | 134793 | cee3ba97cf17
-public/js/install.js | 5037 | 739f056b7a68
+public/js/install.js | 5375 | 4a5fea3929fd
 public/js/landing-content.js | 35051 | ed7dfef4933a
 public/js/landing-fx.js | 11281 | ab2e063bd27c
 public/js/landing.js | 3514 | 5e16be1d50dc
@@ -101,7 +102,7 @@ public/js/map.js | 5319 | dd1d3cc41be8
 public/js/money.js | 1526 | 0e9e0e304fc9
 public/js/pages/account.js | 15034 | 6d01c4365b6f
 public/js/pages/admin-blog.js | 17977 | 2e487487c8e2
-public/js/pages/admin.js | 111926 | a60c8c1f5318
+public/js/pages/admin.js | 112826 | 70b48fe194f4
 public/js/pages/auth.js | 14965 | ff97ef2e929f
 public/js/pages/customer.js | 24931 | 06180296e445
 public/js/pages/driver-dash.js | 16548 | 504386b36b4f
@@ -152,7 +153,7 @@ test/default.test.mjs | 1226 | a830b43a2f78
 test/e2e.smoke.mjs | 2565 | d931cf7bf396
 test/e2e/a11y.spec.mjs | 4609 | 15ac29a48013
 test/e2e/api-flow.spec.mjs | 7686 | 36ec36cadbc8
-test/e2e/changes.spec.mjs | 11877 | 1166ce0608bc
+test/e2e/changes.spec.mjs | 15687 | 869740eba8d7
 test/e2e/fake-firebase/firebase-app.js | 197 | b806da04080b
 test/e2e/fake-firebase/firebase-auth.js | 2852 | 953fd7ff2371
 test/e2e/server.mjs | 11450 | aecd443f7bbf
