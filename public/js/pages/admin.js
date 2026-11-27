@@ -8,14 +8,14 @@ import { $, $$, html, raw, render, toast, errMsg, busy, spinner, stamp, orderNo,
 import { hydrate, imgTag } from '../storage.js';
 import { toCsv, downloadCsv, downloadJson } from '../csv.js';
 
-const TABS = ['overview', 'customers', 'drivers', 'companies', 'joins', 'users', 'orders', 'reports', 'disputes', 'refunds', 'payments', 'withdrawals', 'cod', 'finance', 'dc', 'fines', 'coupons', 'referrals', 'settings', 'blog', 'blacklist', 'audit', 'monitoring'];
+const TABS = ['overview', 'customers', 'drivers', 'companies', 'joins', 'users', 'orders', 'reports', 'disputes', 'refunds', 'payments', 'withdrawals', 'cod', 'finance', 'dc', 'cf', 'fines', 'coupons', 'referrals', 'settings', 'blog', 'blacklist', 'audit', 'monitoring'];
 const LEGACY_TABS = ['payments', 'withdrawals', 'disputes', 'refunds', 'cod']; // تبويبات نظام الضمان القديم: مخفية لما الدفع المباشر شغّال (إلا لو الأدمن فعّل إظهارها)
 // التبويبات متجمّعة في 5 أقسام بدل صف واحد طويل: القسم فوق، وتبويباته تحته
 const GROUPS = [
   { id: 'home', icon: 'home', tabs: ['overview'] },
   { id: 'people', icon: 'users', tabs: ['customers', 'drivers', 'companies', 'joins', 'users'] },
   { id: 'ops', icon: 'box', tabs: ['orders', 'reports', 'disputes', 'refunds', 'payments', 'withdrawals', 'cod'] },
-  { id: 'money', icon: 'coins', tabs: ['finance', 'dc', 'fines', 'coupons', 'referrals'] },
+  { id: 'money', icon: 'coins', tabs: ['finance', 'dc', 'cf', 'fines', 'coupons', 'referrals'] },
   { id: 'system', icon: 'gear', tabs: ['settings', 'blog', 'blacklist', 'audit', 'monitoring'] },
 ];
 const TAB_BADGE = { joins: 'users', payments: 'payments', withdrawals: 'withdrawals', disputes: 'disputes', refunds: 'refunds', reports: 'reports' }; // التبويب ← مفتاح الشارة
@@ -62,7 +62,7 @@ export function renderAdmin(el, tab) {
   // شارات الأعداد المعلّقة (استعلامات خفيفة على index الحالة) — كل 20 ثانية
   const badges = gpoll(['orders', 'users', 'withdrawals', 'disputes', 'refunds', 'reports'], () => api('admin/badges'), 20000, ({ badges: b }) => { lastBadges = b; badgesReady = true; applyBadges(el); }, { dedupe: true });
   const body = $('#body', el);
-  const stop = { overview, finance, payments, users, customers, drivers, companies, joins, orders, withdrawals, disputes, refunds, reports, coupons, referrals, cod, dc, fines, settings, blog, blacklist, audit, monitoring }[tab](body, badges);
+  const stop = { overview, finance, payments, users, customers, drivers, companies, joins, orders, withdrawals, disputes, refunds, reports, coupons, referrals, cod, dc, cf, fines, settings, blog, blacklist, audit, monitoring }[tab](body, badges);
   return () => { badges(); stop?.(); };
 }
 
@@ -642,6 +642,11 @@ export function siteCard(S) {
 export const readSite = (f) => ({ design: f.elements['site.design'].value, mode: f.elements['site.mode'].value, logoUrl: f.elements['site.logoUrl'].value.trim(), hide: LP_SECTIONS.filter((id) => !f.elements['site.show.' + id].checked),
   seo: { title: f.elements['site.seo.title'].value.trim(), description: f.elements['site.seo.description'].value.trim(), google: f.elements['site.seo.google'].value.trim(), bing: f.elements['site.seo.bing'].value.trim() }, texts: Object.fromEntries(LP_FIELDS.map((x) => [x.id, f.elements['site.t.' + x.id].value.trim()])) });
 
+function cf(body) { // رسوم الشركات: الوحدة بتتحمّل عند فتح التبويب بس
+  let dead = false, stop = null;
+  import('./admin-cf.js').then((m) => { if (!dead) stop = m.renderAdminCf(body) || stop; }).catch(onError);
+  return () => { dead = true; stop?.(); };
+}
 function blog(body) { // المقالات (SEO): الوحدة بتتحمّل عند فتح التبويب بس
   render(body, spinner()); let stop = () => {}, dead = false;
   import('./admin-blog.js').then((m) => { if (!dead) stop = m.renderBlog(body) || stop; }).catch(onError);
@@ -709,6 +714,11 @@ function settings(body) {
         <label class="f">${t('admin.s.dcAutoHours')}<input type="number" name="dcAutoCompleteHours" min="0" max="720" step="1" inputmode="numeric" value="${S.dcAutoCompleteHours ?? 24}" required></label>
         <label class="f">${t('admin.s.dcWallet')}<input name="dcPay.wallet" maxlength="40" dir="ltr" value="${S.dcPay?.wallet || ''}"></label>
         <label class="f">${t('admin.s.dcWalletName')}<input name="dcPay.walletName" maxlength="80" value="${S.dcPay?.walletName || ''}"></label></div></div>
+    <div class="card stack"><h3>${t('admin.s.cfTitle')}</h3><p class="hint">${t('admin.s.cfHint')}</p>
+      <label class="row"><input type="checkbox" name="cfEnabled" ${S.cfEnabled === true ? 'checked' : ''}> <span>${t('admin.s.cfEnabled')}</span></label>
+      <div class="grid-2"><label class="f">${t('admin.s.cfType')}<select name="cfType"><option value="fixed" ${S.cfType !== 'percent' ? 'selected' : ''}>${t('admin.s.cfFixed')}</option><option value="percent" ${S.cfType === 'percent' ? 'selected' : ''}>${t('admin.s.cfPercent')}</option></select></label>
+        <label class="f">${t('admin.s.cfValue')}<input type="number" name="cfValue" min="0" max="100000000" step="0.01" inputmode="decimal" value="${S.cfValue ?? 0}" required></label>
+        <label class="f">${t('admin.s.cfLimit')}<input type="number" name="cfLimit" min="0" max="100000000" step="1" inputmode="numeric" value="${S.cfLimit ?? 0}" required></label></div></div>
     <div class="card stack"><h3>${t('admin.passengers')}</h3>
       <label class="row"><input type="checkbox" name="passengersEnabled" ${S.passengersEnabled ? 'checked' : ''}> <span>${t('admin.s.passengersEnabled')}</span></label><p class="hint">${t('admin.paxLegal')}</p>
       ${kvRows('passengerClasses', S.passengerClasses, true)}</div>
@@ -791,6 +801,7 @@ function settings(body) {
           codEnabled: f.elements.codEnabled.checked, codCommissionPct: n('codCommissionPct'), codMaxAmount: n('codMaxAmount'), codPeriodDays: n('codPeriodDays'), codGraceDays: n('codGraceDays'), codBlockScope: f.elements.codBlockScope.value,
           dcPerKm: n('dcPerKm'), fineCreditToWallet: f.elements.fineCreditToWallet.checked, vehiclePricing: Object.fromEntries(['pickup', 'half_ton', 'jumbo', 'truck'].map((k) => [k, Object.fromEntries(['base', 'perKm', 'minPrice', 'kmFee'].map((f) => [f, n(`vp.${k}.${f}`)]))])),
           finesEnabled: f.elements.finesEnabled.checked, ...Object.fromEntries(['fineFreeCancelMin', 'fineWaitMin', 'fineEnRouteAmount', 'fineArrivedAmount', 'fineClaimHours', 'fineObjectHours', 'fineDriverSharePct', 'fineCollectorPct', 'fineMonthlyCap', 'fineMaxClaimsPerDay', 'fineBlockLimit', 'samePickupMeters', 'samePickupMax'].map((k) => [k, n(k)])),
+          cfEnabled: f.elements.cfEnabled.checked, cfType: f.elements.cfType.value, cfValue: n('cfValue'), cfLimit: n('cfLimit'),
           dcEnabled: f.elements.dcEnabled.checked, adminShowLegacy: f.elements.adminShowLegacy.checked, dcPct: n('dcPct'), dcLimit: n('dcLimit'), dcAutoCompleteHours: n('dcAutoCompleteHours'), jobsRadiusKm: n('jobsRadiusKm'), dcPay: { wallet: f.elements['dcPay.wallet'].value.trim(), walletName: f.elements['dcPay.walletName'].value.trim() },
           vehicleGuide: Object.fromEntries(['pickup', 'half_ton', 'jumbo', 'truck'].map((k) => [k, { maxKg: n(`vg.${k}.maxKg`), size: f.elements[`vg.${k}.size`].value }])),
           passengersEnabled: f.elements.passengersEnabled.checked, passengerClasses: readKv('passengerClasses'),

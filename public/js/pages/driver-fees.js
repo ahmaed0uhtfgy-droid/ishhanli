@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { t } from '../i18n.js';
 import { html, render, skeleton, errMsg, fmtMoney, fmtNum, fmtDate, orderNo, toast, busy } from '../ui.js';
 import { uploadImage } from '../storage.js';
+import { state } from '../state.js';
 
 const pctOf = (d) => (d.limit > 0 ? Math.max(0, Math.min(100, Math.round((d.gross / d.limit) * 100))) : 0);
 
@@ -23,16 +24,39 @@ const payBox = (d) => {
     ${!hasW && !hasI ? html`<p class="no-t small">${t('fees.noNumber')}</p>` : ''}</div>`;
 };
 
+// قسم رسوم الشركة (للشركات بس): عدّادين + السداد بإثبات تحويل
+const cfSection = (c) => {
+  if (!c || !c.enabled) return '';
+  const w = c.pay.wallet, ip = c.pay.instapay, methods = [...(w?.wallet ? ['wallet'] : []), ...(ip?.handle ? ['instapay'] : [])];
+  const pct = c.limit > 0 ? Math.max(0, Math.min(100, Math.round((c.cycle / c.limit) * 100))) : 0;
+  return html`<section class="card stack"><h3>${t('cf.title')}</h3>
+    ${c.blocked ? html`<div class="action bad"><b>${t('dc.blockedTitle')}</b><p>${t('cf.blockedMsg')}</p></div>` : html`<div class="action good"><p>${t('cf.active')}</p></div>`}
+    <div class="grid-4"><div class="card kpi"><div class="muted small">${t('cf.cycle')}</div><div class="kpi-v num">${fmtMoney(c.cycle)}</div><div class="muted small">${t('cf.limit')}: ${fmtMoney(c.limit)}</div></div>
+      <div class="card kpi"><div class="muted small">${t('cf.total')}</div><div class="kpi-v num">${fmtMoney(c.total)}</div></div>
+      <div class="card kpi"><div class="muted small">${t('cf.due')}</div><div class="kpi-v num">${fmtMoney(c.due)}</div><div class="muted small">${c.type === 'percent' ? c.value + '%' : ''}</div></div></div>
+    <div class="pbar ${c.blocked ? 'bad' : ''}" role="img" aria-label="${pct}%"><i class="pbar-fill" data-w="${pct}"></i></div>
+    <p class="muted small">${t('cf.hint')}</p>
+    ${c.pending ? html`<div class="action info"><p>${t('dc.pendingMsg', { amount: fmtMoney(c.pending.amount) })}</p></div>`
+      : c.due > 0 ? html`${payBox({ due: c.due, pay: c.pay })}
+        ${methods.length ? html`<label class="f">${t('dc.method')}<select id="cfMethod">${methods.map((m) => html`<option value="${m}">${t('dc.method.' + m)}</option>`)}</select></label>
+        <label class="f">${t('dc.proof')}<input type="file" id="cfProof" accept="image/*"></label>
+        <label class="f">${t('dc.ref')}<input id="cfRef" maxlength="40" dir="ltr" autocomplete="off"></label>
+        <button class="btn primary block" id="cfSend">${t('dc.send')}</button>` : ''}` : ''}
+    ${c.history.length ? html`<ul class="plain">${c.history.map((x) => html`<li class="row"><span class="grow">${fmtDate(x.decidedAt || x.createdAt)} · <b>${fmtMoney(x.amount)}</b>${x.status === 'rejected' && x.note ? html` · <span class="no-t">${x.note}</span>` : ''}</span><span class="${x.status === 'paid' ? 'ok-t' : 'no-t'}"><b>${t('dc.st.' + x.status)}</b></span></li>`)}</ul>` : ''}</section>`;
+};
+
 export function renderDriverFees(view) {
   render(view, html`<div class="page-head"><h1>${t('fees.title')}</h1></div><div id="fees">${skeleton(3)}</div>`);
   const box = view.querySelector('#fees'); let dead = false, timer = null;
   async function load() {
-    let d; try { d = await api('dc/summary', {}); } catch (e) { if (!dead) render(box, html`<div class="action bad"><p>${errMsg(e)}</p></div>`); return; }
+    const isCo = state.profile?.accountType === 'company';
+    let d, cf = null; try { [d, cf] = await Promise.all([api('dc/summary', {}), isCo ? api('cf/summary', {}).catch(() => null) : null]); } catch (e) { if (!dead) render(box, html`<div class="action bad"><p>${errMsg(e)}</p></div>`); return; }
     if (dead) return;
-    if (!d.enabled) { render(box, html`<p class="muted">${t('fees.off')}</p>`); return; }
+    if (!d.enabled && !cf?.enabled) { render(box, html`<p class="muted">${t('fees.off')}</p>`); return; }
     const methods = [...(d.pay.wallet?.wallet ? ['wallet'] : []), ...(d.pay.instapay?.handle ? ['instapay'] : [])];
     render(box, html`
-      ${d.blocked ? html`<div class="action bad"><b>${t('dc.blockedTitle')}</b><p>${t('dc.blockedMsg')}</p></div>` : html`<div class="action good"><p>${t('fees.active')}</p></div>`}
+      ${cfSection(cf)}
+      ${!d.enabled ? '' : html`${d.blocked ? html`<div class="action bad"><b>${t('dc.blockedTitle')}</b><p>${t('dc.blockedMsg')}</p></div>` : html`<div class="action good"><p>${t('fees.active')}</p></div>`}
       <section class="card stack">
         <div class="grid-4"><div class="card kpi"><div class="muted small">${t('dc.gross')}</div><div class="kpi-v num">${fmtMoney(d.gross)}</div><div class="muted small">${t('dc.limit')}: ${fmtMoney(d.limit)}</div></div>
           <div class="card kpi"><div class="muted small">${t('fine.payable')}</div><div class="kpi-v num">${fmtMoney(d.due)}</div><div class="muted small">${d.pct}%</div></div></div>
@@ -49,7 +73,7 @@ export function renderDriverFees(view) {
           : d.gross > 0 ? html`<button class="btn primary block" id="dcCover">${t('dc.cover')}</button>` : html`<p class="muted small">${t('dc.noDue')}</p>`}
       </section>
       ${d.history.length ? html`<section class="card stack"><h3>${t('dc.history')}</h3><ul class="plain">${d.history.map((x) => html`<li class="row"><span class="grow">${fmtDate(x.decidedAt || x.createdAt)} · <b>${fmtMoney(x.amount)}</b>${x.status === 'rejected' && x.note ? html` · <span class="no-t">${x.note}</span>` : ''}</span><span class="${x.status === 'paid' ? 'ok-t' : 'no-t'}"><b>${t('dc.st.' + x.status)}</b></span></li>`)}</ul></section>` : ''}
-      ${d.entries.length ? html`<section class="card stack"><h3>${t('dc.entries')}</h3><ul class="plain">${d.entries.map((x) => html`<li class="row small"><a class="grow" href="#/order/${x.orderId}">${orderNo(x.orderId)}</a><span>${fmtDate(x.at)}</span><b>${fmtMoney(x.gross)}</b></li>`)}</ul></section>` : ''}`);
+      ${d.entries.length ? html`<section class="card stack"><h3>${t('dc.entries')}</h3><ul class="plain">${d.entries.map((x) => html`<li class="row small"><a class="grow" href="#/order/${x.orderId}">${orderNo(x.orderId)}</a><span>${fmtDate(x.at)}</span><b>${fmtMoney(x.gross)}</b></li>`)}</ul></section>` : ''}`}`);
     box.querySelectorAll('.pbar-fill').forEach((el) => { el.style.width = el.dataset.w + '%'; });
   }
   view.addEventListener('click', async (e) => {
@@ -57,6 +81,16 @@ export function renderDriverFees(view) {
     if (cp) { try { await navigator.clipboard.writeText(cp.dataset.copy); toast(t('fees.copied')); } catch { /* المتصفح مانع النسخ */ } return; }
     const cv = e.target.closest('#dcCover');
     if (cv) { busy(cv, async () => { try { await api('dc/pay', {}); toast(t('fine.done')); load(); } catch (err) { toast(errMsg(err), true); } }); return; }
+    const cs = e.target.closest('#cfSend');
+    if (cs) {
+      const file = view.querySelector('#cfProof')?.files?.[0], reference = view.querySelector('#cfRef')?.value.trim();
+      if (!file || !reference) { toast(t('dc.needProof'), true); return; }
+      busy(cs, async () => {
+        try { const proofRef = await uploadImage(file, 'payment'); await api('cf/pay', { method: view.querySelector('#cfMethod').value, proofRef, reference }); toast(t('dc.sent')); load(); }
+        catch (err) { toast(errMsg(err), true); }
+      });
+      return;
+    }
     const sb = e.target.closest('#dcSend'); if (!sb) return;
     const file = view.querySelector('#dcProof')?.files?.[0], reference = view.querySelector('#dcRef')?.value.trim();
     if (!file || !reference) { toast(t('dc.needProof'), true); return; }
@@ -65,7 +99,7 @@ export function renderDriverFees(view) {
       catch (err) { toast(errMsg(err), true); }
     });
   });
-  const typing = () => !!(view.querySelector('#dcProof')?.files?.length || view.querySelector('#dcRef')?.value);
+  const typing = () => !!(view.querySelector('#dcProof')?.files?.length || view.querySelector('#dcRef')?.value || view.querySelector('#cfProof')?.files?.length || view.querySelector('#cfRef')?.value);
   load(); timer = setInterval(() => { if (!document.hidden && !typing()) load(); }, 30000);
   return () => { dead = true; clearInterval(timer); };
 }

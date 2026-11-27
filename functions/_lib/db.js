@@ -107,7 +107,11 @@ export function orderUpdate(_env, o, patch, log) {
   for (const [k, v] of Object.entries(o)) if (!META.has(k)) data[k] = v;
   for (const [k, v] of Object.entries(patch)) { if (COLS[k]) cols[COLS[k]] = v; else data[k] = v; }
   if (log) data.log = [...(o.log || []), { ...log, at: now() }];
-  return [F.patch(`orders/${o.id}`, { ...cols, data: JSON.stringify(data), updated_at: now(), version: (o._v || 0) + 1 }, o._ut)];
+  // رسوم الشركات: الطلب اتحسب على عدّاد الشركة وقت القبول. لو اتلغى / السواق خرج منه / الشكوى اتحسمت بالاسترداد الكامل بنرجّعه من العدّادين (الإجمالي + عدّاد الدورة اللي اتحسب فيها)
+  const back = o.cfAmount > 0 && o.driverId && (patch.status === 'cancelled' || patch.driverId === null || (patch.status === 'resolved' && patch.resolution === 'refund'));
+  if (back) { data.cfAmount = 0; data.cfRefunded = o.cfAmount; }
+  return [F.patch(`orders/${o.id}`, { ...cols, data: JSON.stringify(data), updated_at: now(), version: (o._v || 0) + 1 }, o._ut),
+    ...(back ? [F.inc(`users/${o.driverId}`, { cf_total: -o.cfAmount }), F.inc(`cf_cycles/${o.driverId}_${o.cfNo || 0}`, { sum: -o.cfAmount }, { uid: o.driverId, no: o.cfNo || 0 })] : [])];
 }
 
 const AFTER_PAYMENT = ['paid', 'heading_pickup', 'picked_up', 'in_transit', 'delivered', 'completed', 'disputed', 'resolved'];

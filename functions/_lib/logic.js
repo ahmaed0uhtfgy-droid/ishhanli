@@ -74,6 +74,8 @@ export const DEFAULTS = {
   // نظام الدفع المباشر + عمولة المنصة (مقفول افتراضياً = نظام الضمان القديم زي ما هو). لما الأدمن يفعّله: العميل بيدفع للسواق مباشرة، والمنصة بتسجّل كل شحنة ناجحة،
   // ولما إجمالي مكسب السواق (غير المسدَّد) يوصل للحد بيتوقف عن قبول طلبات جديدة لحد ما يسدّد نسبة المنصة (محفظة/إنستا باي + صورة التحويل + تأكيد الأدمن). نسبة 0 = من غير عمولة.
   adminShowLegacy: false, // إظهار تبويبات نظام الضمان القديم (الدفعات/السحب/النزاعات/الاسترداد/COD) في الأدمن وهو مقفول
+  // رسوم شركات الشحن (cf): الأدمن بيحدد كل حاجة (تشغيل، نوع الرسم ثابت/نسبة، قيمته، والحد). مقفول لحد ما الأدمن يفعّله.
+  cfEnabled: false, cfType: 'fixed', cfValue: 0, cfLimit: 0,
   dcEnabled: true, dcPct: 2, dcLimit: 1000, dcPay: { wallet: '', walletName: '' }, // الدفع المباشر هو النظام الأساسي. نظام الضمان القديم مقفول ومخفي (الأدمن يرجّعه من الإعدادات > نظام الدفع)
   // تسعير مستقل لكل نوع عربية (ربع نقل / نص نقل / نقل / جامبو): سعر فتح + سعر الكيلو + حد أدنى (0 = نستخدم المعادلة العامة: سعر الكيلو العام × معامل الحجم).
   // kmFee = رسوم المنصة على كل كيلومتر من مشاوير العربية دي (0 = نستخدم dcPerKm العام).
@@ -170,6 +172,7 @@ export async function loadSettings(env) {
     codPeriodDays: Math.floor(num(d.codPeriodDays, D.codPeriodDays, 1, 31)), codGraceDays: Math.floor(num(d.codGraceDays, D.codGraceDays, 0, 30)),
     codMaxAmount: Math.floor(num(d.codMaxAmount, D.codMaxAmount, 100, 1000000)), codBlockScope: d.codBlockScope === 'all' ? 'all' : 'cod',
     adminShowLegacy: d.adminShowLegacy === true,
+    cfEnabled: d.cfEnabled === true, cfType: d.cfType === 'percent' ? 'percent' : 'fixed', cfValue: Math.round(num(d.cfValue, 0, 0, d.cfType === 'percent' ? 100 : 1e8) * 100) / 100, cfLimit: Math.floor(num(d.cfLimit, 0, 0, 1e8)),
     dcEnabled: d.dcEnabled === undefined ? D.dcEnabled : d.dcEnabled === true, dcPct: Math.round(num(d.dcPct, D.dcPct, 0, 50) * 10) / 10, dcLimit: Math.floor(num(d.dcLimit, D.dcLimit, 1, 1e8)),
     finesEnabled: d.finesEnabled === true, fineFreeCancelMin: Math.floor(num(d.fineFreeCancelMin, D.fineFreeCancelMin, 0, 1440)), fineWaitMin: Math.floor(num(d.fineWaitMin, D.fineWaitMin, 0, 1440)),
     fineEnRouteAmount: Math.floor(num(d.fineEnRouteAmount, D.fineEnRouteAmount, 0, 100000)), fineArrivedAmount: Math.floor(num(d.fineArrivedAmount, D.fineArrivedAmount, 0, 100000)),
@@ -248,6 +251,10 @@ export const dcPayable = (gross, pct, credit, held, kmFee = 0) => {
 export const dcFeesOn = (s) => s.dcEnabled === true && (s.dcPct > 0 || s.dcPerKm > 0 || PRICE_VEHICLES.some((k) => s.vehiclePricing?.[k]?.kmFee > 0));
 /** رسوم المنصة على كيلومترات مشوار: كيلومتر × سعر الكيلو للعربية (أو العام)، بجنيه صحيح */
 export const kmFeeOf = (s, km, vehicle) => { const vp = vehicle ? s.vehiclePricing?.[vehicle] : null, rate = vp?.kmFee > 0 ? vp.kmFee : s.dcPerKm || 0; return Math.max(0, Math.round((Number(km) || 0) * rate)); };
+/** رسوم شركات الشحن: شغّال لما الأدمن يفعّله ويحدد حد وقيمة. الحد بيتفحص قبل قبول الطلب (تحت الحد = يقبل حتى لو الطلب هيعدّيه)، وبعد الوصول للحد الحساب يتوقف لحد ما يسدّد. */
+export const cfOn = (s) => s.cfEnabled === true && s.cfLimit > 0 && s.cfValue > 0;
+export const cfBlocked = (cycle, s) => cfOn(s) && (Number(cycle) || 0) >= s.cfLimit;
+export const cfDue = (cycle, s) => (!cfOn(s) ? 0 : s.cfType === 'percent' ? Math.round(((Number(cycle) || 0) * Math.min(100, s.cfValue)) / 100) : Math.round(s.cfValue));
 export const dcBlocked = (gross, s) => dcFeesOn(s) && (Number(gross) || 0) >= s.dcLimit;
 
 /** توزيع المبلغ: عمولة الموقع (مقرّبة لجنيه) والباقي للسواق — أرقام صحيحة دايماً */
@@ -295,6 +302,7 @@ export function sanitizeSettings(b) {
     codPeriodDays: Math.floor(n(b.codPeriodDays ?? DEFAULTS.codPeriodDays, 1, 31)), codGraceDays: Math.floor(n(b.codGraceDays ?? DEFAULTS.codGraceDays, 0, 30)),
     codMaxAmount: Math.floor(n(b.codMaxAmount ?? DEFAULTS.codMaxAmount, 100, 1000000)), codBlockScope: b.codBlockScope === 'all' ? 'all' : 'cod',
     adminShowLegacy: b.adminShowLegacy === true,
+    cfEnabled: b.cfEnabled === true, cfType: b.cfType === 'percent' ? 'percent' : 'fixed', cfValue: Math.round(n(b.cfValue ?? 0, 0, b.cfType === 'percent' ? 100 : 1e8) * 100) / 100, cfLimit: Math.floor(n(b.cfLimit ?? 0, 0, 1e8)),
     dcEnabled: b.dcEnabled === true, dcPct: Math.round(n(b.dcPct ?? DEFAULTS.dcPct, 0, 50) * 10) / 10, dcLimit: Math.floor(n(b.dcLimit ?? DEFAULTS.dcLimit, 1, 1e8)),
     finesEnabled: b.finesEnabled === true, fineFreeCancelMin: Math.floor(n(b.fineFreeCancelMin ?? DEFAULTS.fineFreeCancelMin, 0, 1440)), fineWaitMin: Math.floor(n(b.fineWaitMin ?? DEFAULTS.fineWaitMin, 0, 1440)),
     fineEnRouteAmount: Math.floor(n(b.fineEnRouteAmount ?? DEFAULTS.fineEnRouteAmount, 0, 100000)), fineArrivedAmount: Math.floor(n(b.fineArrivedAmount ?? DEFAULTS.fineArrivedAmount, 0, 100000)),

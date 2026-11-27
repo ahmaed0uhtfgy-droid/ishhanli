@@ -4,7 +4,7 @@ import { HttpError, verifyIdToken, newId } from '../_lib/core.js';
 import { F, STAMP_KINDS, STAMP_PATH, now, rateLimit, rateTake, walletCredit, walletTx, userOut, fleetOut, withdrawalOut, txOut, disputeOut, loadOrder, hydrateOrder, orderUpdate, orderOut, auditLog } from '../_lib/db.js';
 import { randomBase32, totpMatch, otpauthURL } from '../_lib/totp.js';
 import { loadSettings, clearSettingsCache, sanitizeSettings, distanceKm, calcPrice, calcPassengerPrice, effectiveCommissionPct, canServe, cancelSplit, couponDiscount, haversineM, split, dueOf, lateKinds, guardOf, codPeriodOf, codPeriodBounds, codSplit, codStatements, codBlocked } from '../_lib/logic.js';
-import { dcDue, dcBlocked, dcPayable, dcFeesOn, kmFeeOf, vehicleOfSize, fineCredit } from '../_lib/logic.js';
+import { cfOn, cfBlocked, cfDue, dcDue, dcBlocked, dcPayable, dcFeesOn, kmFeeOf, vehicleOfSize, fineCredit } from '../_lib/logic.js';
 import { saveFile, ownFiles, readFile } from '../_lib/files.js';
 import { notify, dispatchNewOrder, adminIds, orderNo, pushEnabled, renderMsg } from '../_lib/push.js';
 import { trustOf } from '../_lib/trust.js';
@@ -86,6 +86,21 @@ const dcGate = async (env, uid, s) => {
   if (!dcFeesOn(s)) return; // مفيش رسوم (نسبة أو كيلومتر) = مفيش توقيف
   if (dcBlocked((await F.get(env, `users/${uid}`))?.dc_gross || 0, s)) throw new HttpError(403, 'dc_blocked');
 };
+// ----- رسوم شركات الشحن (cf): عدّادين — إجمالي ما جمّعته الشركة (cf_total، ما بيتصفّرش) وعدّاد الدورة (cf_cycles/<uid>_<رقم الدورة>، بيتصفّر بالسداد) -----
+const cfIsCo = (ur) => ur?.account_type === 'company';
+const cfSum = async (env, uid, ur) => (await F.get(env, `cf_cycles/${uid}_${ur?.cf_no || 0}`))?.sum || 0;
+/** شركة وصل عدّاد دورتها للحد = ما تقبلش طلبات جديدة (الطلبات الشغّالة تكمّل). الحد بيتفحص قبل القبول مش بعده. */
+const cfBlockedNow = async (env, uid, ur, s) => cfOn(s) && cfIsCo(ur) && cfBlocked(await cfSum(env, uid, ur), s);
+const cfGate = async (env, uid, s) => { if (!cfOn(s)) return; if (await cfBlockedNow(env, uid, await F.get(env, `users/${uid}`), s)) throw new HttpError(403, 'cf_blocked'); };
+/** لقطة العدّ وقت قبول الطلب: بتتخزّن في الطلب (cfAmount/cfNo) عشان الإلغاء يرجّع بالظبط من نفس الدورة. crossed = القبول ده هو اللي وصّل العدّاد للحد (بنبعت تنبيه) */
+const cfCount = async (env, s, ur, uid, amount) => {
+  const a = Math.max(0, Math.round(Number(amount) || 0));
+  if (!cfOn(s) || !cfIsCo(ur) || !a) return { patch: {}, ops: [], crossed: false };
+  const no = ur.cf_no || 0, before = await cfSum(env, uid, ur);
+  return { patch: { cfAmount: a, cfNo: no }, ops: [F.inc(`users/${uid}`, { cf_total: a }), F.inc(`cf_cycles/${uid}_${no}`, { sum: a }, { uid, no })], crossed: !cfBlocked(before, s) && cfBlocked(before + a, s), due: cfDue(before + a, s) };
+};
+const cfNotifyCrossed = (c, s, uid, cf) => cf.crossed && bg(c, notify(c.env, [uid], 'cf_limit_reached', { limit: s.cfLimit, due: cf.due }, { url: '/#/driver/fees' }));
+const cfPayOut = (r) => ({ id: r.id, companyId: r.company_id, name: r.company_name, cycle: r.cycle, amount: r.amount, method: r.method, reference: r.reference, proof: r.proof, status: r.status, note: r.note, createdAt: r.created_at, decidedAt: r.decided_at });
 // ----- تعويض السواق وغرامة العميل (الدفع المباشر) -----
 const parseJson = (v) => { try { const a = JSON.parse(v || '[]'); return Array.isArray(a) ? a : []; } catch { return []; } };
 const fineOn = (s) => s.finesEnabled === true && s.dcEnabled === true; // الغرامات مرتبطة بنظام الدفع المباشر
@@ -777,16 +792,20 @@ const ROUTES = {
     if (o.service !== 'passengers' && c.body.agree !== true) throw new HttpError(400, 'must_agree'); // السواق لازم يوافق صراحةً على وصف الشحنة وصورها
     await codGate(c.env, c.uid, await loadSettings(c.env), o); // سواق متأخر في سداد الدفع عند الاستلام = متوقف
     await dcGate(c.env, c.uid, await loadSettings(c.env)); // وصل لحد المكسب غير المسدَّد = متوقف لحد ما يسدّد عمولة المنصة
+    await cfGate(c.env, c.uid, await loadSettings(c.env)); // شركة وصلت لحد رسوم الشركات = متوقفة لحد ما تسدّد
     await radiusGate(c, await loadSettings(c.env), o); // الطلب لازم يكون في نطاق السواق
     const slot = await driverSlot(c.env, c.uid, await loadSettings(c.env), o.id);
     const direct = o.direct === true, prepaid = o.escrowStatus === 'held'; // مدفوع مقدماً أو دفع مباشر: السواق يبدأ فوراً (الحالة paid)
     const fineNow = direct && fineOn(await loadSettings(c.env)) ? await curFine(c.env, o.customerId) : null; // غرامة العميل وقت القبول (اللقطة اللي هتتحصّل)
     const pend = (await F.query(c.env, 'offers', { eq: { order_id: o.id }, limit: 100 })).filter((f) => f.status === 'pending');
+    const sCf = await loadSettings(c.env), cf = await cfCount(c.env, sCf, await F.get(c.env, `users/${c.uid}`), c.uid, o.price);
     await F.run(c.env, [
-      ...orderUpdate(c.env, o, { status: prepaid || direct ? 'paid' : 'accepted', ...(fineNow !== null ? { fineDue: fineNow } : {}), driverId: c.uid, driverName: u.name, driverPhone: u.phone, driverVehicle: u.vehicleType, driverVehiclePhoto: u.vehiclePhotoRef || null, acceptedAt: now(), ...(o.service !== 'passengers' ? { driverAgreedAt: now(), manifestHash: await manifestHash(o) } : {}) }, L(prepaid || direct ? 'paid' : 'accepted', c.uid, prepaid ? { note: 'accepted_prepaid' } : direct ? { note: 'accepted_direct' } : {})),
+      ...cf.ops,
+      ...orderUpdate(c.env, o, { ...cf.patch, status: prepaid || direct ? 'paid' : 'accepted', ...(fineNow !== null ? { fineDue: fineNow } : {}), driverId: c.uid, driverName: u.name, driverPhone: u.phone, driverVehicle: u.vehicleType, driverVehiclePhoto: u.vehiclePhotoRef || null, acceptedAt: now(), ...(o.service !== 'passengers' ? { driverAgreedAt: now(), manifestHash: await manifestHash(o) } : {}) }, L(prepaid || direct ? 'paid' : 'accepted', c.uid, prepaid ? { note: 'accepted_prepaid' } : direct ? { note: 'accepted_direct' } : {})),
       ...(slot ? [slot] : []),
       ...pend.map((f) => F.patch(`offers/${f._id}`, { status: f.driver_id === c.uid ? 'withdrawn' : 'rejected', updated_at: now() })),
     ]);
+    cfNotifyCrossed(c, sCf, c.uid, cf);
     bg(c, notify(c.env, [o.customerId], direct ? 'accepted_direct' : prepaid ? 'accepted_prepaid' : 'accepted', { driver: u.name, no: orderNo(o.id) }, { url: `/#/order/${o.id}` }));
     return { ok: true };
   },
@@ -802,6 +821,7 @@ const ROUTES = {
     if (o.service === 'passengers' && !canServe(u.vehicleType, o)) throw new HttpError(403, 'vehicle_mismatch');
     await codGate(c.env, c.uid, s, o);
     await dcGate(c.env, c.uid, s);
+    await cfGate(c.env, c.uid, s);
     await radiusGate(c, s, o);
     const lo = Math.max(Math.ceil(s.minPrice), Math.ceil((o.price * s.offerMinPct) / 100)), hi = Math.ceil((o.price * s.offerMaxPct) / 100);
     if (o.service !== 'passengers' && c.body.agree !== true) throw new HttpError(400, 'must_agree');
@@ -833,16 +853,20 @@ const ROUTES = {
     if (o.status !== 'open') throw new HttpError(409, 'order_not_open');
     const d = await F.get(c.env, `users/${f.driver_id}`);
     if (!d || d.role !== 'driver' || d.status !== 'active') throw new HttpError(409, 'driver_unavailable');
+    if (await cfBlockedNow(c.env, d.uid, d, await loadSettings(c.env))) throw new HttpError(409, 'driver_unavailable'); // شركة وصلت لحد رسوم الشركات بعد ما بعتت عرضها
     if (s0Block(await loadSettings(c.env), d)) throw new HttpError(409, 'driver_unavailable'); // السواق اتوقف (عمولة غير مسدّدة) بعد ما بعت عرضه: العميل يختار عرض غيره
     const slot = await driverSlot(c.env, d.uid, await loadSettings(c.env), o.id); // السواق مشغول بطلب تاني؟ العميل يختار عرض غيره
     const others = (await F.query(c.env, 'offers', { eq: { order_id: o.id }, limit: 100 })).filter((r) => r.status === 'pending' && r._id !== f._id);
     const amountDue = Math.max(0, f.price - Math.min(o.discount || 0, f.price)); // لو فيه كوبون: الخصم يفضل مطبّق على السعر المتفق عليه
+    const sCf = await loadSettings(c.env), cf = await cfCount(c.env, sCf, d, d.uid, f.price);
     await F.run(c.env, [
       F.patch(`offers/${f._id}`, { status: 'accepted', updated_at: now() }, f._ut), // شرط: العرض لسه معلّق
-      ...orderUpdate(c.env, o, { status: o.direct === true ? 'paid' : 'accepted', ...(o.direct === true && fineOn(await loadSettings(c.env)) ? { fineDue: await curFine(c.env, o.customerId) } : {}), driverId: d.uid, driverName: d.name, driverPhone: d.phone, driverVehicle: d.vehicle_type, driverVehiclePhoto: d.vehicle_photo_ref || null, acceptedAt: now(), price: f.price, amountDue, priceNegotiated: true, driverAgreedAt: f.agreed_at || null, manifestHash: f.manifest_hash || null }, L(o.direct === true ? 'paid' : 'accepted', c.uid, { note: 'offer', price: f.price })),
+      ...cf.ops,
+      ...orderUpdate(c.env, o, { ...cf.patch, status: o.direct === true ? 'paid' : 'accepted', ...(o.direct === true && fineOn(await loadSettings(c.env)) ? { fineDue: await curFine(c.env, o.customerId) } : {}), driverId: d.uid, driverName: d.name, driverPhone: d.phone, driverVehicle: d.vehicle_type, driverVehiclePhoto: d.vehicle_photo_ref || null, acceptedAt: now(), price: f.price, amountDue, priceNegotiated: true, driverAgreedAt: f.agreed_at || null, manifestHash: f.manifest_hash || null }, L(o.direct === true ? 'paid' : 'accepted', c.uid, { note: 'offer', price: f.price })),
       ...others.map((r) => F.patch(`offers/${r._id}`, { status: 'rejected', updated_at: now() })),
       ...(slot ? [slot] : []),
     ]);
+    cfNotifyCrossed(c, sCf, d.uid, cf);
     bg(c, notify(c.env, [d.uid], 'offer_accepted', { price: f.price, no: orderNo(o.id) }, { url: `/#/order/${o.id}` }));
     bg(c, notify(c.env, others.map((r) => r.driver_id), 'offer_rejected', { no: orderNo(o.id) }, { url: '/#/driver' }));
     return { ok: true };
@@ -2100,6 +2124,99 @@ const ROUTES = {
       return { ok: true };
     }
     throw new HttpError(400, 'bad_action');
+  },
+  // ================= رسوم شركات الشحن (cf) =================
+  // عدّادين لكل شركة: إجمالي (ما بيتصفّرش) + عدّاد دورة بيتصفّر لما الشركة تسدّد. لما عدّاد الدورة يوصل للحد (من الأدمن) الشركة بتتوقف عن قبول طلبات لحد ما تسدّد الرسم (ثابت أو نسبة) وتأكّده الإدارة.
+  async 'cf/summary'(c) {
+    await needCompany(c);
+    const s = await loadSettings(c.env);
+    const [r, pays] = await Promise.all([F.get(c.env, `users/${c.uid}`), F.query(c.env, 'cf_pay', { eq: { company_id: c.uid }, limit: 100 })]);
+    const cycle = await cfSum(c.env, c.uid, r), list = pays.sort(byDesc('created_at')), pending = list.find((x) => x.status === 'pending') || null;
+    return { enabled: cfOn(s), type: s.cfType, value: s.cfValue, limit: s.cfLimit, total: r?.cf_total || 0, cycle, due: cfDue(cycle, s), blocked: cfBlocked(cycle, s), pay: { instapay: s.instapay, wallet: s.dcPay }, pending: pending && cfPayOut(pending), history: list.filter((x) => x.status !== 'pending').slice(0, 10).map(cfPayOut) };
+  },
+  async 'cf/pay'(c) {
+    const u = await needCompany(c);
+    const s = await loadSettings(c.env);
+    if (!cfOn(s)) throw new HttpError(403, 'cf_off');
+    const r = await F.get(c.env, `users/${c.uid}`), no = r?.cf_no || 0, cd = await F.get(c.env, `cf_cycles/${c.uid}_${no}`), cycle = cd?.sum || 0, amount = cfDue(cycle, s);
+    if (cycle <= 0 || amount <= 0) throw new HttpError(409, 'nothing_due');
+    const method = c.body.method;
+    if (!['instapay', 'wallet'].includes(method)) throw new HttpError(400, 'bad_method');
+    const proof = fileRef(c.body.proofRef); await ownFiles(c.env, c.uid, [proof]);
+    const reference = str(c.body.reference, 4, 40);
+    await rateTake(c.env, 'cfpay', c.uid, 3600e3, 6, 'too_many_requests');
+    if ((await F.query(c.env, 'cf_pay', { eq: { company_id: c.uid }, limit: 100 })).some((x) => x.status === 'pending')) throw new HttpError(409, 'cf_pending'); // طلب سداد واحد معلّق في المرة
+    const id = newId(), refKey = await dcRefKey(method, reference), t = now();
+    try {
+      await F.run(c.env, [
+        F.guard(cd, `cf_cycles/${c.uid}_${no}`), // لو العدّاد اتغيّر في نفس اللحظة: العملية تفشل والمبلغ يفضل مطابق للي اتحسب
+        F.create(`dc_ref/${refKey}`, { pay_id: id, uid: c.uid, at: t }), // رقم المرجع مرة واحدة بس (مشترك مع سداد السواقين)
+        F.create(`cf_pay/${id}`, { id, company_id: c.uid, company_name: u.companyName || u.name, no, cycle, type: s.cfType, value: s.cfValue, amount, method, reference, ref_key: refKey, proof, status: 'pending', note: null, created_at: t, decided_at: null, decided_by: null }),
+      ]);
+    } catch (e) { throw e.code === 'conflict' ? new HttpError(409, 'cf_conflict') : e; }
+    toAdmins(c, 'cf_review', { name: u.companyName || u.name, amount }, '/#/admin/cf');
+    return { ok: true, id, amount };
+  },
+  async 'admin/cf/list'(c) {
+    await need(c, ['admin']);
+    const s = await loadSettings(c.env);
+    const [pending, recent, owing] = await Promise.all([
+      F.query(c.env, 'cf_pay', { eq: { status: 'pending' }, limit: 100 }),
+      F.query(c.env, 'cf_pay', { order: ['created_at', 'desc'], limit: 30 }),
+      F.query(c.env, 'users', { range: [['cf_total', '>', 0]], limit: 200 }),
+    ]);
+    const cos = owing.filter((u) => u.account_type === 'company');
+    const companies = (await Promise.all(cos.map(async (u) => { const cycle = await cfSum(c.env, u.uid, u); return { id: u.uid, name: u.company_name || u.name, phone: u.phone, total: u.cf_total || 0, cycle, due: cfDue(cycle, s), paidTotal: u.cf_paid_total || 0, blocked: cfBlocked(cycle, s) }; }))).sort((a, b) => b.cycle - a.cycle);
+    return { enabled: cfOn(s), type: s.cfType, value: s.cfValue, limit: s.cfLimit, companies, pending: pending.sort((a, b) => a.created_at - b.created_at).map(cfPayOut), recent: recent.filter((x) => x.status !== 'pending').map(cfPayOut) };
+  },
+  async 'admin/cf/confirm'(c) {
+    const admin = await need(c, ['admin']);
+    const p = await F.get(c.env, `cf_pay/${docId(c.body.id)}`);
+    if (!p) throw new HttpError(404, 'not_found');
+    if (p.status !== 'pending') throw new HttpError(409, 'bad_state');
+    const note = str(c.body.note ?? '', 0, 200), t = now();
+    if (c.body.action === 'confirm') {
+      const ur = await F.get(c.env, `users/${p.company_id}`);
+      if (!ur) throw new HttpError(404, 'not_found');
+      const no = ur.cf_no || 0;
+      if (no !== p.no) throw new HttpError(409, 'bad_state'); // الدورة اتقفلت بسداد/تعديل تاني
+      const cur = (await F.get(c.env, `cf_cycles/${p.company_id}_${no}`))?.sum || 0, left = Math.max(0, cur - p.cycle); // اللي اتقبل بعد طلب السداد بيترحّل للدورة الجديدة
+      await F.run(c.env, [
+        F.patch(`cf_pay/${p.id}`, { status: 'paid', note, decided_at: t, decided_by: admin.uid }, p._ut),
+        F.patch(`users/${p.company_id}`, { cf_no: no + 1, cf_paid_total: (ur.cf_paid_total || 0) + p.amount, updated_at: t }, ur._ut),
+        F.set(`cf_cycles/${p.company_id}_${no + 1}`, { uid: p.company_id, no: no + 1, sum: left }),
+        auditLog(admin, 'cf.confirm', { targetType: 'user', targetId: p.company_id, note, meta: { payId: p.id, cycle: p.cycle, amount: p.amount, left } }),
+      ]);
+      bg(c, notify(c.env, [p.company_id], 'cf_paid', { amount: p.amount }, { url: '/#/driver/fees' }));
+      return { ok: true, left };
+    }
+    if (c.body.action === 'reject') {
+      if (note.length < 3) throw new HttpError(400, 'bad_input'); // سبب الرفض إجباري
+      await F.run(c.env, [
+        F.patch(`cf_pay/${p.id}`, { status: 'rejected', note, decided_at: t, decided_by: admin.uid }, p._ut),
+        F.del(`dc_ref/${p.ref_key}`),
+        auditLog(admin, 'cf.reject', { targetType: 'user', targetId: p.company_id, note, meta: { payId: p.id, amount: p.amount } }),
+      ]);
+      bg(c, notify(c.env, [p.company_id], 'cf_rejected', { amount: p.amount }, { url: '/#/driver/fees' }));
+      return { ok: true };
+    }
+    throw new HttpError(400, 'bad_action');
+  },
+  // تعديل يدوي من الأدمن لعدّادات شركة (عدّاد الدورة و/أو الإجمالي): بسبب إجباري وبيتسجّل بالقيمة قبل وبعد
+  async 'admin/cf/adjust'(c) {
+    const admin = await need(c, ['admin']);
+    const uid = uidOf(c.body.uid), note = str(c.body.note, 3, 200);
+    const ur = await F.get(c.env, `users/${uid}`);
+    if (!ur || ur.role !== 'driver' || ur.account_type !== 'company') throw new HttpError(404, 'not_found');
+    const no = ur.cf_no || 0, prevCycle = await cfSum(c.env, uid, ur);
+    const cycle = c.body.cycle === undefined ? null : int(c.body.cycle, 0, 1000000000), total = c.body.total === undefined ? null : int(c.body.total, 0, 1000000000);
+    if (cycle === null && total === null) throw new HttpError(400, 'bad_input');
+    await F.run(c.env, [
+      ...(cycle !== null ? [F.set(`cf_cycles/${uid}_${no}`, { uid, no, sum: cycle })] : []),
+      ...(total !== null ? [F.patch(`users/${uid}`, { cf_total: total, updated_at: now() }, ur._ut)] : []),
+      auditLog(admin, 'cf.adjust', { targetType: 'user', targetId: uid, note, meta: { cycleFrom: prevCycle, cycleTo: cycle, totalFrom: ur.cf_total || 0, totalTo: total } }),
+    ]);
+    return { ok: true };
   },
   // تصحيح يدوي لإجمالي مكسب السواق غير المسدَّد (خطأ تسجيل/إعفاء): بسبب إجباري وبيتسجّل في سجل التدقيق بالقيمة قبل وبعد
   async 'admin/dc/adjust'(c) {
