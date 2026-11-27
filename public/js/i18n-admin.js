@@ -3,12 +3,16 @@
 import { registerRows } from './i18n.js';
 
 registerRows([
+  ['admin.nameAr', 'الاسم بالعربي', 'Arabic name'],
+  ['admin.nameEn', 'الاسم بالإنجليزي', 'English name'],
+  ['admin.delRow', 'حذف الصف', 'Delete row'],
   ['admin.simple.title', 'أسعار وحمولات العربيات (الأساسي)', 'Vehicle prices & max loads (main)'],
   ['admin.simple.hint', 'ده كل اللي محتاج تعدّله لو الأسعار زادت. العميل بيشوف السعر ده كتقدير بالمتوسط وبيتعرّف إن السعر ممكن يتفاوض مع السواق. المعادلة: سعر الفتح + (سعر الكيلو × المسافة)، وبحد أدنى. بعد التعديل اضغط حفظ.', 'This is all you need to edit when prices rise. Customers see it as an average estimate and are told it can be negotiated with the driver. Formula: start fare + (per-km × distance), with a minimum. Press Save after editing.'],
   ['admin.simple.vehicle', 'العربية', 'Vehicle'],
   ['admin.simple.ex', 'مثال {km} كم', 'Example {km} km'],
   ['admin.simple.applyKg', 'املا أقصى الحمولات بالأرقام المرجعية', 'Fill max loads with reference values'],
   ['admin.simple.applied', 'اتملت الأرقام — اضغط حفظ لتأكيدها', 'Values filled — press Save to confirm'],
+  ['admin.simple.fallbackNote', '* لو سعر الكيلو لعربية = 0 النظام بيحسب بالسعر العام (في «متقدّم») × المسافة، من غير سعر فتح، وبالحد الأدنى العام.', '* If a vehicle’s per-km is 0, the system uses the general per-km (in “Advanced”) × distance, with no start fare and the general minimum.'],
   ['admin.simple.kgNote', 'أوزان مرجعية من كلامك (مش متحقق منها من مصدر رسمي): ربع نقل 500–850 كجم، دبابة 1–1.5 طن، جامبو 3–5 طن، تريلا 25–45 طن. الزرار بيحط الحد الأعلى لكل نوع (نص نقل = دبابة).', 'Reference weights from you (not verified against an official source): pickup 500–850 kg, dababa 1–1.5 t, jumbo 3–5 t, trailer 25–45 t. The button uses the upper bound of each (half-ton = dababa).'],
   ['admin.simple.refTitle', 'مقارنة بأسعار مرجعية', 'Comparison with reference prices'],
   ['admin.simple.refRoute', 'المشوار', 'Route'],

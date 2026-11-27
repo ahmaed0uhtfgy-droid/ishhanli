@@ -64,5 +64,8 @@ export function initInstall() {
   document.addEventListener('click', (e) => { const b = e.target.closest('[data-install]'); if (b) { e.preventDefault(); install(); } });
   window.addEventListener('appinstalled', () => { removeBar(); document.querySelectorAll('[data-install]').forEach((b) => b.remove()); toast(t('install.done')); });
   const at = Number(store.get(DISMISS_KEY) || 0);
-  if (!(at && Date.now() - at < DISMISS_MS)) setTimeout(showBar, 6000); // بعد 6 ثواني من الخمول: fixed فمفيش تحريك للصفحة (CLS)
+  if (!(at && Date.now() - at < DISMISS_MS)) { // الشريط بيظهر بعد أول تمرير للصفحة (عشان ما يغطّيش زرار «اطلب نقل» أول ما الزائر يفتح)، أو بعد 25 ث لو ما مرّرش. fixed فمفيش تحريك للصفحة (CLS)
+    let armed = false; const arm = () => { if (!armed) { armed = true; setTimeout(showBar, 1200); } };
+    window.addEventListener('scroll', arm, { once: true, passive: true }); setTimeout(arm, 25000);
+  }
 }

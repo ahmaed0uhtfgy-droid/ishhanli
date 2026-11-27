@@ -650,7 +650,7 @@ function blog(body) { // المقالات (SEO): الوحدة بتتحمّل ع�
 
 function settings(body) {
   const S = state.settings;
-  const kvRow = (k, v = {}, seats = false) => html`<tr><td><input data-k value="${k}" ${k ? 'readonly' : ''} placeholder="key" style="min-width:110px"></td><td><input data-ar value="${v.ar || ''}"></td><td><input data-en value="${v.en || ''}" dir="ltr"></td><td><input data-m type="number" step="0.05" min="0.1" value="${v.mult ?? 1}" style="width:90px"></td>${seats ? html`<td><input data-seats type="number" min="1" max="100" value="${v.seats ?? 4}" style="width:80px"></td>` : ''}<td><button type="button" class="btn ghost sm" data-del>✕</button></td></tr>`;
+  const kvRow = (k, v = {}, seats = false) => html`<tr><td><input data-k aria-label="${t('admin.key')}" value="${k}" ${k ? 'readonly' : ''} placeholder="key" style="min-width:110px"></td><td><input data-ar aria-label="${t('admin.nameAr')}" value="${v.ar || ''}"></td><td><input data-en aria-label="${t('admin.nameEn')}" value="${v.en || ''}" dir="ltr"></td><td><input data-m aria-label="${t('admin.mult')}" type="number" step="0.05" min="0.1" value="${v.mult ?? 1}" style="width:90px"></td>${seats ? html`<td><input data-seats aria-label="${t('admin.seats')}" type="number" min="1" max="100" value="${v.seats ?? 4}" style="width:80px"></td>` : ''}<td><button type="button" class="btn ghost sm" data-del aria-label="${t('admin.delRow')}">✕</button></td></tr>`;
   const kvRows = (name, obj, seats = false) => html`<div class="table-wrap"><table data-kv="${name}" data-seats="${seats ? 1 : 0}"><thead><tr><th>${t('admin.key')}</th><th>عربي</th><th>English</th><th>${t('admin.mult')}</th>${seats ? html`<th>${t('admin.seats')}</th>` : ''}<th></th></tr></thead><tbody>
     ${Object.entries(obj || {}).map(([k, v]) => kvRow(k, v, seats))}</tbody></table></div><button type="button" class="btn ghost sm" data-add="${name}" style="margin-top:.5rem">+ ${t('admin.addRow')}</button>`;
   const num = (n, k, step = 'any', min = 0) => html`<label class="f">${t('admin.s.' + k)}<input type="number" name="${n}" step="${step}" min="${min}" value="${n.split('.').reduce((o, p) => o?.[p], S) ?? ''}" required></label>`;
@@ -661,11 +661,12 @@ function settings(body) {
   const simpleCard = html`<div class="card stack"><h3>${t('admin.simple.title')}</h3><p class="hint">${t('admin.simple.hint')}</p>
     <div class="table-wrap"><table><thead><tr><th>${t('admin.simple.vehicle')}</th><th>${t('admin.vguide.maxKg')}</th><th>${t('admin.vp.base')}</th><th>${t('admin.vp.perKm')}</th><th>${t('admin.vp.minPrice')}</th><th>${t('admin.simple.ex', { km: 50 })}</th><th>${t('admin.simple.ex', { km: 200 })}</th></tr></thead><tbody>
     ${VK.map((k) => { const cur = S.vehiclePricing?.[k] || {}; return html`<tr><td><b>${t('vehicle.' + k)}</b></td>
-      <td><input type="number" name="vg.${k}.maxKg" min="0" max="100000" step="1" inputmode="numeric" value="${S.vehicleGuide?.[k]?.maxKg ?? 0}" required style="width:100px"></td>
-      ${['base', 'perKm', 'minPrice'].map((fld) => html`<td><input type="number" name="vp.${k}.${fld}" min="0" max="${fld === 'perKm' ? 10000 : 1000000}" step="0.1" inputmode="decimal" value="${cur[fld] ?? 0}" required style="width:90px"></td>`)}
+      <td><input type="number" name="vg.${k}.maxKg" aria-label="${t('vehicle.' + k)} — ${t('admin.vguide.maxKg')}" min="0" max="100000" step="1" inputmode="numeric" value="${S.vehicleGuide?.[k]?.maxKg ?? 0}" required style="width:100px"></td>
+      ${['base', 'perKm', 'minPrice'].map((fld) => html`<td><input type="number" name="vp.${k}.${fld}" aria-label="${t('vehicle.' + k)} — ${t('admin.vp.' + fld)}" min="0" max="${fld === 'perKm' ? 10000 : 1000000}" step="0.1" inputmode="decimal" value="${cur[fld] ?? 0}" required style="width:90px"></td>`)}
       <td class="num"><b data-ex="${k}:50"></b></td><td class="num"><b data-ex="${k}:200"></b></td></tr>`; })}</tbody></table></div>
     <div class="grid-3">${num('roadFactor', 'roadFactor', 0.05, 1)}${num('ordersListLimit', 'ordersListLimit', 1, 20)}</div>
     <div class="row"><button type="button" class="btn ghost sm" id="applyKg">${t('admin.simple.applyKg')}</button></div>
+    <p class="hint">${t('admin.simple.fallbackNote')}</p>
     <p class="hint">${t('admin.simple.kgNote')}</p>
     <h4>${t('admin.simple.refTitle')}</h4>
     <div class="table-wrap"><table><thead><tr><th>${t('admin.simple.refRoute')}</th><th>${t('admin.simple.refKm')}</th><th>${t('admin.simple.refHalf')}</th><th>${t('admin.simple.perKmRef')}</th><th>${t('admin.simple.sysHalf')}</th><th>${t('admin.simple.refJumbo')}</th><th>${t('admin.simple.sysJumbo')}</th></tr></thead><tbody>
@@ -750,8 +751,13 @@ function settings(body) {
     <p class="err" id="serr" role="alert"></p><div><button class="btn primary" type="submit">${t('common.save')}</button></div></form>`);
   const f = $('#sf', body);
   // أمثلة حيّة: نفس معادلة السيرفر لفئة بمعامل 1 — (سعر الفتح + سعر الكيلو × المسافة) وبحد أدنى (حد العربية أو الحد العام)
-  const sysPrice = (k, km) => { const g = (x) => Number(f.elements[`vp.${k}.${x}`]?.value) || 0; if (!(g('perKm') > 0)) return null; const min = g('minPrice') > 0 ? g('minPrice') : Number(f.elements.minPrice?.value) || 0; return Math.max(Math.ceil(min), Math.ceil(g('base') + g('perKm') * km)); };
-  const refreshEx = () => $$('[data-ex]', body).forEach((c) => { const [k, km] = c.dataset.ex.split(':'), v = sysPrice(k, +km); c.textContent = v == null ? '—' : fmtNum(v, 0); });
+  // نفس calcPrice في السيرفر: لو سعر كيلو العربية > 0 بنحسب (فتح + كيلو×مسافة) بحد أدنى العربية؛ لو 0 بنرجع للسعر العام (متقدّم) × المسافة بالحد الأدنى العام (من غير سعر فتح). بمعامل فئة/حجم = 1.
+  const sysPrice = (k, km) => {
+    const g = (x) => Number(f.elements[`vp.${k}.${x}`]?.value) || 0, gen = Number(f.elements.perKm?.value) || 0, genMin = Number(f.elements.minPrice?.value) || 0;
+    if (g('perKm') > 0) return { v: Math.max(Math.ceil(g('minPrice') > 0 ? g('minPrice') : genMin), Math.ceil(g('base') + g('perKm') * km)), general: false };
+    return gen > 0 ? { v: Math.max(Math.ceil(genMin), Math.ceil(gen * km)), general: true } : null;
+  };
+  const refreshEx = () => $$('[data-ex]', body).forEach((c) => { const [k, km] = c.dataset.ex.split(':'), r = sysPrice(k, +km); c.textContent = r == null ? '—' : fmtNum(r.v, 0) + (r.general ? ' *' : ''); });
   f.addEventListener('input', refreshEx); refreshEx();
   $('#applyKg', body)?.addEventListener('click', () => { for (const k of VK) f.elements[`vg.${k}.maxKg`].value = REF_KG[k]; refreshEx(); toast(t('admin.simple.applied')); });
   body.addEventListener('click', (e) => {
