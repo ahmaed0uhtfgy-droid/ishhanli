@@ -2218,6 +2218,57 @@ const ROUTES = {
     ]);
     return { ok: true };
   },
+  // ---------- ربط المواقع: شركة الشحن (بتوافق على المتاجر) والأدمن (بيدير المواقع والمفاتيح والروابط) ----------
+  async 'partner/links'(c) { // روابط المتاجر مع شركتي
+    await needCompany(c);
+    return { links: (await F.query(c.env, 'partner_links', { eq: { company_id: c.uid }, limit: 100 })).sort(byDesc('created_at')).map(partnerLinkOut) };
+  },
+  async 'partner/respond'(c) { // الشركة بتوافق/ترفض/تلغي الربط
+    await needCompany(c);
+    const l = await F.get(c.env, `partner_links/${docId(c.body.id)}`);
+    if (!l || l.company_id !== c.uid) throw new HttpError(404, 'not_found');
+    const next = { accept: 'active', reject: 'rejected', revoke: 'revoked' }[c.body.action];
+    if (!next) throw new HttpError(400, 'bad_action');
+    if ((next === 'revoked' ? 'active' : 'pending') !== l.status) throw new HttpError(409, 'bad_state'); // الموافقة/الرفض على المعلّق بس، والإلغاء على المفعّل بس
+    await F.run(c.env, [F.patch(`partner_links/${l.id}`, { status: next, decided_at: now() }, l._ut)]);
+    return { ok: true, status: next };
+  },
+  async 'admin/partner/list'(c) {
+    await need(c, ['admin']);
+    const [sites, links, orders] = await Promise.all([F.query(c.env, 'partner_sites', { limit: 100 }), F.query(c.env, 'partner_links', { limit: 200 }), F.query(c.env, 'partner_orders', { order: ['created_at', 'desc'], limit: 30 })]);
+    return { sites: sites.sort(byDesc('created_at')).map((x) => ({ id: x.id, name: x.name, url: x.url, enabled: x.enabled === true, countFees: x.count_fees !== false, createdAt: x.created_at })), links: links.sort(byDesc('created_at')).map(partnerLinkOut), orders: orders.map((o) => ({ id: o.id, site: o.site_name, merchant: o.merchant_name, companyId: o.company_id, externalId: o.external_id, amount: o.amount, status: o.status, counted: o.cf_amount > 0, createdAt: o.created_at })) };
+  },
+  async 'admin/partner/save'(c) { // إنشاء/تعديل موقع شريك. الإنشاء بيرجّع المفتاح مرة واحدة بس
+    const admin = await need(c, ['admin']);
+    const name = str(c.body.name, 2, 80), url = str(c.body.url, 4, 200), enabled = c.body.enabled !== false, countFees = c.body.countFees !== false;
+    if (!/^https:\/\/[^\s]+$/i.test(url)) throw new HttpError(400, 'bad_input');
+    if (c.body.id) {
+      const x = await F.get(c.env, `partner_sites/${docId(c.body.id)}`);
+      if (!x) throw new HttpError(404, 'not_found');
+      await F.run(c.env, [F.patch(`partner_sites/${x.id}`, { name, url, enabled, count_fees: countFees, updated_at: now() }, x._ut), auditLog(admin, 'partner.edit', { targetType: 'partner', targetId: x.id, note: name, meta: { enabled, countFees } })]);
+      return { ok: true };
+    }
+    const id = newId(), key = partnerKeyNew(id);
+    await F.run(c.env, [F.create(`partner_sites/${id}`, { id, name, url, enabled, count_fees: countFees, key_hash: await sha256hex(key.split('.')[1]), created_at: now(), updated_at: now() }), auditLog(admin, 'partner.create', { targetType: 'partner', targetId: id, note: name })]);
+    return { ok: true, id, key };
+  },
+  async 'admin/partner/rotate'(c) { // مفتاح جديد (القديم بيبطل فوراً)
+    const admin = await need(c, ['admin']);
+    const x = await F.get(c.env, `partner_sites/${docId(c.body.id)}`);
+    if (!x) throw new HttpError(404, 'not_found');
+    const key = partnerKeyNew(x.id);
+    await F.run(c.env, [F.patch(`partner_sites/${x.id}`, { key_hash: await sha256hex(key.split('.')[1]), updated_at: now() }, x._ut), auditLog(admin, 'partner.rotate', { targetType: 'partner', targetId: x.id, note: x.name })]);
+    return { ok: true, key };
+  },
+  async 'admin/partner/link'(c) { // الأدمن بيوقف/يلغي/يفعّل رابط
+    const admin = await need(c, ['admin']);
+    const l = await F.get(c.env, `partner_links/${docId(c.body.id)}`);
+    if (!l) throw new HttpError(404, 'not_found');
+    const next = { revoke: 'revoked', activate: 'active' }[c.body.action];
+    if (!next) throw new HttpError(400, 'bad_action');
+    await F.run(c.env, [F.patch(`partner_links/${l.id}`, { status: next, decided_at: now() }, l._ut), auditLog(admin, 'partner.link', { targetType: 'partner', targetId: l.id, note: next })]);
+    return { ok: true };
+  },
   // تصحيح يدوي لإجمالي مكسب السواق غير المسدَّد (خطأ تسجيل/إعفاء): بسبب إجباري وبيتسجّل في سجل التدقيق بالقيمة قبل وبعد
   async 'admin/dc/adjust'(c) {
     const admin = await need(c, ['admin']);
@@ -2479,6 +2530,59 @@ async function health(env) {
   return out;
 }
 
+// ================= ربط المواقع (partner) =================
+// موقع شريك (متاجر) بيكلّم اشحنلي من السيرفر بمفتاح خاص: التاجر يختار شركة → الشركة توافق من حسابها (تأكيد من الطرفين) → طلبات التاجر بتتسجّل على الشركة وبتتضاف على عدّاداتها (رسوم الشركات).
+// المفتاح مخزّن كـهاش بس (SHA-256)؛ بيتعرض للأدمن مرة واحدة عند الإنشاء/التدوير. الطلبات idempotent برقم الطلب في الموقع الشريك.
+const hex32 = async (s) => (await sha256hex(s)).slice(0, 32);
+const partnerKeyNew = (siteId) => { const b = crypto.getRandomValues(new Uint8Array(24)); return `${siteId}.${[...b].map((x) => x.toString(16).padStart(2, '0')).join('')}`; };
+const partnerAuth = async (env, request) => {
+  const m = /^([A-Za-z0-9]{10,40})\.([A-Za-z0-9]{32,64})$/.exec((request.headers.get('Authorization') || '').replace(/^Bearer\s+/i, ''));
+  if (!m) throw new HttpError(401, 'unauthenticated');
+  const site = await F.get(env, `partner_sites/${m[1]}`);
+  if (!site || site.enabled !== true || (await sha256hex(m[2])) !== site.key_hash) throw new HttpError(401, 'unauthenticated');
+  await rateTake(env, 'partner', site.id, 60000, 120, 'too_many_requests');
+  return site;
+};
+const partnerCompany = async (env, id) => { const u = await F.get(env, `users/${uidOf(id)}`); if (!u || u.role !== 'driver' || u.account_type !== 'company' || u.status !== 'active') throw new HttpError(404, 'company_not_found'); return u; };
+const partnerLinkOut = (l) => ({ id: l.id, site: l.site_name, merchant: l.merchant_name, merchantRef: l.merchant_ref, companyId: l.company_id, status: l.status, createdAt: l.created_at, decidedAt: l.decided_at });
+const PARTNER_ROUTES = {
+  async 'partner-api/companies'(c) { // شركات الشحن المتاحة للربط (الاسم فقط + هل متوقفة بسبب الرسوم)
+    const s = await loadSettings(c.env), list = await F.query(c.env, 'users', { eq: { role: 'driver', account_type: 'company', status: 'active' }, limit: 100 });
+    return { companies: await Promise.all(list.map(async (u) => ({ id: u.uid, name: u.company_name || u.name, paused: await cfBlockedNow(c.env, u.uid, u, s) }))) };
+  },
+  async 'partner-api/link'(c) { // التاجر اختار شركة: بنسجّل طلب ربط معلّق وبنبلّغ الشركة
+    const merchantRef = str(c.body.merchantRef, 1, 80), merchantName = str(c.body.merchantName, 1, 120), co = await partnerCompany(c.env, c.body.companyId);
+    const id = await hex32(`${c.site.id}|${merchantRef}|${co.uid}`), cur = await F.get(c.env, `partner_links/${id}`);
+    if (cur) return { id, status: cur.status };
+    await F.run(c.env, [F.create(`partner_links/${id}`, { id, site_id: c.site.id, site_name: c.site.name, merchant_ref: merchantRef, merchant_name: merchantName, company_id: co.uid, status: 'pending', created_at: now(), decided_at: null })]);
+    bg(c, notify(c.env, [co.uid], 'partner_link_request', { merchant: merchantName, site: c.site.name }, { url: '/#/driver/fees' }));
+    return { id, status: 'pending' };
+  },
+  async 'partner-api/link/status'(c) {
+    const l = await F.get(c.env, `partner_links/${await hex32(`${c.site.id}|${str(c.body.merchantRef, 1, 80)}|${uidOf(c.body.companyId)}`)}`);
+    return { status: l ? l.status : 'none' };
+  },
+  async 'partner-api/order'(c) { // طلب من تاجر مربوط: بيتسجّل على الشركة وبيتضاف على عدّاداتها
+    const merchantRef = str(c.body.merchantRef, 1, 80), ext = str(c.body.externalOrderId, 1, 80), amount = int(c.body.amount, 1, 100000000), summary = str(c.body.summary ?? '', 0, 200);
+    const co = await partnerCompany(c.env, c.body.companyId), key = await hex32(`${c.site.id}|${ext}`), dup = await F.get(c.env, `partner_orders/${key}`);
+    if (dup) return { ok: true, id: dup.id, duplicate: true, counted: dup.cf_amount > 0 };
+    const link = await F.get(c.env, `partner_links/${await hex32(`${c.site.id}|${merchantRef}|${co.uid}`)}`);
+    if (!link || link.status !== 'active') throw new HttpError(403, 'not_linked');
+    const s = await loadSettings(c.env);
+    if (await cfBlockedNow(c.env, co.uid, co, s)) throw new HttpError(409, 'company_blocked'); // الشركة متوقفة لحد ما تسدّد رسومها
+    const cf = c.site.count_fees === false ? { patch: {}, ops: [], crossed: false } : await cfCount(c.env, s, co, co.uid, amount);
+    await F.run(c.env, [F.create(`partner_orders/${key}`, { id: key, site_id: c.site.id, site_name: c.site.name, link_id: link.id, merchant_ref: merchantRef, merchant_name: link.merchant_name, company_id: co.uid, external_id: ext, amount, summary, status: 'active', cf_amount: cf.patch.cfAmount || 0, cf_no: cf.patch.cfNo || 0, created_at: now() }), ...cf.ops]);
+    cfNotifyCrossed(c, s, co.uid, cf);
+    return { ok: true, id: key, counted: cf.ops.length > 0 };
+  },
+  async 'partner-api/order/cancel'(c) { // التاجر لغى الطلب: بيتشال من العدّادين
+    const key = await hex32(`${c.site.id}|${str(c.body.externalOrderId, 1, 80)}`), o = await F.get(c.env, `partner_orders/${key}`);
+    if (!o) throw new HttpError(404, 'not_found');
+    if (o.status !== 'active') return { ok: true, already: true };
+    await F.run(c.env, [F.patch(`partner_orders/${key}`, { status: 'cancelled', cf_amount: 0, cancelled_at: now() }, o._ut), ...(o.cf_amount > 0 ? [F.inc(`users/${o.company_id}`, { cf_total: -o.cf_amount }), F.inc(`cf_cycles/${o.company_id}_${o.cf_no}`, { sum: -o.cf_amount }, { uid: o.company_id, no: o.cf_no })] : [])]);
+    return { ok: true };
+  },
+};
 export async function onRequest({ request, env, params, waitUntil }) {
   let route = '', uid = null;
   const bg2 = (p) => { if (waitUntil) { try { waitUntil(p); } catch { /* waitUntil مش متاح */ } } };
@@ -2494,6 +2598,18 @@ export async function onRequest({ request, env, params, waitUntil }) {
       const k = request.headers.get('x-cron-key') || '';
       if (!env.BLOG_CRON_KEY || k.length !== env.BLOG_CRON_KEY.length || !(await sha256hex(k) === await sha256hex(env.BLOG_CRON_KEY))) throw new HttpError(403, 'forbidden');
       return json(await Blog.autoTick(env, { throttle: false }));
+    }
+    if (route.startsWith('partner-api/')) { // اتصال سيرفر-لسيرفر من موقع شريك (مفتاح خاص، مش تسجيل دخول Firebase)
+      if (request.method !== 'POST') throw new HttpError(405, 'method_not_allowed');
+      const h = Object.hasOwn(PARTNER_ROUTES, route) ? PARTNER_ROUTES[route] : null;
+      if (!h) throw new HttpError(404, 'not_found');
+      const site = await partnerAuth(env, request), raw2 = await request.text();
+      if (raw2.length > 20000) throw new HttpError(413, 'too_large');
+      let body2 = {}; try { body2 = JSON.parse(raw2 || '{}'); } catch { /* جسم غلط => {} */ }
+      if (!body2 || typeof body2 !== 'object' || Array.isArray(body2)) body2 = {};
+      const out2 = await h({ env, site, body: body2, request, waitUntil });
+      bg2(flushMetrics(env));
+      return json(out2);
     }
     const bearer = (request.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
     const isFileGet = request.method === 'GET' && route.startsWith('files/');

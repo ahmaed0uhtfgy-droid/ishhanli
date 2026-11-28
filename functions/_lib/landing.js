@@ -36,7 +36,9 @@ export function buildLanding({ settings = {}, site: rawSite, company = {}, env =
   const REG_C = '/#/register?role=customer', REG_D = '/#/register?role=driver';
 
   const nav = [['how', 'lp.nav.how', 1], ['services', 'lp.nav.services', show('services')], ['price', 'lp.nav.price', 1], ['trust', 'lp.nav.trust', show('trust')], ['faq', 'lp.nav.faq', show('faq')]].filter((x) => x[2]);
-  const navHtml = nav.map(([id, key]) => `<a href="#/${id}" data-scroll="${id}">${k(key)}</a>`).join('');
+  // href حقيقي لكل رابط (بيشتغل من غير JS وجوجل بيفهرسه)؛ مع JS بيفضل data-scroll بيعمل تمرير ناعم لنفس القسم في الصفحة الرئيسية. الأقسام اللي ملهاش صفحة مستقلة بتشاور على القسم نفسه في الرئيسية.
+  const NAV_HREF = { how: '/how-it-works', services: '/vehicles', price: '/pricing', trust: '/#trust', faq: '/#faq' };
+  const navHtml = nav.map(([id, key]) => `<a href="${NAV_HREF[id] || '/'}" data-scroll="${id}">${k(key)}</a>`).join('');
   const tools = `<button class="lp-tool" type="button" data-lp="lang" aria-label="EN English / ع عربي">EN</button><button class="lp-tool" type="button" data-lp="mode" data-i18n-aria="lp.mode.toggle" aria-label="${esc(lpText('lp.mode.toggle'))}" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9c0-.5-.5-.7-.9-.5A6 6 0 0 1 12.5 3.9c.2-.4 0-.9-.5-.9z" fill="currentColor"/></svg></button>`;
   const loginA = `<a class="lp-link" href="/#/login" data-lp="login">${k('lp.nav.login')}</a>`;
   const logoutA = `<button class="lp-link lp-out" type="button" data-lp="logout" hidden>${k('lp.nav.logout')}</button>`; // بيظهر بس لما المستخدم يكون داخل (hydrate في landing.js)
@@ -71,7 +73,7 @@ export function buildLanding({ settings = {}, site: rawSite, company = {}, env =
     const svc = services.map(([ic, p], i) => `<div class="lpb-row" data-i="${i}" data-ic="${ic}"><span class="n">${NUM[i]}</span>${el('h3', `${p}.t`)}${el('p', `${p}.d`)}<span class="lpb-ico" aria-hidden="true">${ICON[ic]}</span></div>`).join('');
     const stack = ['s1', 's2', 's3', 's4'].map((s, i) => `<div class="lpb-sc ${s}"><b aria-hidden="true">${NUM[i]}</b><div><h3${attrs(`trust.${i + 1}t`)}>${em(val(`trust.${i + 1}t`))}</h3><p${attrs(`trust.${i + 1}d`)}>${em(val(`trust.${i + 1}d`))}</p></div></div>`).join('');
     body = `<div class="lp lpb" data-design="b">
-<header class="lp-head lpb-head"><a class="lpb-pill" href="#/top" data-scroll="top"><span class="lpb-cream">${img()}</span><b data-i18n="brand">اشحنلي</b></a><nav class="lp-nav" aria-label="main">${navHtml}</nav><div class="lp-act">${tools}${loginA}${logoutA}<a class="lp-btn g sm" href="${REG_C}" data-lp="order">${k('lp.nav.order')}</a></div></header>
+<header class="lp-head lpb-head"><a class="lpb-pill" href="/" data-scroll="top"><span class="lpb-cream">${img()}</span><b data-i18n="brand">اشحنلي</b></a><nav class="lp-nav" aria-label="main">${navHtml}</nav><div class="lp-act">${tools}${loginA}${logoutA}<a class="lp-btn g sm" href="${REG_C}" data-lp="order">${k('lp.nav.order')}</a></div></header>
 <section class="lpb-hero" id="top"><div class="lpb-big" aria-hidden="true">اشحنلي</div><div class="lpb-badge" id="lpBd">${img('', ' fetchpriority="high"')}</div>
   ${el('h1', 'hero.h1', 'lpb-h1', ' id="lpH1"')}${el('p', 'hero.sub', 'lpb-sub')}
   <div class="lp-cta"><a class="lp-btn g" href="${REG_C}" data-lp="order">${em(val('hero.cta1'))} ←</a><a class="lp-btn o" href="${REG_D}">${em(val('hero.cta2'))}</a></div></section>
@@ -97,7 +99,7 @@ ${foot}</div>`;
     const svc = services.map(([ic, p]) => `<div class="lpa-card"><span class="lpa-ic" aria-hidden="true">${ICON[ic]}</span>${el('h3', `${p}.t`)}${el('p', `${p}.d`)}</div>`).join('');
     const steps = [1, 2, 3].map((n) => `<div class="lpa-step"><div class="art"><span class="num" aria-hidden="true">${NUM[n - 1]}</span>${ART[n - 1]}</div><div class="txt"><h3${attrs(`how.s${n}t`)}>${em(val(`how.s${n}t`))}</h3><p${attrs(`how.s${n}d`)}>${em(val(`how.s${n}d`))}</p></div></div>`).join('');
     body = `<div class="lp lpa" data-design="a">
-<header class="lp-head lpa-head"><a class="lp-brand" href="#/top" data-scroll="top">${img('lp-logo-s')}<span data-i18n="brand">اشحنلي</span></a><nav class="lp-nav" aria-label="main">${navHtml}</nav><div class="lp-act">${tools}${loginA}${logoutA}<a class="lp-btn fill sm" href="${REG_C}" data-lp="order">${k('lp.nav.order')}</a></div></header>
+<header class="lp-head lpa-head"><a class="lp-brand" href="/" data-scroll="top">${img('lp-logo-s')}<span data-i18n="brand">اشحنلي</span></a><nav class="lp-nav" aria-label="main">${navHtml}</nav><div class="lp-act">${tools}${loginA}${logoutA}<a class="lp-btn fill sm" href="${REG_C}" data-lp="order">${k('lp.nav.order')}</a></div></header>
 <section class="lpa-hero" id="top"><div class="lpa-hin"><div>${el('span', 'hero.eyebrow', 'lpa-eyebrow')}${el('h1', 'hero.h1', 'lpa-h1', ' id="lpH1"')}${el('p', 'hero.sub', 'lpa-lead')}
   <div class="lp-cta"><a class="lp-btn fill" href="${REG_C}" data-lp="order">${em(val('hero.cta1'))} ←</a><a class="lp-btn ghost" href="${REG_D}">${em(val('hero.cta2'))}</a></div></div>
   <div class="lpa-mark"><div class="halo2"></div><div class="halo" id="lpHalo"></div>${img('', ' id="lpMark" fetchpriority="high"')}</div></div>
@@ -123,8 +125,8 @@ ${foot}</div>`;
   body += `<script type="application/json" id="lpPub">${JSON.stringify(pub).replace(/</g, '\\u003c')}</script>`;
 
   // ---------- SEO ----------
-  const title = site.seo.title || 'اشحنلي | منصة نقل بضائع في مصر — اطلب سواق نقل بسعر فوري';
-  const desc = site.seo.description || 'اشحنلي منصة مصرية تربط أصحاب البضائع والأثاث بسواقين نقل موثّقين: حدد الاستلام والتسليم، اعرف السعر فوراً، وتابع شحنتك لحد التسليم. وللسواق: سجّل واستقبل طلبات النقل.';
+  const title = site.seo.title || 'اشحنلي | نقل بضائع وأثاث في مصر بسعر فوري وسواق موثّق';
+  const desc = site.seo.description || 'اشحنلي منصة مصرية لنقل البضائع والأثاث: اعرف السعر فوراً، اختار سواق أو شركة شحن موثّقة، وتابع شحنتك بصور إثبات لحد التسليم.';
   const faqLd = { '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: [1, 2, 3, 4].map((n) => ({ '@type': 'Question', name: plain(val(`faq.${n}q`)), acceptedAnswer: { '@type': 'Answer', text: plain(val(`faq.${n}a`)) } })) };
   const org = { '@type': 'Organization', '@id': `${LP_ORIGIN}/#org`, name: c.name || 'اشحنلي', alternateName: 'Ishhanli', url: `${LP_ORIGIN}/`, logo: { '@type': 'ImageObject', url: `${LP_ORIGIN}/img/logo.png`, width: 330, height: 298 }, image: `${LP_ORIGIN}/img/og.jpg`, description: desc, areaServed: { '@type': 'Country', name: 'Egypt' } };
   if (c.phone || c.email) org.contactPoint = { '@type': 'ContactPoint', contactType: 'customer service', areaServed: 'EG', availableLanguage: ['ar', 'en'], ...(c.phone ? { telephone: c.phone } : {}), ...(c.email ? { email: c.email } : {}) };
@@ -136,6 +138,7 @@ ${foot}</div>`;
   const ld = (o) => `<script type="application/ld+json">${JSON.stringify(o).replace(/</g, '\\u003c')}</script>`;
   const head = `<title>${esc(title)}</title>
   <meta name="description" content="${esc(desc)}">
+  <meta name="keywords" content="${esc(site.seo.keywords || 'نقل بضائع، نقل أثاث، نقل عفش، شحن بضائع في مصر، شركات شحن، سواق نقل موثّق، سعر النقل فوري، تتبع الشحنة، صور إثبات الاستلام والتسليم، حجز عربية بسواقها')}">
   <link rel="canonical" href="${LP_ORIGIN}/">
   <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1">
   ${site.seo.google ? `<meta name="google-site-verification" content="${esc(site.seo.google)}">` : ''}${site.seo.bing ? `<meta name="msvalidate.01" content="${esc(site.seo.bing)}">` : ''}

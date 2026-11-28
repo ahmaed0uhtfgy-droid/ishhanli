@@ -10,6 +10,11 @@ import { renderLogin, renderRegister, renderForgot, renderStatus } from './pages
 import { initEstimate } from './pages/estimate-widget.js';
 import { showLanding, hideLanding, lpPublicPricing } from './landing.js';
 import { initErrorReporting } from './report.js';
+// رسالة الفشل الصادقة: «مفيش اتصال» بس لو الشبكة فعلاً وقعت أو تحميل ملف فشل؛ أي خطأ تاني بيتعرض بكوده عشان نعرف السبب الحقيقي (بدل ما كل حاجة تتسمّى «مفيش اتصال»)
+const netErr = (e) => e?.code === 'network' || /Failed to fetch|dynamically imported|Load failed|NetworkError|leaflet/i.test(e?.message || '');
+const failWhere = (e) => (e?.route ? 'api/' + e.route : String(e?.message || '').match(/\/(?:js|vendor)\/[^\s"')]+/)?.[0] || (e?.message === 'leaflet' ? 'leaflet' : '') || (navigator.onLine === false ? 'offline' : '')).slice(0, 70);
+const failText = (e) => (netErr(e) ? t('err.network') + (failWhere(e) ? ` (${failWhere(e)})` : '') : `${errMsg(e)} (${String(e?.code || e?.name || 'error').replace(/[^\w./-]/g, '').slice(0, 40)})`);
+const isInstalledApp = () => window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone === true;
 
 // تثبيت كتطبيق: لازم نلقط beforeinstallprompt بدري (بيجي مرة واحدة)، والواجهة نفسها في install.js بتتحمّل وقت الخمول
 window.__bip = null;
@@ -28,7 +33,7 @@ const lazy = (load, name, map = false) => (...args) => {
   if (args[0] instanceof Element) render(args[0], spinner());
   Promise.all([load(), map ? loadLeaflet() : null]).then(([m]) => { if (!dead) inner = m[name](...args); }).catch((e) => {
     console.error(e);
-    if (!dead && args[0] instanceof Element) { render(args[0], html`<div class="auth card stack"><p>${t('err.network')}</p><button class="btn primary" id="retryPage">${t('common.retry')}</button></div>`); args[0].querySelector('#retryPage')?.addEventListener('click', () => window.dispatchEvent(new Event('app:refresh'))); }
+    if (!dead && args[0] instanceof Element) { render(args[0], html`<div class="auth card stack"><p>${failText(e)}</p><button class="btn primary" id="retryPage">${t('common.retry')}</button></div>`); args[0].querySelector('#retryPage')?.addEventListener('click', () => window.dispatchEvent(new Event('app:refresh'))); }
   });
   return () => { dead = true; if (typeof inner === 'function') inner(); };
 };
@@ -137,6 +142,7 @@ function renderTopbar() {
       <a class="menu-item" role="menuitem" href="#/account"><span>${t('menu.profile')}<small>${t('menu.profileSub')}</small></span>${chevL}</a>
       ${push === 'default' ? html`<div class="menu-item"><span>${t('menu.notif')}</span><button class="btn sm primary" id="pushOn" type="button">${t('menu.notifEnable')}</button></div>`
         : push === 'granted' ? html`<div class="menu-item"><span>${t('menu.notif')}</span><span class="muted small">${t('menu.notifOn')}</span></div>` : ''}
+      ${isInstalledApp() ? '' : html`<div class="menu-item"><span>${t('install.link')}</span><button class="btn sm primary" type="button" data-install>${t('install.btn')}</button></div>`}
       <div class="um-grp">${t('menu.look')}</div>
       <div class="menu-item fsz-row"><span>${t('menu.lang')}</span>${seg('data-set-lang', getLang(), [['ar', 'عربي'], ['en', 'EN']])}</div>
       <div class="menu-item fsz-row"><span>${t('menu.theme')}</span>${seg('data-set-theme', theme, [['light', t('menu.light')], ['dark', t('menu.dark')]])}</div>
@@ -224,7 +230,7 @@ async function loadProfile() {
     const [me, st] = await Promise.all([api('me'), state.settings ? null : api('settings').catch(() => null)]);
     state.profile = me.profile; state.profileError = false; if (st?.settings && !state.settings) state.settings = st.settings;
   }
-  catch (e) { console.error(e); state.profile = null; state.profileError = true; }
+  catch (e) { console.error(e); state.profile = null; state.profileError = e || true; }
   state.ready = true; route(); startInbox(); prefetchPages();
 }
 // أداء: بعد ما الصفحة الأولى تترسم، نحمّل في وقت الفراغ وحدات الصفحات التانية بتاعة الدور ده (وLeaflet للعميل والسواق) عشان أول ضغطة تفتح بسرعة.
@@ -262,7 +268,7 @@ function route() {
     return go('/login');
   }
   if (state.profileError) { // السيرفر مش متاح: ما نعتبرش إن الحساب ناقص
-    show(); render(view, html`<div class="auth card stack"><p>${t('err.network')}</p><button class="btn primary" id="retry">${t('common.retry')}</button></div>`);
+    show(); render(view, html`<div class="auth card stack"><p>${failText(state.profileError)}</p><button class="btn primary" id="retry">${t('common.retry')}</button></div>`);
     $('#retry', view).addEventListener('click', () => { state.ready = false; loadProfile(); }); return;
   }
   if (!p) { // حساب Auth موجود لكن التسجيل ما اكتملش
@@ -301,7 +307,7 @@ window.addEventListener('hashchange', route);
 window.addEventListener('app:refresh', route);
 window.addEventListener('unhandledrejection', (e) => console.error(e.reason));
 
-if (/^YOUR_/.test(firebaseConfig.apiKey) || /^YOUR_/.test(firebaseConfig.projectId)) { // مساعدة للإعداد: لسه ما عدّلتش config.js
+if (!firebaseConfig.apiKey || /^YOUR_/.test(firebaseConfig.apiKey) || /^YOUR_/.test(firebaseConfig.projectId)) { // مساعدة للإعداد: لسه ما عدّلتش config.js
   const b = document.createElement('div'); b.className = 'action bad'; b.style.cssText = 'margin:0;border-radius:0;text-align:center;position:sticky;top:0;z-index:3000';
   b.textContent = '⚠️ ' + 'config.js — Firebase config not set / لم يتم ضبط إعدادات Firebase'; document.body.prepend(b);
 }

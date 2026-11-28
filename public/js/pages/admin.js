@@ -8,14 +8,14 @@ import { $, $$, html, raw, render, toast, errMsg, busy, spinner, stamp, orderNo,
 import { hydrate, imgTag } from '../storage.js';
 import { toCsv, downloadCsv, downloadJson } from '../csv.js';
 
-const TABS = ['overview', 'customers', 'drivers', 'companies', 'joins', 'users', 'orders', 'reports', 'disputes', 'refunds', 'payments', 'withdrawals', 'cod', 'finance', 'dc', 'cf', 'fines', 'coupons', 'referrals', 'settings', 'blog', 'blacklist', 'audit', 'monitoring'];
+const TABS = ['overview', 'customers', 'drivers', 'companies', 'joins', 'users', 'orders', 'reports', 'disputes', 'refunds', 'payments', 'withdrawals', 'cod', 'finance', 'dc', 'cf', 'partners', 'fines', 'coupons', 'referrals', 'settings', 'blog', 'blacklist', 'audit', 'monitoring'];
 const LEGACY_TABS = ['payments', 'withdrawals', 'disputes', 'refunds', 'cod']; // تبويبات نظام الضمان القديم: مخفية لما الدفع المباشر شغّال (إلا لو الأدمن فعّل إظهارها)
 // التبويبات متجمّعة في 5 أقسام بدل صف واحد طويل: القسم فوق، وتبويباته تحته
 const GROUPS = [
   { id: 'home', icon: 'home', tabs: ['overview'] },
   { id: 'people', icon: 'users', tabs: ['customers', 'drivers', 'companies', 'joins', 'users'] },
   { id: 'ops', icon: 'box', tabs: ['orders', 'reports', 'disputes', 'refunds', 'payments', 'withdrawals', 'cod'] },
-  { id: 'money', icon: 'coins', tabs: ['finance', 'dc', 'cf', 'fines', 'coupons', 'referrals'] },
+  { id: 'money', icon: 'coins', tabs: ['finance', 'dc', 'cf', 'partners', 'fines', 'coupons', 'referrals'] },
   { id: 'system', icon: 'gear', tabs: ['settings', 'blog', 'blacklist', 'audit', 'monitoring'] },
 ];
 const TAB_BADGE = { joins: 'users', payments: 'payments', withdrawals: 'withdrawals', disputes: 'disputes', refunds: 'refunds', reports: 'reports' }; // التبويب ← مفتاح الشارة
@@ -62,7 +62,7 @@ export function renderAdmin(el, tab) {
   // شارات الأعداد المعلّقة (استعلامات خفيفة على index الحالة) — كل 20 ثانية
   const badges = gpoll(['orders', 'users', 'withdrawals', 'disputes', 'refunds', 'reports'], () => api('admin/badges'), 20000, ({ badges: b }) => { lastBadges = b; badgesReady = true; applyBadges(el); }, { dedupe: true });
   const body = $('#body', el);
-  const stop = { overview, finance, payments, users, customers, drivers, companies, joins, orders, withdrawals, disputes, refunds, reports, coupons, referrals, cod, dc, cf, fines, settings, blog, blacklist, audit, monitoring }[tab](body, badges);
+  const stop = { overview, finance, payments, users, customers, drivers, companies, joins, orders, withdrawals, disputes, refunds, reports, coupons, referrals, cod, dc, cf, partners, fines, settings, blog, blacklist, audit, monitoring }[tab](body, badges);
   return () => { badges(); stop?.(); };
 }
 
@@ -645,6 +645,11 @@ export const readSite = (f) => ({ design: f.elements['site.design'].value, mode:
 function cf(body) { // رسوم الشركات: الوحدة بتتحمّل عند فتح التبويب بس
   let dead = false, stop = null;
   import('./admin-cf.js').then((m) => { if (!dead) stop = m.renderAdminCf(body) || stop; }).catch(onError);
+  return () => { dead = true; stop?.(); };
+}
+function partners(body) { // المواقع المربوطة: الوحدة بتتحمّل عند فتح التبويب بس
+  let dead = false, stop = null;
+  import('./admin-partners.js').then((m) => { if (!dead) stop = m.renderAdminPartners(body) || stop; }).catch(onError);
   return () => { dead = true; stop?.(); };
 }
 function blog(body) { // المقالات (SEO): الوحدة بتتحمّل عند فتح التبويب بس

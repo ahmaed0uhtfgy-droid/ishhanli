@@ -13,10 +13,11 @@ export async function api(route, body = {}) {
   if (!user) { const e = new Error('unauthenticated'); e.code = 'unauthenticated'; throw e; }
   const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (await user.getIdToken()) };
   const t2 = twofa.get(); if (t2) headers['x-2fa'] = t2;
-  let r;
+  let r, payload;
+  try { payload = JSON.stringify(body); } catch { const e = new Error('bad_request_body'); e.code = 'bad_request_body'; throw e; } // خطأ في بيانات الطلب نفسها مش في الشبكة
   try {
-    r = await fetch('/api/' + route, { method: 'POST', headers, body: JSON.stringify(body) });
-  } catch { const e = new Error('network'); e.code = 'network'; throw e; }
+    r = await fetch('/api/' + route, { method: 'POST', headers, body: payload });
+  } catch { const e = new Error('network'); e.code = 'network'; e.route = route; throw e; } // اسم المسار اللي فشل بيظهر في الرسالة عشان نعرف السبب
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
     const e = new Error(j.error || 'server_error'); e.code = j.error || 'server_error'; e.status = r.status; if (j.detail) e.detail = String(j.detail).slice(0, 400); // تفاصيل للأدمن بس (السيرفر بيبعتها لمسارات admin/)

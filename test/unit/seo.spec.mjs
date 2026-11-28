@@ -53,7 +53,7 @@ describe('كل صفحة SEO', () => {
   });
   it('الروابط الداخلية كلها بتشير لصفحات أو ملفات موجودة (مفيش 404 داخلي)', () => {
     const known = new Set(Object.keys(all)); const bad = [];
-    for (const [path, p] of Object.entries(all)) for (const m of p.html.matchAll(/href="(\/[^"#?]*)/g)) { const h = m[1] === '/' ? '/' : m[1].replace(/\/$/, ''); if (!known.has(h) && !existsSync(new URL('../../public' + h, import.meta.url)) && !['/drivers', '/blog', '/llms.txt', '/llms-full.txt', '/sitemap.xml'].includes(h)) bad.push(`${path} -> ${h}`); }
+    for (const [path, p] of Object.entries(all)) for (const m of p.html.matchAll(/href="(\/[^"#?]*)/g)) { const h = m[1] === '/' ? '/' : m[1].replace(/\/$/, ''); if (!known.has(h) && !existsSync(new URL('../../public' + h, import.meta.url)) && !['/drivers', '/blog', '/llms.txt', '/llms-full.txt', '/sitemap.xml', '/js/firebase-key.js'].includes(h)) bad.push(`${path} -> ${h}`); }
     expect([...new Set(bad)]).toEqual([]);
   });
   it('كل صفحة طريق مرتبطة من الفهرس ومن صفحات تانية (مفيش صفحة يتيمة)', () => {

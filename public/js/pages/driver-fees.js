@@ -45,17 +45,24 @@ const cfSection = (c) => {
     ${c.history.length ? html`<ul class="plain">${c.history.map((x) => html`<li class="row"><span class="grow">${fmtDate(x.decidedAt || x.createdAt)} · <b>${fmtMoney(x.amount)}</b>${x.status === 'rejected' && x.note ? html` · <span class="no-t">${x.note}</span>` : ''}</span><span class="${x.status === 'paid' ? 'ok-t' : 'no-t'}"><b>${t('dc.st.' + x.status)}</b></span></li>`)}</ul>` : ''}</section>`;
 };
 
+// المتاجر المرتبطة (للشركات): طلبات ربط من متاجر على مواقع شريكة — موافقة/رفض/إلغاء
+const partnerSection = (p) => (!p?.links?.length ? '' : html`<section class="card stack"><h3>${t('pt.title')}</h3><p class="muted small">${t('pt.hint')}</p>
+  ${p.links.map((l) => html`<div class="row" style="padding:.4rem 0;border-bottom:1px solid var(--rule)"><span class="grow"><b>${l.merchant}</b><br><span class="muted small">${l.site} · ${fmtDate(l.createdAt)}</span></span>
+    ${l.status === 'pending' ? html`<button class="btn sm ok" data-pl="accept" data-id="${l.id}">${t('pt.accept')}</button><button class="btn sm danger" data-pl="reject" data-id="${l.id}">${t('pt.reject')}</button>`
+      : l.status === 'active' ? html`<span class="ok-t"><b>${t('pt.active')}</b></span><button class="btn sm" data-pl="revoke" data-id="${l.id}">${t('pt.revoke')}</button>` : html`<span class="no-t"><b>${t('pt.' + l.status)}</b></span>`}</div>`)}</section>`);
+
 export function renderDriverFees(view) {
   render(view, html`<div class="page-head"><h1>${t('fees.title')}</h1></div><div id="fees">${skeleton(3)}</div>`);
   const box = view.querySelector('#fees'); let dead = false, timer = null;
   async function load() {
     const isCo = state.profile?.accountType === 'company';
-    let d, cf = null; try { [d, cf] = await Promise.all([api('dc/summary', {}), isCo ? api('cf/summary', {}).catch(() => null) : null]); } catch (e) { if (!dead) render(box, html`<div class="action bad"><p>${errMsg(e)}</p></div>`); return; }
+    let d, cf = null, pl = null; try { [d, cf, pl] = await Promise.all([api('dc/summary', {}), isCo ? api('cf/summary', {}).catch(() => null) : null, isCo ? api('partner/links', {}).catch(() => null) : null]); } catch (e) { if (!dead) render(box, html`<div class="action bad"><p>${errMsg(e)}</p></div>`); return; }
     if (dead) return;
-    if (!d.enabled && !cf?.enabled) { render(box, html`<p class="muted">${t('fees.off')}</p>`); return; }
+    if (!d.enabled && !cf?.enabled && !pl?.links?.length) { render(box, html`<p class="muted">${t('fees.off')}</p>`); return; }
     const methods = [...(d.pay.wallet?.wallet ? ['wallet'] : []), ...(d.pay.instapay?.handle ? ['instapay'] : [])];
     render(box, html`
       ${cfSection(cf)}
+      ${partnerSection(pl)}
       ${!d.enabled ? '' : html`${d.blocked ? html`<div class="action bad"><b>${t('dc.blockedTitle')}</b><p>${t('dc.blockedMsg')}</p></div>` : html`<div class="action good"><p>${t('fees.active')}</p></div>`}
       <section class="card stack">
         <div class="grid-4"><div class="card kpi"><div class="muted small">${t('dc.gross')}</div><div class="kpi-v num">${fmtMoney(d.gross)}</div><div class="muted small">${t('dc.limit')}: ${fmtMoney(d.limit)}</div></div>
@@ -81,6 +88,11 @@ export function renderDriverFees(view) {
     if (cp) { try { await navigator.clipboard.writeText(cp.dataset.copy); toast(t('fees.copied')); } catch { /* المتصفح مانع النسخ */ } return; }
     const cv = e.target.closest('#dcCover');
     if (cv) { busy(cv, async () => { try { await api('dc/pay', {}); toast(t('fine.done')); load(); } catch (err) { toast(errMsg(err), true); } }); return; }
+    const pb = e.target.closest('[data-pl]');
+    if (pb) {
+      busy(pb, async () => { try { await api('partner/respond', { id: pb.dataset.id, action: pb.dataset.pl }); toast(t('pt.done')); load(); } catch (err) { toast(errMsg(err), true); } });
+      return;
+    }
     const cs = e.target.closest('#cfSend');
     if (cs) {
       const file = view.querySelector('#cfProof')?.files?.[0], reference = view.querySelector('#cfRef')?.value.trim();

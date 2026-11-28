@@ -305,6 +305,19 @@ export const admin = {
 const dateAr = (t) => new Date(t || 0).toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Africa/Cairo' });
 export const blogPath = (a) => `/blog/${encodeURIComponent(a.slug)}`;
 
+// مقالات متعلقة بالموضوع: تشابه كلمات العنوان/الوصف (من غير كلمات الوصل)، ولو ناقص نكمّل بأحدث المقالات
+const STOP = new Set(['من', 'في', 'على', 'الي', 'عن', 'مع', 'ده', 'دي', 'هو', 'هي', 'كل', 'او', 'ان', 'ازاي', 'دليل', 'دليلك', 'كامل', 'قبل', 'بعد', 'نقل', 'شحن', 'مصر']); // «نقل/شحن» في كل العناوين تقريباً فمش بتفرّق بين المقالات
+const norm = (w) => w.replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').replace(/^ال(?=.{3})/, ''); // همزات وتاء مربوطة و«ال» التعريف
+const words = (t) => new Set(String(t || '').normalize('NFKC').toLowerCase().replace(/[\u064B-\u065F\u0670\u0640]/g, '').split(/[^\p{L}\p{N}]+/u).map(norm).filter((w) => w.length > 2 && !STOP.has(w)));
+export function relatedFor(a, list, n = 4) {
+  const mine = words(`${a.title} ${a.slug?.replace(/-/g, ' ')}`);
+  const scored = list.filter((x) => x.id !== a.id).map((x) => { const w = words(`${x.title} ${x.slug?.replace(/-/g, ' ')}`); let c = 0; for (const t of w) if (mine.has(t)) c++; return { x, c }; });
+  scored.sort((p, q) => q.c - p.c || (q.x.publishedAt || 0) - (p.x.publishedAt || 0)); // الأقرب موضوعاً الأول، ولو التساوي الأحدث
+  return scored.slice(0, n).map((e) => e.x);
+}
+const SERVICE_LINKS = [['/pricing', 'أسعار النقل'], ['/vehicles', 'أنواع العربيات وحمولتها'], ['/how-it-works', 'إزاي بتشتغل اشحنلي'], ['/routes', 'طرق النقل بين المدن'], ['/for-drivers', 'انضم كسواق'], ['/for-companies', 'للشركات']];
+const REQUEST_HREF = '/#/register?role=customer'; // زرار طلب النقل: بيودّي لتسجيل العميل (الصفحة دي بتتفتح بالتطبيق)
+
 export function articleContent(a0, related = []) {
   // أي دومين قديم أو {{site}} في العنوان/الوصف/الملخص/الأسئلة بيتبدّل بالحالي وقت العرض (المتخزّن مبيتغيّرش)
   const a = { ...a0, title: resolveSite(a0.title), description: resolveSite(a0.description), excerpt: resolveSite(a0.excerpt), faq: (a0.faq || []).map(([q, x]) => [resolveSite(q), resolveSite(x)]) };
@@ -316,19 +329,26 @@ export function articleContent(a0, related = []) {
 ${hero && !usedImg ? `<figure class="blog-fig"><img src="/blog/img/${esc(hero.id)}" alt="${esc(hero.alt || a.title)}" decoding="async"></figure>` : ''}
 ${html}
 ${a.video && !hasVideoToken ? videoHtml(a.video, a.title) : ''}
-${related.length ? `<h2>اقرأ كمان</h2><ul class="blog-rel">${related.map((r) => `<li><a href="${blogPath(r)}">${esc(r.title)}</a></li>`).join('')}</ul>` : ''}
+${related.length ? `<h2>اقرأ كمان</h2><ul class="blog-rel">${related.map((r) => `<li><a href="${blogPath(r)}">${esc(resolveSite(r.title))}</a></li>`).join('')}</ul>` : ''}
+<h2>خدمات اشحنلي</h2><ul class="blog-rel">${SERVICE_LINKS.map(([h, l]) => `<li><a href="${h}">${esc(l)}</a></li>`).join('')}</ul>
+<p class="blog-site"><a class="lp-btn fill" href="${REQUEST_HREF}">اطلب نقل دلوقتي ←</a></p>
 <p class="blog-site">${esc('احسب سعر شحنتك وابدأ طلبك من موقع اشحنلي:')} <a href="${esc(LP_ORIGIN)}/">${esc(LP_ORIGIN)}</a></p></article>`;
   const ld = { '@context': 'https://schema.org', '@type': 'Article', headline: a.title, description: a.description, inLanguage: 'ar', datePublished: new Date(a.publishedAt || a.createdAt).toISOString(), dateModified: new Date(a.updatedAt || a.publishedAt || a.createdAt).toISOString(), mainEntityOfPage: LP_ORIGIN + path, url: LP_ORIGIN + path, author: { '@type': 'Organization', name: 'اشحنلي' }, publisher: { '@type': 'Organization', name: 'اشحنلي' }, ...(hero ? { image: [`${LP_ORIGIN}/blog/img/${hero.id}`] } : {}) };
   return {
     title: a.title.length > 55 ? a.title : `${a.title} | اشحنلي`, desc: a.description, h1: a.title, lead: a.excerpt || a.description, body,
-    faq: a.faq?.length ? a.faq : null, cta: ['احسب سعر شحنتك', '/'], path,
+    faq: a.faq?.length ? a.faq : null, cta: ['اطلب نقل دلوقتي', REQUEST_HREF], path,
     crumbs: [['اشحنلي', '/'], ['المدونة', '/blog'], [a.title, path]],
     extraLd: `<script type="application/ld+json">${JSON.stringify(ld).replace(/</g, '\\u003c')}</script>`,
   };
 }
-export function indexContent(list) {
-  const body = list.length ? `<ul class="blog-list">${list.map((a) => `<li><a class="blog-card" href="${blogPath(a)}"><b>${esc(resolveSite(a.title))}</b><span>${esc(resolveSite(a.excerpt || a.description))}</span><small>${esc(dateAr(a.publishedAt))}</small></a></li>`).join('')}</ul>` : '<p>لسه مفيش مقالات منشورة. تابعنا قريب.</p>';
-  return { title: 'مدونة اشحنلي — نصائح نقل الشحن والأثاث في مصر', desc: 'مقالات عملية عن نقل البضائع والأثاث في مصر: التجهيز، اختيار العربية، التوفير، وكل اللي محتاج تعرفه قبل ما تشحن.', h1: 'مدونة اشحنلي', lead: 'نصائح عملية عن النقل والشحن في مصر.', body, faq: null, cta: ['احسب سعر شحنتك', '/'], path: '/blog', crumbs: [['اشحنلي', '/'], ['المدونة', '/blog']], extraLd: '' };
+export const BLOG_PER_PAGE = 12;
+export function indexContent(list, page = 1) {
+  const pages = Math.max(1, Math.ceil(list.length / BLOG_PER_PAGE)), pg = Math.min(Math.max(1, page | 0), pages);
+  const slice = list.slice((pg - 1) * BLOG_PER_PAGE, pg * BLOG_PER_PAGE), href = (n) => (n === 1 ? '/blog' : `/blog?page=${n}`);
+  const pager = pages > 1 ? `<nav class="blog-pager" aria-label="ترقيم صفحات المدونة" style="display:flex;gap:.5rem;flex-wrap:wrap;justify-content:center;margin:1.5rem 0">${pg > 1 ? `<a rel="prev" href="${href(pg - 1)}">→ السابق</a>` : ''}${Array.from({ length: pages }, (_, i) => i + 1).map((n) => (n === pg ? `<b aria-current="page">${n}</b>` : `<a href="${href(n)}">${n}</a>`)).join('')}${pg < pages ? `<a rel="next" href="${href(pg + 1)}">التالي ←</a>` : ''}</nav>` : '';
+  const body = list.length ? `<ul class="blog-list">${slice.map((a) => `<li><a class="blog-card" href="${blogPath(a)}"><b>${esc(resolveSite(a.title))}</b><span>${esc(resolveSite(a.excerpt || a.description))}</span><small>${esc(dateAr(a.publishedAt))}</small></a></li>`).join('')}</ul>${pager}` : '<p>لسه مفيش مقالات منشورة. تابعنا قريب.</p>';
+  const base = 'مدونة اشحنلي — نصائح نقل الشحن والأثاث في مصر';
+  return { title: pg > 1 ? `${base} (صفحة ${pg})` : base, desc: pg > 1 ? `مقالات عملية عن نقل البضائع والأثاث في مصر — صفحة ${pg} من ${pages}.` : 'مقالات عملية عن نقل البضائع والأثاث في مصر: التجهيز، اختيار العربية، التوفير، وكل اللي محتاج تعرفه قبل ما تشحن.', h1: 'مدونة اشحنلي', lead: 'نصائح عملية عن النقل والشحن في مصر.', body, faq: null, cta: ['اطلب نقل دلوقتي', REQUEST_HREF], path: href(pg), pages, page: pg, crumbs: [['اشحنلي', '/'], ['المدونة', '/blog']], extraLd: '' };
 }
 const b64ToBytes = (b64) => { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; };
 /** صورة مقال عامة: بس ملفات نوع blog (اللي الأدمن رفعها) */

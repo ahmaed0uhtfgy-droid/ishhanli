@@ -3,7 +3,7 @@
 import { t } from './i18n.js';
 import { html, openModal, toast } from './ui.js';
 
-const DISMISS_KEY = 'installDismissedAt', DISMISS_MS = 14 * 864e5;
+const DISMISS_KEY = 'installDismissedAt', DISMISS_MS = 3 * 864e5;
 /** نوع الجهاز/المتصفح ← طريقة التثبيت. دالة نقية (بتتختبر): installed | prompt | inapp | ios | android | desktop */
 export function installMode(ua = '', { standalone = false, hasPrompt = false, touchPoints = 0, platform = '' } = {}) {
   if (standalone) return 'installed';
@@ -66,6 +66,6 @@ export function initInstall() {
   const at = Number(store.get(DISMISS_KEY) || 0);
   if (!(at && Date.now() - at < DISMISS_MS)) { // الشريط بيظهر بعد أول تمرير للصفحة (عشان ما يغطّيش زرار «اطلب نقل» أول ما الزائر يفتح)، أو بعد 25 ث لو ما مرّرش. fixed فمفيش تحريك للصفحة (CLS)
     let armed = false; const arm = () => { if (!armed) { armed = true; setTimeout(showBar, 1200); } };
-    window.addEventListener('scroll', arm, { once: true, passive: true }); setTimeout(arm, 25000);
+    window.addEventListener('scroll', arm, { once: true, passive: true }); setTimeout(arm, 6000); // أول تمرير أو بعد 6 ثواني (قبل كده 25) عشان الشريط يبان فعلاً
   }
 }

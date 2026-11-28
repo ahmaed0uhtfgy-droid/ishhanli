@@ -1,3 +1,10 @@
+# التغييرات 2026-11-28 (تشخيص السيرفر، مفتاح Firebase خارج المستودع، سيو، ربط المواقع)
+- **تشخيص «مفيش اتصال»:** الرسالة بقت بتقول إيه اللي فشل (`(api/<مسار>)` أو `(/js/…)` أو `leaflet` أو `offline`). (`public/js/app.js`, `public/js/api.js`)
+- **مفتاح Firebase خارج GitHub:** `apiKey` اتشال من `public/js/config.js` وبيتقدّم من Pages Function `functions/js/firebase-key.js.js` من متغير البيئة `FIREBASE_WEB_API_KEY` (لازم يتضبط على Cloudflare قبل النشر، وبعدها المفتاح القديم يتمسح من Google Cloud). `.gitignore` اتضاف فيه `.dev.vars` و`.env` والمفاتيح.
+- **سيو:** عنوان/وصف افتراضي أقوى للرئيسية + `meta keywords` (كلها مميزات حقيقية)؛ الأدمن لسه يقدر يغيّر العنوان/الوصف من الإعدادات. (`functions/_lib/landing.js`)
+- **ربط المواقع:** `partner-api/*` (companies, link, link/status, order, order/cancel) بمفتاح خاص لكل موقع (مخزّن كهاش)، موافقة الشركة (`partner/links`, `partner/respond`)، وإدارة الأدمن (`admin/partner/list|save|rotate|link`) وتبويب «المواقع المربوطة». طلبات التاجر بتتسجّل على الشركة وبتتحسب على عدّادات رسومها، idempotent برقم الطلب، وبتتوقف لو الشركة وصلت للحد. وثيقة المطوّر: `PARTNER-API.md`. (`functions/api/[[route]].js`, `public/js/pages/admin-partners.js`, `public/js/pages/driver-fees.js`)
+- اختبارات: `test/unit/partner.spec.mjs` (6) + تعديل `vitest.config.mjs` ببديل اختبار لملف المفتاح.
+
 # التغييرات 2026-11-27 (ج) (رسوم شركات الشحن — cf)
 - **الإعدادات (من الأدمن، مقفولة افتراضياً):** `cfEnabled` و`cfType` (ثابت/نسبة) و`cfValue` و`cfLimit`. (`functions/_lib/logic.js` + تبويب الإعدادات في `public/js/pages/admin.js`)
 - **عدّادين لكل شركة:** إجمالي `cf_total` (ما بيتصفّرش) وعدّاد دورة في `cf_cycles/<uid>_<رقم الدورة>` بيتصفّر بالسداد. بيتحسب عند **قبول** الطلب (قبول فوري أو اختيار العميل لعرض) بسعر الطلب، والحد بيتفحص **قبل** القبول (950 + طلب 150 = يقبل، وبعدها متوقف). الشركة المتوقفة بتاخد `cf_blocked` ومابتقدّمش عروض، والطلبات الشغّالة بتكمّل. (`functions/api/[[route]].js`)

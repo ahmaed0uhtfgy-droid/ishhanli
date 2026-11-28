@@ -80,7 +80,7 @@ describe('قايمة SEO — 20 نقطة', () => {
     for (const p of Object.keys(pages)) if (p !== '/') expect(inbound[p]?.size || 0, 'يتيمة: ' + p).toBeGreaterThan(0);
   });
   it('12. مفيش رابط داخلي مكسور', () => {
-    const ok = new Set([...Object.keys(pages), '/llms.txt', '/llms-full.txt', '/sitemap.xml', '/robots.txt', '/manifest.webmanifest']);
+    const ok = new Set([...Object.keys(pages), '/llms.txt', '/llms-full.txt', '/sitemap.xml', '/robots.txt', '/manifest.webmanifest', '/js/firebase-key.js']);
     each((p, r) => { for (const h of links(r.html)) { const i = internal(h); if (!i) continue; const path = i.split(/[?#]/)[0]; if (path.startsWith('/#') || path === '' ) continue; const dec = (() => { try { return decodeURI(path); } catch { return path; } })(); const file = existsSync(pub(dec.slice(1))) && dec !== '/'; expect(ok.has(path) || ok.has(dec) || file || /^\/drivers\/[A-Za-z0-9]+$/.test(path) || path === '/drivers', `${p} → ${h}`).toBe(true); } });
   });
   it('13. slugs: مقروءة (حروف/أرقام/شرطات) ومش طويلة', () => { for (const p of Object.keys(pages)) { const d = decodeURIComponent(p); expect(d, p).toMatch(/^\/[\p{L}\p{N}\-/]*$/u); expect(d.length, p).toBeLessThanOrEqual(90); } });

@@ -1,7 +1,8 @@
 // ⚙️ عدّل القيم دي فقط: Firebase Console → Project settings → Your apps → Web app → Config
 // (Firebase بيُستخدم لتسجيل الدخول + قاعدة البيانات Firestore (من السيرفر بس) + الإشعارات. السيرفر والمنطق على Cloudflare)
+import { apiKey } from './firebase-key.js'; // المفتاح مش مكتوب هنا: بييجي من functions/js/firebase-key.js.js (متغير بيئة FIREBASE_WEB_API_KEY على Cloudflare)
 export const firebaseConfig = {
-  apiKey: 'AIzaSyA3apC9FdfBzHgHafchojQwQT1i1tSXHHw',
+  apiKey,
   authDomain: 'ishhanli.firebaseapp.com',
   projectId: 'ishhanli',
   appId: '1:288713296891:web:39a65a07e32547e48d195e',

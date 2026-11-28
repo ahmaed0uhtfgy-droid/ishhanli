@@ -86,7 +86,7 @@ export function renderShell({ title, desc, h1, lead, body, faq = null, cta, path
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title><meta name="description" content="${esc(desc)}"><link rel="canonical" href="${url}"><meta name="robots" content="index,follow,max-image-preview:large">
 <meta property="og:type" content="article"><meta property="og:site_name" content="اشحنلي"><meta property="og:locale" content="ar_EG"><meta property="og:url" content="${url}"><meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(desc)}"><meta property="og:image" content="${LP_ORIGIN}/img/og.jpg">
-<meta name="twitter:card" content="summary_large_image"><meta name="theme-color" content="#F7F4EC"><link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="icon" type="image/png" sizes="48x48" href="/icons/favicon-48.png"><link rel="apple-touch-icon" href="/icons/icon-180.png">
+<meta name="twitter:card" content="summary_large_image"><meta name="theme-color" content="#F7F4EC"><link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="icon" type="image/png" sizes="48x48" href="/icons/favicon-48.png"><link rel="apple-touch-icon" href="/icons/icon-180.png"><link rel="manifest" href="/manifest.webmanifest"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="اشحنلي">
 <link rel="stylesheet" href="/css/landing.css"><link rel="preload" as="font" type="font/woff2" crossorigin href="/fonts/cairo-arabic-600-normal.woff2">
 ${ld(crumbs)}${faqLd}${extraLd}</head>
 <body class="lpp-body"><div class="lp lpa lpp">
